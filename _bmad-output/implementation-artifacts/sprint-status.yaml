@@ -64,13 +64,13 @@ development_status:
 
   # Epic 3: AI Content Generation & NQ05 Compliance (6 stories)
   # Dependency order: 3.1 → 3.3 → 3.2 → 3.4 → 3.5 → 3.6
-  epic-3: backlog
-  3-1-llm-adapter-pattern-multi-provider: backlog
-  3-3-template-engine-configurable-sections: backlog
-  3-2-tier-article-generator: backlog
-  3-4-bic-chat-summary-generator: backlog
-  3-5-nq05-compliance-dual-layer-filter: backlog
-  3-6-content-generation-integration-test: backlog
+  epic-3: done
+  3-1-llm-adapter-pattern-multi-provider: done
+  3-3-template-engine-configurable-sections: done
+  3-2-tier-article-generator: done
+  3-4-bic-chat-summary-generator: done
+  3-5-nq05-compliance-dual-layer-filter: done
+  3-6-content-generation-integration-test: done
   epic-3-retrospective: optional
 
   # Epic 4: Content Delivery & Reliability (5 stories)

@@ -1,0 +1,150 @@
+"""Tests for generators/article_generator.py — all mocked."""
+
+from unittest.mock import AsyncMock
+
+from cic_daily_report.adapters.llm_adapter import LLMResponse
+from cic_daily_report.generators.article_generator import (
+    DISCLAIMER,
+    GeneratedArticle,
+    GenerationContext,
+    generate_tier_articles,
+)
+from cic_daily_report.generators.template_engine import (
+    ArticleTemplate,
+    SectionTemplate,
+)
+
+
+def _make_templates(*tiers: str) -> dict[str, ArticleTemplate]:
+    result = {}
+    for tier in tiers:
+        result[tier] = ArticleTemplate(
+            tier=tier,
+            sections=[
+                SectionTemplate(tier, "Intro", True, 1, "Intro for {tier}", 200),
+                SectionTemplate(tier, "Analysis", True, 2, "Analyze {coin_list}", 500),
+            ],
+        )
+    return result
+
+
+def _make_context() -> GenerationContext:
+    return GenerationContext(
+        coin_lists={"L1": ["BTC", "ETH"], "L2": ["BTC", "ETH", "SOL"]},
+        market_data="BTC at $105K",
+        news_summary="SEC news today",
+        key_metrics={"BTC Price": "$105,000"},
+    )
+
+
+class TestGeneratedArticle:
+    def test_to_row(self):
+        article = GeneratedArticle(
+            tier="L1",
+            title="[L1] Test",
+            content="Content here",
+            word_count=50,
+            llm_used="llama-3.3",
+            generation_time_sec=2.5,
+            nq05_status="pass",
+        )
+        row = article.to_row()
+        assert len(row) == 8
+        assert row[1] == "L1"
+        assert row[7] == "pass"
+
+
+class TestGenerateTierArticles:
+    async def test_generates_articles_for_available_tiers(self):
+        templates = _make_templates("L1", "L2")
+        context = _make_context()
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text="Generated content", tokens_used=100, model="test-model")
+        )
+
+        articles = await generate_tier_articles(mock_llm, templates, context)
+
+        assert len(articles) == 2
+        assert articles[0].tier == "L1"
+        assert articles[1].tier == "L2"
+
+    async def test_articles_have_disclaimer(self):
+        templates = _make_templates("L1")
+        context = _make_context()
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text="Analysis text", tokens_used=50, model="m")
+        )
+
+        articles = await generate_tier_articles(mock_llm, templates, context)
+
+        assert len(articles) == 1
+        assert DISCLAIMER in articles[0].content
+
+    async def test_skips_tiers_without_templates(self):
+        templates = _make_templates("L1")  # Only L1
+        context = _make_context()
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text="ok", tokens_used=10, model="m")
+        )
+
+        articles = await generate_tier_articles(mock_llm, templates, context)
+
+        # Only L1 generated, L2-L5 skipped
+        assert len(articles) == 1
+        assert articles[0].tier == "L1"
+
+    async def test_continues_on_llm_failure(self):
+        templates = _make_templates("L1", "L2")
+        context = _make_context()
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            side_effect=[
+                Exception("LLM down"),
+                LLMResponse(text="L2 ok", tokens_used=10, model="m"),
+            ]
+        )
+
+        articles = await generate_tier_articles(mock_llm, templates, context)
+
+        # L1 failed, L2 succeeded
+        assert len(articles) == 1
+        assert articles[0].tier == "L2"
+
+    async def test_coin_list_substituted(self):
+        templates = _make_templates("L1")
+        context = _make_context()
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text="ok", tokens_used=10, model="m")
+        )
+
+        await generate_tier_articles(mock_llm, templates, context)
+
+        # Verify the prompt sent to LLM contains coin list
+        call_args = mock_llm.generate.call_args
+        prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
+        assert "BTC, ETH" in prompt
+
+    async def test_nq05_system_prompt_used(self):
+        templates = _make_templates("L1")
+        context = _make_context()
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text="ok", tokens_used=10, model="m")
+        )
+
+        await generate_tier_articles(mock_llm, templates, context)
+
+        call_args = mock_llm.generate.call_args
+        sys_prompt = call_args.kwargs.get("system_prompt", "")
+        assert "NQ05" in sys_prompt
+        assert "KHÔNG BAO GIỜ" in sys_prompt

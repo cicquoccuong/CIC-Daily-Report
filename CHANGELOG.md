@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.0] - 2026-03-09
+
+### Added — Epic 3: AI Content Generation & NQ05 Compliance
+- LLM Adapter: Multi-provider fallback chain (Groq → Gemini Flash → Flash Lite) with quota integration
+- Template Engine: configurable sections from MAU_BAI_VIET, variable substitution, FR20 Key Metrics Table
+- Article Generator: 5 tier articles (L1→L5), dual-layer content (TL;DR + Full Analysis), cumulative coins
+- BIC Chat Summary Generator: market overview + key highlights, copy-paste ready for Telegram
+- NQ05 Filter: dual-layer compliance (prompt + post-filter), banned keywords, terminology fixes, auto-disclaimer
+- Integration test: full pipeline mock test (5 articles + 1 summary, NQ05 pass, fallback scenario)
+
 ## [0.3.0] - 2026-03-09
 
 ### Added — Epic 2: Data Collection Pipeline
