@@ -9,6 +9,8 @@ dependencies = [
     "google-auth>=2.0",
     "python-telegram-bot>=21.0",
     "feedparser>=6.0",
+    "trafilatura>=1.12",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -20,8 +22,16 @@ dev = [
     "ruff>=0.8",
 ]
 
+[project.scripts]
+cic-daily = "cic_daily_report.daily_pipeline:main"
+cic-breaking = "cic_daily_report.breaking_pipeline:main"
+
 [tool.ruff]
 line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
