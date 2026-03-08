@@ -1,0 +1,152 @@
+"""RSS News Collector — parallel fetch from 15+ feeds (FR1, QĐ5)."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+import feedparser
+import httpx
+
+from cic_daily_report.core.error_handler import CollectorError
+from cic_daily_report.core.logger import get_logger
+
+logger = get_logger("rss_collector")
+
+FEED_TIMEOUT = 30  # seconds per feed
+
+
+@dataclass
+class FeedConfig:
+    """RSS feed configuration."""
+
+    url: str
+    source_name: str
+    language: str  # "vi" or "en"
+    enabled: bool = True
+
+
+# Default feed list — can be extended via config
+DEFAULT_FEEDS: list[FeedConfig] = [
+    # Vietnamese
+    FeedConfig("https://vneconomy.vn/tai-chinh.rss", "VnEconomy", "vi"),
+    FeedConfig("https://cafef.vn/thi-truong.rss", "CafeF", "vi"),
+    FeedConfig("https://tinnhanhchungkhoan.vn/feed/", "TNCK", "vi"),
+    FeedConfig("https://coin68.com/feed/", "Coin68", "vi"),
+    FeedConfig("https://tapchibitcoin.io/feed", "TapChiBitcoin", "vi"),
+    # English
+    FeedConfig("https://cointelegraph.com/rss", "CoinTelegraph", "en"),
+    FeedConfig("https://coindesk.com/arc/outboundfeeds/rss/", "CoinDesk", "en"),
+    FeedConfig("https://decrypt.co/feed", "Decrypt", "en"),
+    FeedConfig("https://theblock.co/rss.xml", "TheBlock", "en"),
+    FeedConfig("https://bitcoinmagazine.com/feed", "BitcoinMag", "en"),
+    FeedConfig("https://cryptoslate.com/feed/", "CryptoSlate", "en"),
+    FeedConfig("https://u.today/rss", "UToday", "en"),
+    FeedConfig("https://ambcrypto.com/feed/", "AMBCrypto", "en"),
+    FeedConfig("https://beincrypto.com/feed/", "BeInCrypto", "en"),
+    FeedConfig("https://newsbtc.com/feed/", "NewsBTC", "en"),
+]
+
+
+@dataclass
+class NewsArticle:
+    """Parsed news article from RSS."""
+
+    title: str
+    url: str
+    source_name: str
+    published_date: str
+    summary: str
+    language: str
+
+    def to_row(self) -> list[str]:
+        """Convert to Sheets row for TIN_TUC_THO tab."""
+        collected_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        return [
+            "",  # ID (auto)
+            self.title,
+            self.url,
+            self.source_name,
+            collected_at,
+            self.language,
+            self.summary,
+            "",  # event_type
+            "",  # coin_symbol
+            "",  # sentiment_score
+            "",  # action_category
+        ]
+
+
+async def collect_rss(
+    feeds: list[FeedConfig] | None = None,
+) -> list[NewsArticle]:
+    """Collect news from RSS feeds in parallel.
+
+    Each feed has independent timeout. One feed failing does not block others (NFR16).
+    """
+    feeds = feeds or [f for f in DEFAULT_FEEDS if f.enabled]
+    logger.info(f"Collecting from {len(feeds)} RSS feeds")
+
+    tasks = [_fetch_feed(feed) for feed in feeds]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    articles: list[NewsArticle] = []
+    succeeded = 0
+    failed = 0
+
+    for feed, result in zip(feeds, results):
+        if isinstance(result, Exception):
+            logger.warning(f"Feed '{feed.source_name}' failed: {result}")
+            failed += 1
+        else:
+            articles.extend(result)
+            succeeded += 1
+
+    logger.info(
+        f"RSS collection done: {succeeded} feeds OK, {failed} failed, "
+        f"{len(articles)} articles total"
+    )
+    return articles
+
+
+async def _fetch_feed(feed: FeedConfig) -> list[NewsArticle]:
+    """Fetch and parse a single RSS feed."""
+    try:
+        async with httpx.AsyncClient(timeout=FEED_TIMEOUT) as client:
+            response = await client.get(feed.url, follow_redirects=True)
+            response.raise_for_status()
+
+        parsed = await asyncio.to_thread(feedparser.parse, response.text)
+        articles = []
+
+        for entry in parsed.entries[:20]:  # max 20 per feed
+            title = entry.get("title", "").strip()
+            url = entry.get("link", "").strip()
+            summary = entry.get("summary", "").strip()[:500]
+            published = entry.get("published", "")
+
+            if title and url:
+                articles.append(
+                    NewsArticle(
+                        title=title,
+                        url=url,
+                        source_name=feed.source_name,
+                        published_date=published,
+                        summary=summary,
+                        language=feed.language,
+                    )
+                )
+
+        return articles
+
+    except httpx.TimeoutException:
+        raise CollectorError(
+            f"Timeout fetching {feed.source_name} ({FEED_TIMEOUT}s)",
+            source="rss_collector",
+        )
+    except Exception as e:
+        raise CollectorError(
+            f"Error fetching {feed.source_name}: {e}",
+            source="rss_collector",
+        ) from e

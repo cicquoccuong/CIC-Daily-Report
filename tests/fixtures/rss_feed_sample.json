@@ -1,0 +1,16 @@
+{
+  "entries": [
+    {
+      "title": "Bitcoin hits new all-time high",
+      "link": "https://example.com/btc-ath",
+      "summary": "BTC surpasses $100,000 for the first time",
+      "published": "2026-03-09T08:00:00Z"
+    },
+    {
+      "title": "Ethereum Dencun upgrade live",
+      "link": "https://example.com/eth-dencun",
+      "summary": "ETH network completes Dencun upgrade successfully",
+      "published": "2026-03-09T07:00:00Z"
+    }
+  ]
+}

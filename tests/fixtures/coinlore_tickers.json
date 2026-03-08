@@ -1,0 +1,22 @@
+{
+  "data": [
+    {
+      "id": "90",
+      "symbol": "BTC",
+      "name": "Bitcoin",
+      "price_usd": "105234.56",
+      "percent_change_24h": "2.34",
+      "market_cap_usd": "2050000000000",
+      "volume24": "45000000000"
+    },
+    {
+      "id": "80",
+      "symbol": "ETH",
+      "name": "Ethereum",
+      "price_usd": "4123.78",
+      "percent_change_24h": "-1.12",
+      "market_cap_usd": "495000000000",
+      "volume24": "18000000000"
+    }
+  ]
+}
