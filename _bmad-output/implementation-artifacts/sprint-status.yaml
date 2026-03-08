@@ -51,15 +51,15 @@ development_status:
   epic-1-retrospective: optional
 
   # Epic 2: Daily Data Collection Pipeline (8 stories)
-  epic-2: backlog
-  2-1-rss-news-collector: backlog
-  2-2-cryptopanic-news-sentiment: backlog
-  2-3-market-macro-data-collector: backlog
-  2-4-on-chain-derivatives-data-collector: backlog
-  2-5-telegram-channel-scraper: backlog
-  2-6-data-deduplication-conflict-detection: backlog
-  2-7-data-quality-spam-noise-filter: backlog
-  2-8-parallel-collection-integration-test: backlog
+  epic-2: done
+  2-1-rss-news-collector: done
+  2-2-cryptopanic-news-sentiment: done
+  2-3-market-macro-data-collector: done
+  2-4-on-chain-derivatives-data-collector: done
+  2-5-telegram-channel-scraper: done
+  2-6-data-deduplication-conflict-detection: done
+  2-7-data-quality-spam-noise-filter: done
+  2-8-parallel-collection-integration-test: done
   epic-2-retrospective: optional
 
   # Epic 3: AI Content Generation & NQ05 Compliance (6 stories)
