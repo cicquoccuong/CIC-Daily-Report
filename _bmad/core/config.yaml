@@ -1,0 +1,12 @@
+# CORE Module Configuration
+# Project: CIC Daily Report
+# Version: 6.0.0-Beta.2
+
+user_name: Anh Cường
+communication_language: Vietnammese
+document_output_language: Vietnammese
+output_folder: "{project-root}/_bmad-output"
+
+# Project Context (CIC Daily Report)
+# MANDATORY: Read CLAUDE.md at project root BEFORE any implementation work.
+project_context_file: "{project-root}/CLAUDE.md"
