@@ -40,14 +40,14 @@ story_location: _bmad-output/implementation-artifacts
 
 development_status:
   # Epic 1: Foundation — Project Setup & Configuration Management (7 stories)
-  epic-1: backlog
-  1-1-project-initialization: backlog
-  1-2-core-utilities-error-handler-logger-config: backlog
-  1-3-google-sheets-schema-storage-client: backlog
-  1-4-configuration-management-hot-reload: backlog
-  1-5-quota-manager: backlog
-  1-6-data-retention-auto-cleanup: backlog
-  1-7-pipeline-execution-framework-ci: backlog
+  epic-1: done
+  1-1-project-initialization: done
+  1-2-core-utilities-error-handler-logger-config: done
+  1-3-google-sheets-schema-storage-client: done
+  1-4-configuration-management-hot-reload: done
+  1-5-quota-manager: done
+  1-6-data-retention-auto-cleanup: done
+  1-7-pipeline-execution-framework-ci: done
   epic-1-retrospective: optional
 
   # Epic 2: Daily Data Collection Pipeline (8 stories)
