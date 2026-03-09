@@ -46,18 +46,26 @@ class BreakingRunLog:
     status: str = "pending"  # "success" / "partial" / "error" / "no_events"
 
     def to_row(self) -> list[str]:
-        """Convert to sheet row for NHAT_KY_PIPELINE."""
+        """Convert to sheet row for NHAT_KY_PIPELINE.
+
+        Schema: ID, Thời gian bắt đầu, Thời gian kết thúc, Thời lượng (giây),
+                Trạng thái, LLM sử dụng, Lỗi, Ghi chú
+        """
+        note = (
+            f"breaking | detected={self.events_detected}"
+            f" new={self.events_new}"
+            f" sent={self.events_sent}"
+            f" deferred={self.events_deferred}"
+        )
         return [
-            self.pipeline_type,
+            "",  # ID
             self.started_at,
             self.finished_at,
             str(self.duration_seconds),
-            str(self.events_detected),
-            str(self.events_new),
-            str(self.events_sent),
-            str(self.events_deferred),
-            "; ".join(self.errors) if self.errors else "",
             self.status,
+            "",  # LLM sử dụng
+            "; ".join(self.errors) if self.errors else "",
+            note,
         ]
 
 
@@ -129,10 +137,15 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     """
     result = BreakingPipelineResult(run_log=run_log)
 
-    # Stage 1: Detect
+    # Stage 1: Detect (inner timeout 60s)
     try:
-        events = await detect_breaking_events()
+        events = await asyncio.wait_for(detect_breaking_events(), timeout=60)
         run_log.events_detected = len(events)
+    except asyncio.TimeoutError:
+        logger.error("Detection timed out after 60s")
+        run_log.errors.append("Detection: timeout 60s")
+        run_log.status = "error"
+        return result
     except Exception as e:
         logger.error(f"Detection failed: {e}")
         run_log.errors.append(f"Detection: {e}")
@@ -229,6 +242,8 @@ async def _deliver_breaking(result: BreakingPipelineResult) -> None:
             message = f"{emoji} BREAKING NEWS\n\n{content.formatted}"
             await bot.send_message(message)
             logger.info(f"Breaking delivered: {content.event.title[:50]}...")
+            # Rate limit delay between messages (same as daily pipeline)
+            await asyncio.sleep(1.5)
     except Exception as e:
         logger.error(f"Breaking delivery failed: {e}")
         result.run_log.errors.append(f"Delivery: {e}")

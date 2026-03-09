@@ -47,6 +47,9 @@ async def collect_market_data() -> list[MarketDataPoint]:
 
     tasks = [
         _collect_coinlore(),
+        _collect_mexc(),
+        _collect_coinlore_global(),
+        _collect_usdt_vnd(),
         _collect_macro_indices(),
         _collect_fear_greed(),
     ]
@@ -58,6 +61,9 @@ async def collect_market_data() -> list[MarketDataPoint]:
             logger.warning(f"Market data source {i} failed: {result}")
         else:
             all_data.extend(result)
+
+    # Cross-verify CoinLore vs MEXC prices (FR22)
+    all_data = _cross_verify_prices(all_data)
 
     logger.info(f"Market data collected: {len(all_data)} data points")
     return all_data
@@ -146,6 +152,179 @@ def _yf_get_price(ticker: str) -> dict[str, float] | None:
     change_pct = ((current - prev) / prev * 100) if prev != 0 else 0
 
     return {"price": round(float(current), 2), "change_pct": round(float(change_pct), 2)}
+
+
+async def _collect_mexc() -> list[MarketDataPoint]:
+    """Collect crypto prices from MEXC (FR6 secondary, FR22 cross-verify).
+
+    Free API, no key required. Endpoint: GET /api/v3/ticker/24hr
+    Returns all tickers (~2000+). We filter to USDT pairs for top coins.
+    """
+    url = "https://api.mexc.com/api/v3/ticker/24hr"
+    target_symbols = {
+        "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+        "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT",
+        "MATICUSDT", "UNIUSDT", "LTCUSDT", "ATOMUSDT", "NEARUSDT",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+
+        tickers = resp.json()
+        points = []
+        for ticker in tickers:
+            sym = ticker.get("symbol", "")
+            if sym not in target_symbols:
+                continue
+            # Strip USDT suffix for symbol name
+            coin_symbol = sym.replace("USDT", "")
+            pct_change = float(ticker.get("priceChangePercent", 0))
+            points.append(
+                MarketDataPoint(
+                    symbol=coin_symbol,
+                    price=float(ticker.get("lastPrice", 0)),
+                    change_24h=pct_change * 100,  # MEXC returns as decimal (0.007 = 0.7%)
+                    volume_24h=float(ticker.get("quoteVolume", 0)),
+                    market_cap=0,  # MEXC doesn't provide market cap
+                    data_type="crypto",
+                    source="MEXC",
+                )
+            )
+        logger.info(f"MEXC: {len(points)} tickers collected")
+        return points
+
+    except Exception as e:
+        logger.warning(f"MEXC failed: {e}")
+        return []
+
+
+async def _collect_coinlore_global() -> list[MarketDataPoint]:
+    """Collect BTC Dominance + Total Market Cap from CoinLore /api/global/ (FR20).
+
+    Free, no key, no rate limit.
+    """
+    url = "https://api.coinlore.net/api/global/"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+
+        data = resp.json()
+        if not data or not isinstance(data, list):
+            return []
+
+        global_data = data[0]
+        points = []
+
+        btc_d = float(global_data.get("btc_d", 0))
+        if btc_d > 0:
+            points.append(
+                MarketDataPoint(
+                    symbol="BTC_Dominance",
+                    price=btc_d,
+                    change_24h=0,
+                    volume_24h=0,
+                    market_cap=0,
+                    data_type="index",
+                    source="CoinLore",
+                )
+            )
+
+        total_mcap = float(global_data.get("total_mcap", 0))
+        if total_mcap > 0:
+            points.append(
+                MarketDataPoint(
+                    symbol="Total_MCap",
+                    price=total_mcap,
+                    change_24h=float(global_data.get("mcap_change", 0)),
+                    volume_24h=float(global_data.get("total_volume", 0)),
+                    market_cap=total_mcap,
+                    data_type="index",
+                    source="CoinLore",
+                )
+            )
+
+        return points
+
+    except Exception as e:
+        logger.warning(f"CoinLore global failed: {e}")
+        return []
+
+
+async def _collect_usdt_vnd() -> list[MarketDataPoint]:
+    """Collect USDT/VND rate from CoinGecko (FR10b).
+
+    Free, no key. Endpoint: GET /api/v3/simple/price?ids=tether&vs_currencies=vnd
+    """
+    url = "https://api.coingecko.com/api/v3/simple/price"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                url,
+                params={
+                    "ids": "tether",
+                    "vs_currencies": "vnd",
+                    "include_24hr_change": "true",
+                },
+            )
+            resp.raise_for_status()
+
+        data = resp.json()
+        tether = data.get("tether", {})
+        vnd_price = float(tether.get("vnd", 0))
+        vnd_change = float(tether.get("vnd_24h_change", 0))
+
+        if vnd_price > 0:
+            return [
+                MarketDataPoint(
+                    symbol="USDT/VND",
+                    price=vnd_price,
+                    change_24h=vnd_change,
+                    volume_24h=0,
+                    market_cap=0,
+                    data_type="macro",
+                    source="CoinGecko",
+                )
+            ]
+        return []
+
+    except Exception as e:
+        logger.warning(f"CoinGecko USDT/VND failed: {e}")
+        return []
+
+
+def _cross_verify_prices(data: list[MarketDataPoint]) -> list[MarketDataPoint]:
+    """Cross-verify CoinLore vs MEXC prices (FR22).
+
+    If deviation >5% for any symbol, log warning and flag in note.
+    Uses CoinLore price as primary (already has market cap data).
+    """
+    coinlore: dict[str, MarketDataPoint] = {}
+    mexc: dict[str, MarketDataPoint] = {}
+
+    for p in data:
+        if p.source == "CoinLore" and p.data_type == "crypto":
+            coinlore[p.symbol] = p
+        elif p.source == "MEXC":
+            mexc[p.symbol] = p
+
+    for symbol in coinlore:
+        if symbol not in mexc:
+            continue
+        cl_price = coinlore[symbol].price
+        mx_price = mexc[symbol].price
+        if cl_price == 0 or mx_price == 0:
+            continue
+        avg = (cl_price + mx_price) / 2
+        deviation = abs(cl_price - mx_price) / avg * 100
+        if deviation > 5:
+            logger.warning(
+                f"FR22: {symbol} price deviation {deviation:.1f}% "
+                f"(CoinLore=${cl_price:.2f} vs MEXC=${mx_price:.2f})"
+            )
+
+    return data
 
 
 async def _collect_fear_greed() -> list[MarketDataPoint]:

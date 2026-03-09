@@ -48,21 +48,26 @@ class TestDedupEntry:
             delivered_at="2026-01-01T00:05:00+00:00",
         )
         row = e.to_row()
+        # Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi
         assert len(row) == 7
-        assert row[0] == "abc123"
-        assert row[5] == "sent"
+        assert row[0] == ""  # ID (auto)
+        assert row[1] == "2026-01-01T00:00:00+00:00"  # detected_at
+        assert row[2] == "Test"  # title
+        assert row[3] == "abc123"  # hash
+        assert row[6] == "sent"  # status
 
     def test_from_row(self):
-        row = ["abc", "Title", "Src", "critical", "2026-01-01", "sent", "2026-01-01"]
+        # Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi
+        row = ["1", "2026-01-01", "Title", "abc", "Src", "critical", "sent"]
         e = DedupEntry.from_row(row)
         assert e.hash == "abc"
         assert e.title == "Title"
         assert e.status == "sent"
 
     def test_from_row_short(self):
-        e = DedupEntry.from_row(["abc"])
+        e = DedupEntry.from_row(["1", "2026-01-01", "Title", "abc"])
         assert e.hash == "abc"
-        assert e.title == ""
+        assert e.title == "Title"
 
 
 class TestDedupManager:

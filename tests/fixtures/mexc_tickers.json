@@ -1,0 +1,42 @@
+[
+  {
+    "symbol": "BTCUSDT",
+    "lastPrice": "105500.00",
+    "priceChangePercent": "0.023",
+    "prevClosePrice": "103131.50",
+    "openPrice": "103131.50",
+    "highPrice": "106200.00",
+    "lowPrice": "102800.00",
+    "volume": "12500.00",
+    "quoteVolume": "1318750000.00"
+  },
+  {
+    "symbol": "ETHUSDT",
+    "lastPrice": "4150.00",
+    "priceChangePercent": "-0.012",
+    "prevClosePrice": "4200.30",
+    "openPrice": "4200.30",
+    "highPrice": "4250.00",
+    "lowPrice": "4100.00",
+    "volume": "95000.00",
+    "quoteVolume": "394250000.00"
+  },
+  {
+    "symbol": "DOGEUSDT",
+    "lastPrice": "0.1234",
+    "priceChangePercent": "0.05",
+    "prevClosePrice": "0.1175",
+    "openPrice": "0.1175",
+    "highPrice": "0.1280",
+    "lowPrice": "0.1150",
+    "volume": "5000000.00",
+    "quoteVolume": "617000.00"
+  },
+  {
+    "symbol": "RANDOMUSDT",
+    "lastPrice": "0.001",
+    "priceChangePercent": "0.10",
+    "volume": "100.00",
+    "quoteVolume": "0.10"
+  }
+]

@@ -112,6 +112,14 @@ async def _collect_coinglass() -> list[OnChainMetric]:
     """Collect derivatives data from Coinglass (FR5).
 
     Funding rates, Open Interest, Liquidations.
+
+    DEPRECATION WARNING: Using Coinglass v2 public endpoints which are deprecated.
+    v2 may stop working at any time. When it does:
+    - Migrate to v4: https://open-api-v4.coinglass.com/api/futures/...
+    - v4 header: CG-API-KEY (not coinglassSecret)
+    - v4 free plan: 10,000 calls/month (sufficient for hourly pipeline)
+    - Liquidation history + Altcoin Season require Hobbyist plan ($29/mo)
+    See docs/API_RESEARCH.md for full details.
     """
     metrics: list[OnChainMetric] = []
 

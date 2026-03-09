@@ -64,6 +64,13 @@ async def _run_pipeline() -> None:
     except Exception as e:
         logger.error(f"Delivery failed: {e}")
 
+    # FR54: Send test mode confirmation
+    if is_test_mode():
+        try:
+            await _send_test_confirmation(run_log, articles, errors)
+        except Exception as e:
+            logger.warning(f"Test confirmation failed (non-critical): {e}")
+
     # Log pipeline run
     elapsed = time.monotonic() - start
     run_log["duration_sec"] = round(elapsed, 1)
@@ -82,6 +89,12 @@ async def _run_pipeline() -> None:
         await _write_run_log(run_log)
     except Exception as e:
         logger.error(f"Failed to write pipeline log: {e}")
+
+    # Write dashboard data to disk (FR45-FR49, QĐ7)
+    try:
+        _write_dashboard_data(run_log, articles, errors)
+    except Exception as e:
+        logger.error(f"Dashboard data write failed (non-critical): {e}")
 
 
 async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
@@ -123,6 +136,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     crypto_articles = results[1] if not isinstance(results[1], Exception) else []
     market_data = results[2] if not isinstance(results[2], Exception) else []
     onchain_data = results[3] if not isinstance(results[3], Exception) else []
+    tg_messages = results[4] if not isinstance(results[4], Exception) else []
 
     for r in results:
         if isinstance(r, Exception):
@@ -134,18 +148,26 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     for a in rss_articles:
         all_news.append({
             "title": a.title, "url": a.url,
-            "source": a.source_name, "summary": a.summary,
+            "source_name": a.source_name, "summary": a.summary,
         })
     for a in crypto_articles:
         all_news.append({
             "title": a.title, "url": a.url,
-            "source": a.source_name, "summary": a.summary,
+            "source_name": a.source_name, "summary": a.summary,
         })
-    cleaned_news = clean_articles(all_news)
+    for m in tg_messages:
+        all_news.append({
+            "title": m.message_text[:100] if m.message_text else "",
+            "url": "",
+            "source_name": f"TG:{m.channel_name}",
+            "summary": m.message_text or "",
+        })
+    clean_result = clean_articles(all_news)
+    cleaned_news = clean_result.articles
 
     # Build text summaries for LLM context
     news_text = "\n".join(
-        f"- {a.get('title', '')} ({a.get('source', '')})"
+        f"- {a.get('title', '')} ({a.get('source_name', '')})"
         for a in cleaned_news[:30]
     )
     market_text = "\n".join(
@@ -167,6 +189,12 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
             key_metrics["DXY"] = p.price
         elif p.symbol == "Gold":
             key_metrics["Gold"] = f"${p.price:,.0f}"
+        elif p.symbol == "BTC_Dominance":
+            key_metrics["BTC Dominance"] = f"{p.price:.1f}%"
+        elif p.symbol == "Total_MCap":
+            key_metrics["Total MCap"] = f"${p.price / 1e12:.2f}T"
+        elif p.symbol == "USDT/VND":
+            key_metrics["USDT/VND"] = f"{p.price:,.0f}"
     for m in onchain_data:
         if m.metric_name == "BTC_Funding_Rate":
             key_metrics["Funding Rate"] = f"{m.value:.4f}"
@@ -185,14 +213,14 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         errors.append(e)
         return [], errors
 
-    # Load config from Sheets (QĐ8, FR41)
+    # Load config from Sheets (QĐ8, FR41) — gspread is sync, wrap with to_thread
     templates = {}
     coin_lists: dict[str, list[str]] = {}
     try:
         sheets = SheetsClient()
         config = ConfigLoader(sheets)
-        raw_templates = config.get_templates()
-        coin_lists = config.get_coin_list()
+        raw_templates = await asyncio.to_thread(config.get_templates)
+        coin_lists = await asyncio.to_thread(config.get_coin_list)
         templates = load_templates(raw_templates)
     except Exception as e:
         logger.warning(f"Config load failed, using defaults: {e}")
@@ -266,17 +294,20 @@ async def _write_run_log(run_log: dict) -> None:
 
     try:
         sheets = SheetsClient()
+        # Schema: ID, Thời gian bắt đầu, Thời gian kết thúc, Thời lượng (giây),
+        #         Trạng thái, LLM sử dụng, Lỗi, Ghi chú
         row = [
+            "",  # ID — auto-generated or blank
             run_log.get("start_time", ""),
             run_log.get("end_time", ""),
             str(run_log.get("duration_sec", 0)),
             run_log.get("status", ""),
-            str(run_log.get("tiers_delivered", 0)),
             run_log.get("llm_used", ""),
             "; ".join(run_log.get("errors", [])),
-            run_log.get("delivery_method", ""),
+            f"daily | {run_log.get('tiers_delivered', 0)} tiers"
+            f" | {run_log.get('delivery_method', '')}",
         ]
-        sheets.batch_append("NHAT_KY_PIPELINE", [row])
+        await asyncio.to_thread(sheets.batch_append, "NHAT_KY_PIPELINE", [row])
     except Exception as e:
         logger.warning(f"Run log write failed (non-critical): {e}")
 
@@ -293,6 +324,100 @@ def _new_run_log() -> dict:
         "errors": [],
         "delivery_method": "",
     }
+
+
+def _write_dashboard_data(
+    run_log: dict,
+    articles: list[dict[str, str]],
+    errors: list[Exception],
+) -> None:
+    """Write dashboard-data.json to gh-pages/ directory (QĐ7)."""
+    import pathlib
+
+    from cic_daily_report.dashboard.data_generator import (
+        DashboardData,
+        ErrorEntry,
+        LastRun,
+        TierStatus,
+        generate_dashboard_data,
+    )
+
+    last_run = LastRun(
+        timestamp=run_log.get("start_time", ""),
+        status=run_log.get("status", "unknown"),
+        pipeline_type="daily",
+        duration_seconds=run_log.get("duration_sec", 0),
+    )
+
+    tier_delivery = [
+        TierStatus(tier=a.get("tier", ""), status="sent")
+        for a in articles
+    ]
+
+    error_history = [
+        ErrorEntry(
+            timestamp=run_log.get("start_time", ""),
+            message=str(e),
+            severity="error",
+        )
+        for e in errors
+    ]
+
+    # Try to merge with existing dashboard data
+    gh_pages = pathlib.Path("gh-pages")
+    gh_pages.mkdir(exist_ok=True)
+    data_file = gh_pages / "dashboard-data.json"
+
+    existing_errors: list[ErrorEntry] = []
+    if data_file.exists():
+        try:
+            existing = DashboardData.from_json(data_file.read_text(encoding="utf-8"))
+            existing_errors = existing.error_history
+        except Exception:
+            pass  # Start fresh if can't parse
+
+    from cic_daily_report.dashboard.data_generator import merge_error_history
+
+    merged_errors = merge_error_history(existing_errors, error_history)
+
+    dashboard = generate_dashboard_data(
+        last_run=last_run,
+        tier_delivery=tier_delivery,
+        error_history=merged_errors,
+    )
+
+    data_file.write_text(dashboard.to_json(), encoding="utf-8")
+    logger.info(f"Dashboard data written to {data_file}")
+
+
+async def _send_test_confirmation(
+    run_log: dict,
+    articles: list[dict[str, str]],
+    errors: list[Exception],
+) -> None:
+    """FR54: Send test mode confirmation message to operator via TG."""
+    from cic_daily_report.delivery.telegram_bot import TelegramBot
+
+    status = run_log.get("status", "unknown")
+    duration = run_log.get("duration_sec", 0)
+    tier_count = len(articles)
+    error_count = len(errors)
+
+    msg = (
+        f"[TEST MODE] Pipeline hoàn tất\n\n"
+        f"Trạng thái: {status}\n"
+        f"Thời gian: {duration:.0f}s\n"
+        f"Số bài: {tier_count}\n"
+        f"Lỗi: {error_count}\n"
+    )
+    if errors:
+        msg += "\nLỗi chi tiết:\n" + "\n".join(f"- {e}" for e in errors[:5])
+
+    try:
+        bot = TelegramBot()
+        await bot.send_message(msg)
+    except Exception:
+        logger.debug("Test confirmation skipped — TG not configured")
 
 
 if __name__ == "__main__":

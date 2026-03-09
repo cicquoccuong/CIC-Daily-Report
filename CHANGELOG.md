@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.10.0] - 2026-03-09
+
+### Fixed — P0 Critical Bugs (Dot 3)
+- **CRASH FIX**: `clean_articles()` returns `CleanResult`, not list — was crashing daily pipeline
+- **DATA FIX**: `source_name` key mismatch in news dict construction (2 places + news_text builder)
+- **SCHEMA FIX**: `NHAT_KY_PIPELINE` row format — now matches 8-column Sheet schema
+- **SCHEMA FIX**: `BREAKING_LOG` field order — `to_row()`/`from_row()` reordered to match Sheet columns
+- **ASYNC FIX**: Wrapped `SheetsClient` + `EmailBackup` sync calls with `asyncio.to_thread()`
+- **WIRING FIX**: Dashboard data write (`_write_dashboard_data()`) now called after delivery
+- **DATA FIX**: Telegram messages (results[4]) no longer silently dropped
+- **DELIVERY FIX**: Breaking news rate limit delay (1.5s between messages)
+- Removed dead dependencies: `python-telegram-bot`, `pyyaml` (TG bot uses raw httpx)
+
+### Added — P2 Features (Dot 3)
+- **FR6**: MEXC collector — free API, no key, top 15 USDT pairs (`api.mexc.com/api/v3/ticker/24hr`)
+- **FR22**: Cross-verify CoinLore vs MEXC prices — logs warning if deviation >5%
+- **FR10b**: USDT/VND rate via CoinGecko (`simple/price?ids=tether&vs_currencies=vnd`)
+- **FR20**: BTC Dominance + Total Market Cap via CoinLore `/api/global/`
+- **FR54**: Test mode TG confirmation message (pipeline status summary)
+- **T10**: Inner timeout (60s) for breaking pipeline detection stage
+- **T6**: Coinglass v2 deprecation warning with v4 migration notes
+- Key metrics expanded: BTC Dominance, Total MCap, USDT/VND in LLM context
+- Test fixtures: `mexc_tickers.json`, `coinlore_global.json`, `coingecko_usdt_vnd.json`
+- 7 new test classes (11→ tests in test_market_data.py)
+
+### Documentation
+- `docs/API_RESEARCH.md`: Full API audit — MEXC, CoinGecko, CoinLore, Coinglass v2/v4
+- Updated CLAUDE.md with new collectors and data sources
+
 ## [0.9.0] - 2026-03-09
 
 ### Fixed — Comprehensive Audit (Dot 1 + Dot 2)

@@ -6,6 +6,7 @@ error notifications, and fallback to email.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -136,7 +137,7 @@ class DeliveryManager:
                     notification = build_notification(pipeline_errors)
                     body += f"\n\n--- ERRORS ---\n{notification.format_message()}"
 
-                self._email.send_daily_report(date_str, body)
+                await asyncio.to_thread(self._email.send_daily_report, date_str, body)
                 result.method = "email_backup"
                 result.messages_sent = 1
                 logger.info("Fallback to email backup successful")
