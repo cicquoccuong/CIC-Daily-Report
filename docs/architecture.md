@@ -602,7 +602,7 @@ cic-daily-report/
 │       │   ├── __init__.py
 │       │   ├── event_detector.py           # FR23-24: Panic score + keywords
 │       │   ├── alert_manager.py            # FR25-26: Severity + Night Mode
-│       │   └── dedup_manager.py            # PM: Hash dedup, 24h TTL
+│       │   └── dedup_manager.py            # PM: Hash dedup, 4h TTL
 │       │
 │       ├── storage/                        # FR39-FR44: Google Sheets
 │       │   ├── __init__.py

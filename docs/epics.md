@@ -164,7 +164,7 @@ This document provides the complete epic and story breakdown for CIC Daily Repor
    - Vietnamese with diacritics cho Sheet column headers
    - gspread.batch_update() cho tất cả Sheet writes
    - Retry: exponential backoff 3 lần (2s→4s→8s)
-   - Breaking news dedup: hash(title+source), 24h TTL
+   - Breaking news dedup: hash(title+source), 4h TTL
    - Sheet size: max 5,000 rows/tab, auto-cleanup 30 ngày
    - Test coverage: core ≥80%, utils ≥60%, adapters interface test bắt buộc
    - CI fail nếu coverage dưới threshold (--cov-fail-under=60)
@@ -237,7 +237,7 @@ Anh Cường nhận đủ 6 messages trên Telegram mỗi sáng, format copy-pas
 Pipeline tự phát hiện breaking events (hourly), phân loại severity (🔴🟠🟡), apply Night Mode, gửi alert về Telegram — Anh Cường review 30 giây rồi forward lên BIC Chat.
 **FRs covered:** FR23, FR24, FR25, FR26, FR27, FR28, FR56
 **NFRs addressed:** NFR3, NFR26
-**Notes:** FR25 MVP text-only. Dedup hash(title+source) TTL 24h. Config trên Sheets (QĐ8). Có thể làm song song với Epic 6.
+**Notes:** FR25 MVP text-only. Dedup hash(title+source) TTL 4h. Config trên Sheets (QĐ8). Có thể làm song song với Epic 6.
 
 ### Epic 6: Pipeline Health Dashboard
 Anh Cường xem dashboard trên web — pipeline status, LLM used, tier delivery, error history 7 ngày, data freshness. Auto-update mỗi lần pipeline chạy.
@@ -1151,8 +1151,8 @@ So that **I don't receive the same breaking news multiple times**.
 **Then** it generates dedup hash: `hash(title + source)`
 **And** checks hash against BREAKING_LOG tab on Google Sheets (persistent, not in-memory)
 
-**Given** 24h TTL cooldown
-**When** hash exists in BREAKING_LOG with timestamp < 24h ago
+**Given** 4h TTL cooldown
+**When** hash exists in BREAKING_LOG with timestamp < 4h ago
 **Then** event is skipped as duplicate
 **And** logs: "Dedup: skipped duplicate event '{title}'"
 
@@ -1229,7 +1229,7 @@ So that **I only get woken up for truly critical events**.
 
 **Given** 🟡 deferred to daily
 **When** daily pipeline runs (Epic 2-3)
-**Then** it reads BREAKING_LOG for entries with `status="deferred_to_daily"` from last 24h
+**Then** it reads BREAKING_LOG for entries with `status="deferred_to_daily"` from last 4h
 **And** includes them in daily report as "Breaking Events" section
 **And** updates BREAKING_LOG status to "included_in_daily"
 

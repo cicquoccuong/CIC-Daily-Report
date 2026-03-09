@@ -33,7 +33,7 @@ Data Sources → Collectors → LLM Generator → NQ05 Filter → Telegram/Email
 - **Python 3.12+** with async (asyncio + httpx)
 - **uv** package manager
 - **ruff** linting (line-length=100)
-- **pytest** + pytest-asyncio + pytest-cov (319 tests, 80%+ coverage)
+- **pytest** + pytest-asyncio + pytest-cov (344 tests, 80%+ coverage)
 - **GitHub Actions** (daily pipeline + breaking news + CI)
 - **Google Sheets** (9 tabs — storage + config)
 - **Groq/Gemini** AI (multi-LLM fallback chain)
