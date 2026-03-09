@@ -4,9 +4,6 @@ on:
   schedule:
     - cron: '0 * * * *'  # Hourly
   workflow_dispatch:      # manual trigger
-  push:
-    branches: [master]
-    paths: ['.github/workflows/breaking-news.yml']
 
 jobs:
   breaking-check:
