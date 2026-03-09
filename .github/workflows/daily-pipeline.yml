@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: '0 1 * * *'  # 01:00 UTC = 08:00 VN
   workflow_dispatch:      # manual trigger
+  push:
+    branches: [master]
+    paths: ['.github/workflows/daily-pipeline.yml']
 
 jobs:
   daily-report:
