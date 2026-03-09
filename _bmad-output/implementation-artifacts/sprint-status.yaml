@@ -100,9 +100,9 @@ development_status:
   epic-6-retrospective: optional
 
   # Epic 7: Onboarding & Operational Readiness (4 stories)
-  epic-7: backlog
-  7-1-setup-guide-visual-screenshots: backlog
-  7-2-operator-operations-guide: backlog
-  7-3-one-click-test-run-confirmation: backlog
-  7-4-readme-project-documentation: backlog
+  epic-7: done
+  7-1-setup-guide-visual-screenshots: done
+  7-2-operator-operations-guide: done
+  7-3-one-click-test-run-confirmation: done
+  7-4-readme-project-documentation: done
   epic-7-retrospective: optional

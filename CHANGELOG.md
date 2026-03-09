@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0] - 2026-03-09
+
+### Added — Epic 7: Onboarding & Operational Readiness
+- Setup Guide: Vietnamese step-by-step, no-code friendly, 15-20 min setup (FR51-FR52)
+- Operations Guide: daily workflow, coin management, config, troubleshooting FAQ (Vietnamese)
+- Test mode: pipeline detects workflow_dispatch for lite mode (FR53)
+- README: comprehensive project overview, architecture, quick start, dev workflow
+
 ## [0.7.0] - 2026-03-09
 
 ### Added — Epic 6: Pipeline Health Dashboard
