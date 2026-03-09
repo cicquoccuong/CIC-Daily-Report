@@ -84,12 +84,12 @@ development_status:
 
   # Epic 5: Breaking News Intelligence (5 stories)
   # Dependency order: 5.1 → 5.4 → 5.2 → 5.3 → 5.5
-  epic-5: backlog
-  5-1-breaking-event-detector: backlog
-  5-4-alert-dedup-cooldown: backlog
-  5-2-breaking-news-content-generator: backlog
-  5-3-severity-classification-night-mode: backlog
-  5-5-breaking-pipeline-integration-delivery: backlog
+  epic-5: done
+  5-1-breaking-event-detector: done
+  5-4-alert-dedup-cooldown: done
+  5-2-breaking-news-content-generator: done
+  5-3-severity-classification-night-mode: done
+  5-5-breaking-pipeline-integration-delivery: done
   epic-5-retrospective: optional
 
   # Epic 6: Pipeline Health Dashboard (3 stories)

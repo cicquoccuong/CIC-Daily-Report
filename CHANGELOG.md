@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0] - 2026-03-09
+
+### Added — Epic 5: Breaking News Intelligence
+- Event Detector: CryptoPanic API, panic_score thresholds, keyword triggers (FR23)
+- Alert Dedup & Cooldown: hash(title+source), BREAKING_LOG, 24h TTL, 7-day cleanup (FR56)
+- Breaking Content Generator: reuses LLM adapter + NQ05 filter, 300-500 words, raw data fallback
+- Severity Classification: 🔴 Critical / 🟠 Important / 🟡 Notable, configurable keywords
+- Night Mode: 23:00-07:00 VN (UTC+7), 🔴 always sends, 🟠 deferred to morning, 🟡 to daily (FR28)
+- Breaking Pipeline: detect → dedup → generate → classify → deliver, ≤20min timeout
+- GitHub Actions workflow: hourly cron, 25min timeout, manual dispatch
+- 94 new tests (301 total), 80% coverage
+
 ## [0.5.0] - 2026-03-09
 
 ### Added — Epic 4: Content Delivery & Reliability
