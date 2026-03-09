@@ -15,8 +15,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate required secrets
+        run: |
+          MISSING=""
+          if [ -z "${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}" ]; then MISSING="$MISSING GOOGLE_SHEETS_CREDENTIALS"; fi
+          if [ -z "${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}" ]; then MISSING="$MISSING GOOGLE_SHEETS_SPREADSHEET_ID"; fi
+          if [ -z "${{ secrets.TELEGRAM_BOT_TOKEN }}" ]; then MISSING="$MISSING TELEGRAM_BOT_TOKEN"; fi
+          if [ -z "${{ secrets.TELEGRAM_CHAT_ID }}" ]; then MISSING="$MISSING TELEGRAM_CHAT_ID"; fi
+          if [ -z "${{ secrets.GROQ_API_KEY }}" ]; then MISSING="$MISSING GROQ_API_KEY"; fi
+          if [ -z "${{ secrets.CRYPTOPANIC_API_KEY }}" ]; then MISSING="$MISSING CRYPTOPANIC_API_KEY"; fi
+          if [ -n "$MISSING" ]; then
+            echo "::error::Missing required secrets:$MISSING"
+            echo "Go to Settings > Secrets and variables > Actions to add them."
+            exit 1
+          fi
+          echo "All required secrets configured."
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
       - name: Set up Python 3.12
         run: uv python install 3.12
@@ -34,6 +52,10 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           CRYPTOPANIC_API_KEY: ${{ secrets.CRYPTOPANIC_API_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_RECIPIENTS: ${{ secrets.SMTP_RECIPIENTS }}
         run: uv run cic-daily
 
       - name: Update dashboard on gh-pages

@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.12.0] - 2026-03-09
+
+### Added — GAS Menu & Auto Setup
+- **Google Apps Script Menu** (`gas/Menu.gs`): menu "📊 CIC Daily Report" trên Google Sheets
+  - ⚙️ Thiết Lập Tự Động — tạo 9 tab + header + định dạng (idempotent)
+  - 🔄 Đồng Bộ Cột Thiếu — thêm cột mới mà không xóa dữ liệu
+  - 🎨 Định Dạng Lại — sửa format bị lộn xộn
+  - 📊 Trạng Thái Hệ Thống + 📏 Đếm Dữ Liệu
+  - 🗑️ Dọn Dẹp Dữ Liệu Cũ (>30 ngày)
+- **Auto Setup** (`gas/AutoSetup.gs`): 9 tab schema khớp 100% với Python `sheets_client.py`
+  - Header: chữ đậm, nền xanh, chữ trắng, đóng băng hàng đầu
+  - Number formats: giá, phần trăm, khối lượng tự định dạng
+  - Default data: tab CAU_HINH ghi sẵn 9 cấu hình mặc định
+  - Xóa "Sheet1" mặc định tự động
+
+### Improved — GitHub Actions
+- Thêm bước **Validate required secrets** vào daily-pipeline + breaking-news
+  - Kiểm tra 6 secrets bắt buộc trước khi chạy → báo lỗi rõ ràng nếu thiếu
+- Bật **uv cache** (`enable-cache: true`) cho tất cả 3 workflows → cài nhanh hơn
+- Thêm **timeout-minutes: 10** cho test workflow
+- Thêm **SMTP_**** env vars vào daily-pipeline (email backup)
+- Test workflow trigger trên cả `main` và `master` branches
+
+### Updated — Documentation
+- `docs/SETUP_GUIDE.md`: thêm hướng dẫn cài GAS menu + Base64 encode + đánh dấu CRYPTOPANIC_API_KEY là bắt buộc
+- `gas/README.md`: hướng dẫn cài đặt GAS từng bước
+
 ## [0.11.0] - 2026-03-09
 
 ### Fixed — Comprehensive 13-Item Fix Batch (Đợt 3 final)
