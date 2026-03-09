@@ -93,10 +93,10 @@ development_status:
   epic-5-retrospective: optional
 
   # Epic 6: Pipeline Health Dashboard (3 stories)
-  epic-6: backlog
-  6-1-dashboard-data-generator-json-output: backlog
-  6-2-github-pages-static-dashboard: backlog
-  6-3-dashboard-deployment-ci-integration: backlog
+  epic-6: done
+  6-1-dashboard-data-generator-json-output: done
+  6-2-github-pages-static-dashboard: done
+  6-3-dashboard-deployment-ci-integration: done
   epic-6-retrospective: optional
 
   # Epic 7: Onboarding & Operational Readiness (4 stories)

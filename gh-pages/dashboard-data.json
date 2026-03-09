@@ -1,0 +1,18 @@
+{
+  "generated_at": "",
+  "last_run": {
+    "timestamp": "",
+    "status": "unknown",
+    "pipeline_type": "daily",
+    "duration_seconds": 0
+  },
+  "llm_used": {
+    "provider": "none",
+    "is_fallback": false,
+    "model": ""
+  },
+  "tier_delivery": [],
+  "error_history": [],
+  "data_freshness": [],
+  "breaking_stats": {}
+}

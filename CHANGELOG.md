@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.0] - 2026-03-09
+
+### Added — Epic 6: Pipeline Health Dashboard
+- Dashboard Data Generator: JSON output with last_run, llm_used, tier_delivery, error_history, data_freshness (FR45-FR49)
+- GitHub Pages static dashboard: dark theme, responsive, auto-refresh 5min, Vietnamese locale (QĐ7)
+- CI Integration: both daily + breaking workflows auto-commit dashboard-data.json to gh-pages branch
+- Error history: 7-day retention with merge/trim logic
+- 18 new tests (319 total), 80.5% coverage
+
 ## [0.6.0] - 2026-03-09
 
 ### Added — Epic 5: Breaking News Intelligence

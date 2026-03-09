@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CIC Daily Report — Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>CIC Daily Report Dashboard</h1>
+      <p class="updated-at" id="updated-at">Loading...</p>
+    </header>
+
+    <div id="error-banner" class="error-banner" style="display:none"></div>
+
+    <div class="grid">
+      <!-- Last Run -->
+      <div class="card" id="card-last-run">
+        <h2>Pipeline Status</h2>
+        <div>
+          <span class="stat-value" id="run-status">—</span>
+          <span class="badge unknown" id="run-badge">loading</span>
+        </div>
+        <p class="stat-label" id="run-time">—</p>
+        <p class="stat-label" id="run-duration">—</p>
+      </div>
+
+      <!-- LLM Status -->
+      <div class="card" id="card-llm">
+        <h2>LLM Provider</h2>
+        <div class="stat-value" id="llm-provider">—</div>
+        <p class="stat-label" id="llm-model">—</p>
+        <p class="stat-label" id="llm-fallback" style="display:none"></p>
+      </div>
+
+      <!-- Tier Delivery -->
+      <div class="card" id="card-tiers">
+        <h2>Tier Delivery</h2>
+        <div id="tier-list">
+          <p class="stat-label">No data</p>
+        </div>
+      </div>
+
+      <!-- Breaking Stats -->
+      <div class="card" id="card-breaking">
+        <h2>Breaking News</h2>
+        <div id="breaking-stats">
+          <p class="stat-label">No data</p>
+        </div>
+      </div>
+
+      <!-- Data Freshness -->
+      <div class="card full-width" id="card-freshness">
+        <h2>Data Freshness</h2>
+        <div id="freshness-list">
+          <p class="stat-label">No data</p>
+        </div>
+      </div>
+
+      <!-- Error History -->
+      <div class="card full-width" id="card-errors">
+        <h2>Error History (7 days)</h2>
+        <div id="error-list">
+          <p class="stat-label">No errors</p>
+        </div>
+      </div>
+    </div>
+
+    <footer style="text-align:center;padding:16px;color:#64748b;font-size:0.75rem">
+      Auto-refresh every 5 minutes
+    </footer>
+  </div>
+
+  <script>
+    const DATA_URL = 'dashboard-data.json';
+    const REFRESH_MS = 5 * 60 * 1000; // 5 minutes
+
+    async function loadDashboard() {
+      try {
+        const resp = await fetch(DATA_URL + '?t=' + Date.now());
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        renderDashboard(data);
+        hideError();
+      } catch (e) {
+        showError('Failed to load dashboard data: ' + e.message);
+      }
+    }
+
+    function renderDashboard(data) {
+      // Updated at
+      const genAt = data.generated_at || '';
+      document.getElementById('updated-at').textContent =
+        genAt ? formatDate(genAt) : 'No data';
+
+      // Last run
+      const lr = data.last_run || {};
+      const statusEl = document.getElementById('run-status');
+      const badgeEl = document.getElementById('run-badge');
+      statusEl.textContent = (lr.pipeline_type || 'daily').toUpperCase();
+      badgeEl.textContent = lr.status || 'unknown';
+      badgeEl.className = 'badge ' + (lr.status || 'unknown');
+      document.getElementById('run-time').textContent =
+        lr.timestamp ? formatDate(lr.timestamp) : '—';
+      document.getElementById('run-duration').textContent =
+        lr.duration_seconds ? lr.duration_seconds.toFixed(1) + 's' : '';
+
+      // LLM
+      const llm = data.llm_used || {};
+      document.getElementById('llm-provider').textContent =
+        llm.provider || 'none';
+      document.getElementById('llm-model').textContent =
+        llm.model || '';
+      const fbEl = document.getElementById('llm-fallback');
+      if (llm.is_fallback) {
+        fbEl.textContent = '(fallback)';
+        fbEl.style.display = 'block';
+        fbEl.style.color = '#eab308';
+      } else {
+        fbEl.style.display = 'none';
+      }
+
+      // Tier delivery
+      const tierList = document.getElementById('tier-list');
+      const tiers = data.tier_delivery || [];
+      if (tiers.length === 0) {
+        tierList.innerHTML = '<p class="stat-label">No delivery data</p>';
+      } else {
+        tierList.innerHTML = tiers.map(function(t) {
+          var icon = t.status === 'sent' ? '\u2705' :
+                     t.status === 'failed' ? '\u274C' : '\u2B55';
+          return '<div class="tier-row">' +
+            '<span class="tier-name">' + t.tier + '</span>' +
+            '<span class="tier-icon">' + icon + '</span>' +
+            '</div>';
+        }).join('');
+      }
+
+      // Breaking stats
+      var bs = data.breaking_stats || {};
+      var bsEl = document.getElementById('breaking-stats');
+      if (Object.keys(bs).length === 0) {
+        bsEl.innerHTML = '<p class="stat-label">No breaking data</p>';
+      } else {
+        bsEl.innerHTML =
+          '<div class="stat-value">' + (bs.events_sent || 0) + '</div>' +
+          '<p class="stat-label">events sent</p>' +
+          '<p class="stat-label">' + (bs.events_deferred || 0) +
+          ' deferred, ' + (bs.events_detected || 0) + ' detected</p>';
+      }
+
+      // Data freshness
+      var fList = document.getElementById('freshness-list');
+      var fresh = data.data_freshness || [];
+      if (fresh.length === 0) {
+        fList.innerHTML = '<p class="stat-label">No freshness data</p>';
+      } else {
+        fList.innerHTML = fresh.map(function(f) {
+          return '<div class="freshness-row">' +
+            '<span class="freshness-dot ' + (f.status || 'unknown') + '"></span>' +
+            '<span class="freshness-source">' + f.source + '</span>' +
+            '<span class="freshness-time">' +
+            (f.last_collected ? formatDate(f.last_collected) : 'unknown') +
+            '</span></div>';
+        }).join('');
+      }
+
+      // Error history
+      var eList = document.getElementById('error-list');
+      var errors = data.error_history || [];
+      if (errors.length === 0) {
+        eList.innerHTML = '<p class="stat-label">No errors in last 7 days</p>';
+      } else {
+        var rows = errors.map(function(e) {
+          return '<tr>' +
+            '<td>' + (e.timestamp ? formatDate(e.timestamp) : '—') + '</td>' +
+            '<td>' + (e.code || '—') + '</td>' +
+            '<td>' + (e.message || '—') + '</td>' +
+            '<td>' + (e.severity || 'warning') + '</td>' +
+            '</tr>';
+        }).join('');
+        eList.innerHTML = '<table class="error-table">' +
+          '<tr><th>Time</th><th>Code</th><th>Message</th><th>Severity</th></tr>' +
+          rows + '</table>';
+      }
+    }
+
+    function formatDate(iso) {
+      try {
+        var d = new Date(iso);
+        return d.toLocaleString('vi-VN', {
+          timeZone: 'Asia/Ho_Chi_Minh',
+          day: '2-digit', month: '2-digit', year: 'numeric',
+          hour: '2-digit', minute: '2-digit'
+        });
+      } catch (e) {
+        return iso;
+      }
+    }
+
+    function showError(msg) {
+      var el = document.getElementById('error-banner');
+      el.textContent = msg;
+      el.style.display = 'block';
+    }
+
+    function hideError() {
+      document.getElementById('error-banner').style.display = 'none';
+    }
+
+    // Initial load + auto-refresh
+    loadDashboard();
+    setInterval(loadDashboard, REFRESH_MS);
+  </script>
+</body>
+</html>
