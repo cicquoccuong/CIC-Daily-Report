@@ -125,8 +125,7 @@ class DedupManager:
             result.entries_written.append(entry)
 
         logger.info(
-            f"Dedup: {len(result.new_events)} new, "
-            f"{result.duplicates_skipped} duplicates skipped"
+            f"Dedup: {len(result.new_events)} new, {result.duplicates_skipped} duplicates skipped"
         )
         return result
 

@@ -146,37 +146,43 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     # Clean & dedup news (FR11, FR12, FR55)
     all_news = []
     for a in rss_articles:
-        all_news.append({
-            "title": a.title, "url": a.url,
-            "source_name": a.source_name, "summary": a.summary,
-        })
+        all_news.append(
+            {
+                "title": a.title,
+                "url": a.url,
+                "source_name": a.source_name,
+                "summary": a.summary,
+            }
+        )
     for a in crypto_articles:
-        all_news.append({
-            "title": a.title, "url": a.url,
-            "source_name": a.source_name, "summary": a.summary,
-        })
+        all_news.append(
+            {
+                "title": a.title,
+                "url": a.url,
+                "source_name": a.source_name,
+                "summary": a.summary,
+            }
+        )
     for m in tg_messages:
-        all_news.append({
-            "title": m.message_text[:100] if m.message_text else "",
-            "url": "",
-            "source_name": f"TG:{m.channel_name}",
-            "summary": m.message_text or "",
-        })
+        all_news.append(
+            {
+                "title": m.message_text[:100] if m.message_text else "",
+                "url": "",
+                "source_name": f"TG:{m.channel_name}",
+                "summary": m.message_text or "",
+            }
+        )
     clean_result = clean_articles(all_news)
     cleaned_news = clean_result.articles
 
     # Build text summaries for LLM context
     news_text = "\n".join(
-        f"- {a.get('title', '')} ({a.get('source_name', '')})"
-        for a in cleaned_news[:30]
+        f"- {a.get('title', '')} ({a.get('source_name', '')})" for a in cleaned_news[:30]
     )
     market_text = "\n".join(
-        f"- {p.symbol}: ${p.price} ({p.change_24h:+.1f}%)"
-        for p in market_data[:20]
+        f"- {p.symbol}: ${p.price} ({p.change_24h:+.1f}%)" for p in market_data[:20]
     )
-    onchain_text = "\n".join(
-        f"- {m.metric_name}: {m.value} ({m.source})" for m in onchain_data
-    )
+    onchain_text = "\n".join(f"- {m.metric_name}: {m.value} ({m.source})" for m in onchain_data)
 
     # Build key metrics dict (FR20)
     key_metrics: dict[str, str | float] = {}
@@ -329,16 +335,18 @@ async def _write_generated_content(
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     rows = []
     for article in articles:
-        rows.append([
-            "",  # ID
-            now,
-            "daily_report",
-            article.get("tier", ""),
-            article.get("content", "")[:5000],  # truncate for Sheets cell limit
-            "",  # LLM sử dụng
-            "pending",
-            "",  # Ghi chú
-        ])
+        rows.append(
+            [
+                "",  # ID
+                now,
+                "daily_report",
+                article.get("tier", ""),
+                article.get("content", "")[:5000],  # truncate for Sheets cell limit
+                "",  # LLM sử dụng
+                "pending",
+                "",  # Ghi chú
+            ]
+        )
     await _aio.to_thread(sheets.batch_append, "NOI_DUNG_DA_TAO", rows)
     logger.info(f"Wrote {len(rows)} rows to NOI_DUNG_DA_TAO")
 
@@ -427,10 +435,7 @@ def _write_dashboard_data(
         duration_seconds=run_log.get("duration_sec", 0),
     )
 
-    tier_delivery = [
-        TierStatus(tier=a.get("tier", ""), status="sent")
-        for a in articles
-    ]
+    tier_delivery = [TierStatus(tier=a.get("tier", ""), status="sent") for a in articles]
 
     error_history = [
         ErrorEntry(

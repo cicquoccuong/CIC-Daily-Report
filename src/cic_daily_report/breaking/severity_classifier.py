@@ -25,9 +25,9 @@ IMPORTANT = "important"
 NOTABLE = "notable"
 
 SEVERITY_EMOJI = {
-    CRITICAL: "\U0001f534",   # 🔴
+    CRITICAL: "\U0001f534",  # 🔴
     IMPORTANT: "\U0001f7e0",  # 🟠
-    NOTABLE: "\U0001f7e1",    # 🟡
+    NOTABLE: "\U0001f7e1",  # 🟡
 }
 
 # Default classification keywords (configurable via CAU_HINH)
@@ -55,12 +55,8 @@ DEFAULT_IMPORTANT_KEYWORDS = [
 class ClassificationConfig:
     """Configuration for severity classification."""
 
-    critical_keywords: list[str] = field(
-        default_factory=lambda: list(DEFAULT_CRITICAL_KEYWORDS)
-    )
-    important_keywords: list[str] = field(
-        default_factory=lambda: list(DEFAULT_IMPORTANT_KEYWORDS)
-    )
+    critical_keywords: list[str] = field(default_factory=lambda: list(DEFAULT_CRITICAL_KEYWORDS))
+    important_keywords: list[str] = field(default_factory=lambda: list(DEFAULT_IMPORTANT_KEYWORDS))
     critical_panic_threshold: int = 85
     important_panic_threshold: int = 60
 
@@ -107,8 +103,7 @@ def classify_event(
     action = _determine_action(severity, is_night)
 
     logger.info(
-        f"Classified '{event.title}': {severity} "
-        f"({'night' if is_night else 'day'}) → {action}"
+        f"Classified '{event.title}': {severity} ({'night' if is_night else 'day'}) → {action}"
     )
 
     return ClassifiedEvent(

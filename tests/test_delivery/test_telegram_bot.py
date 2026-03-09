@@ -51,9 +51,7 @@ class TestSplitMessage:
 
     def test_split_by_sections(self):
         # Each section must exceed max to force split
-        content = (
-            "Intro text\n\n## Section 1\n" + "x" * 3000 + "\n\n## Section 2\n" + "y" * 3000
-        )
+        content = "Intro text\n\n## Section 1\n" + "x" * 3000 + "\n\n## Section 2\n" + "y" * 3000
         msgs = split_message("L1", content)
         assert len(msgs) >= 2
 

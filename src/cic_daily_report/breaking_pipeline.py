@@ -189,9 +189,7 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             run_log.events_deferred += 1
             result.deferred_events.append(classified_event)
             # Update dedup entry status
-            h = compute_hash(
-                classified_event.event.title, classified_event.event.source
-            )
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
             dedup_mgr.update_entry_status(h, classified_event.delivery_action)
             continue
 
@@ -207,9 +205,7 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             run_log.events_sent += 1
 
             # Update dedup entry
-            h = compute_hash(
-                classified_event.event.title, classified_event.event.source
-            )
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
             dedup_mgr.update_entry_status(
                 h,
                 "sent",
@@ -296,8 +292,7 @@ async def _deliver_breaking(result: BreakingPipelineResult) -> None:
     """Deliver breaking news content via Telegram Bot."""
     from cic_daily_report.delivery.telegram_bot import TelegramBot
 
-    severity_map = {"critical": "\U0001f534", "important": "\U0001f7e0",
-                    "notable": "\U0001f7e1"}
+    severity_map = {"critical": "\U0001f534", "important": "\U0001f7e0", "notable": "\U0001f7e1"}
     try:
         bot = TelegramBot()
         for content in result.contents:

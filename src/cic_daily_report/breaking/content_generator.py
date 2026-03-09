@@ -103,9 +103,7 @@ async def generate_breaking_content(
         word_count = len(filtered.content.split())
         model_used = getattr(llm, "last_provider", response.model)
 
-        logger.info(
-            f"Breaking content generated: {word_count} words via {model_used}"
-        )
+        logger.info(f"Breaking content generated: {word_count} words via {model_used}")
 
         return BreakingContent(
             event=event,

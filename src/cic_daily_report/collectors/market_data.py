@@ -162,9 +162,21 @@ async def _collect_mexc() -> list[MarketDataPoint]:
     """
     url = "https://api.mexc.com/api/v3/ticker/24hr"
     target_symbols = {
-        "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
-        "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT",
-        "MATICUSDT", "UNIUSDT", "LTCUSDT", "ATOMUSDT", "NEARUSDT",
+        "BTCUSDT",
+        "ETHUSDT",
+        "BNBUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ADAUSDT",
+        "DOGEUSDT",
+        "AVAXUSDT",
+        "DOTUSDT",
+        "LINKUSDT",
+        "MATICUSDT",
+        "UNIUSDT",
+        "LTCUSDT",
+        "ATOMUSDT",
+        "NEARUSDT",
     }
     try:
         async with httpx.AsyncClient(timeout=30) as client:

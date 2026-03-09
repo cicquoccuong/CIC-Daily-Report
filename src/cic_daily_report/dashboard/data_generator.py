@@ -173,14 +173,8 @@ def _dict_to_dashboard(data: dict) -> DashboardData:
         generated_at=data.get("generated_at", ""),
         last_run=LastRun(**last_run_data) if last_run_data else LastRun(),
         llm_used=LLMStatus(**llm_data) if llm_data else LLMStatus(),
-        tier_delivery=[
-            TierStatus(**t) for t in data.get("tier_delivery", [])
-        ],
-        error_history=[
-            ErrorEntry(**e) for e in data.get("error_history", [])
-        ],
-        data_freshness=[
-            DataFreshness(**d) for d in data.get("data_freshness", [])
-        ],
+        tier_delivery=[TierStatus(**t) for t in data.get("tier_delivery", [])],
+        error_history=[ErrorEntry(**e) for e in data.get("error_history", [])],
+        data_freshness=[DataFreshness(**d) for d in data.get("data_freshness", [])],
         breaking_stats=data.get("breaking_stats", {}),
     )
