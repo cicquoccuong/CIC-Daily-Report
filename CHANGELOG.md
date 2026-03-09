@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0] - 2026-03-09
+
+### Added — Epic 4: Content Delivery & Reliability
+- Telegram Bot: send 6 messages (5 tiers + summary), smart splitting (QĐ6, 4096 char limit)
+- Retry & partial delivery: shared retry_utils, status line per tier, always deliver something (NFR7)
+- Error notifications: Vietnamese action suggestions, error grouping, severity levels (🔴/⚠️)
+- Email backup: SMTP/Gmail, plain text, health check, daily + breaking formats (FR33b)
+- Delivery Manager: TG → retry → email fallback orchestration
+- Daily pipeline orchestration: timeout (40 min), partial delivery, run logging (FR58)
+- E2E integration test: full flow mock (6 deliverables, NQ05 pass, partial delivery)
+
 ## [0.4.0] - 2026-03-09
 
 ### Added — Epic 3: AI Content Generation & NQ05 Compliance
