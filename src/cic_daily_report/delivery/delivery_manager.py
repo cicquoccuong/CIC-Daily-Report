@@ -155,4 +155,4 @@ def _combine_content(articles: list[dict[str, str]]) -> str:
         tier = article.get("tier", "")
         content = article.get("content", "")
         parts.append(f"[{tier}]\n{content}")
-    return "\n\n{'=' * 50}\n\n".join(parts)
+    return f"\n\n{'=' * 50}\n\n".join(parts)

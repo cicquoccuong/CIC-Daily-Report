@@ -200,11 +200,38 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             logger.error(f"Content generation failed for '{classified_event.event.title}': {e}")
             run_log.errors.append(f"Generate: {e}")
 
+    # Deliver generated content via Telegram
+    if result.contents:
+        await _deliver_breaking(result)
+
     # Cleanup old entries
     dedup_mgr.cleanup_old_entries()
 
     run_log.status = "success" if run_log.events_sent > 0 else "partial"
     return result
+
+
+async def _deliver_breaking(result: BreakingPipelineResult) -> None:
+    """Deliver breaking news content via Telegram Bot."""
+    from cic_daily_report.delivery.telegram_bot import TelegramBot
+
+    severity_map = {"critical": "\U0001f534", "important": "\U0001f7e0",
+                    "notable": "\U0001f7e1"}
+    try:
+        bot = TelegramBot()
+        for content in result.contents:
+            emoji = "\U0001f7e1"
+            for evt in result.sent_events:
+                if evt.event.title == content.event.title:
+                    emoji = severity_map.get(evt.severity, "\U0001f7e1")
+                    break
+
+            message = f"{emoji} BREAKING NEWS\n\n{content.formatted}"
+            await bot.send_message(message)
+            logger.info(f"Breaking delivered: {content.event.title[:50]}...")
+    except Exception as e:
+        logger.error(f"Breaking delivery failed: {e}")
+        result.run_log.errors.append(f"Delivery: {e}")
 
 
 def _calc_duration(start_iso: str, end_iso: str) -> float:

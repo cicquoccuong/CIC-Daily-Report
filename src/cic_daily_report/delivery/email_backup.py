@@ -27,9 +27,9 @@ class EmailBackup:
         smtp_password: str | None = None,
         recipients: list[str] | None = None,
     ) -> None:
-        self._server = smtp_server or os.getenv("SMTP_SERVER", "smtp.gmail.com")
+        self._server = smtp_server or os.getenv("SMTP_HOST", "smtp.gmail.com")
         self._port = smtp_port
-        self._email = smtp_email or os.getenv("SMTP_EMAIL", "")
+        self._email = smtp_email or os.getenv("SMTP_USER", "")
         self._password = smtp_password or os.getenv("SMTP_PASSWORD", "")
         self._recipients = recipients or []
         self._available = bool(self._email and self._password)

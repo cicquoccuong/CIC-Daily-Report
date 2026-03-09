@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0] - 2026-03-09
+
+### Fixed — Comprehensive Audit (Dot 1 + Dot 2)
+- **CRITICAL**: Wired `daily_pipeline.py` — was placeholder, now connects all collectors → generators → NQ05 → delivery → run log
+- **CRITICAL**: Wired `breaking_pipeline.py` — added `_deliver_breaking()` to actually send alerts via Telegram
+- Version alignment: `__init__.py`, `config.py`, `pyproject.toml`, `CLAUDE.md` all → 0.9.0
+- SMTP env var mismatch: code now reads `SMTP_HOST` / `SMTP_USER` (matches `.env.example`)
+- f-string bug in `delivery_manager.py` `_combine_content()` separator
+- Added `yfinance>=0.2` to `pyproject.toml` dependencies
+- Added `GLASSNODE_API_KEY` + `COINGLASS_API_KEY` to `.env.example`
+- Fixed test assertion for version string (0.1.0 → 0.9.0)
+
 ## [0.8.0] - 2026-03-09
 
 ### Added — Epic 7: Onboarding & Operational Readiness
