@@ -126,6 +126,12 @@ async def _run_breaking_pipeline() -> BreakingPipelineResult:
         f"{run_log.duration_seconds:.1f}s)"
     )
 
+    # A6: Write run log to NHAT_KY_PIPELINE
+    try:
+        await _write_breaking_run_log(run_log)
+    except Exception as e:
+        logger.warning(f"Run log write failed (non-critical): {e}")
+
     return result
 
 
@@ -156,8 +162,8 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
         run_log.status = "no_events"
         return result
 
-    # Stage 2: Dedup
-    dedup_mgr = DedupManager()  # In production, load from BREAKING_LOG sheet
+    # Stage 2: Dedup — load existing entries from BREAKING_LOG (A5)
+    dedup_mgr = await _load_dedup_from_sheets()
     dedup_result = dedup_mgr.check_and_filter(events)
     run_log.events_new = len(dedup_result.new_events)
     result.dedup_entries = dedup_result.entries_written
@@ -220,8 +226,70 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     # Cleanup old entries
     dedup_mgr.cleanup_old_entries()
 
+    # Persist dedup state back to BREAKING_LOG (A5)
+    await _persist_dedup_to_sheets(dedup_mgr)
+
     run_log.status = "success" if run_log.events_sent > 0 else "partial"
     return result
+
+
+async def _load_dedup_from_sheets() -> DedupManager:
+    """Load existing dedup entries from BREAKING_LOG sheet (A5)."""
+    try:
+        from cic_daily_report.storage.sheets_client import SheetsClient
+
+        sheets = SheetsClient()
+        rows = await asyncio.to_thread(sheets.read_all, "BREAKING_LOG")
+        entries = []
+        for row in rows:
+            entry = DedupEntry(
+                hash=str(row.get("Hash", "")),
+                title=str(row.get("Tiêu đề", "")),
+                source=str(row.get("Nguồn", "")),
+                severity=str(row.get("Mức độ", "")),
+                detected_at=str(row.get("Thời gian", "")),
+                status=str(row.get("Trạng thái gửi", "")),
+            )
+            if entry.hash:
+                entries.append(entry)
+        logger.info(f"Loaded {len(entries)} dedup entries from BREAKING_LOG")
+        return DedupManager(existing_entries=entries)
+    except Exception as e:
+        logger.warning(f"Failed to load BREAKING_LOG, starting fresh: {e}")
+        return DedupManager()
+
+
+async def _persist_dedup_to_sheets(dedup_mgr: DedupManager) -> None:
+    """Persist dedup entries back to BREAKING_LOG sheet (A5)."""
+    try:
+        from cic_daily_report.storage.sheets_client import SheetsClient
+
+        sheets = SheetsClient()
+        rows = dedup_mgr.all_rows()
+        if not rows:
+            return
+        # Clear existing data and rewrite (header preserved by batch_write)
+        ss = await asyncio.to_thread(sheets._connect)
+        ws = await asyncio.to_thread(ss.worksheet, "BREAKING_LOG")
+        all_vals = await asyncio.to_thread(ws.get_all_values)
+        if len(all_vals) > 1:
+            await asyncio.to_thread(ws.delete_rows, 2, len(all_vals))
+        await asyncio.to_thread(sheets.batch_append, "BREAKING_LOG", rows)
+        logger.info(f"Persisted {len(rows)} dedup entries to BREAKING_LOG")
+    except Exception as e:
+        logger.warning(f"Failed to persist BREAKING_LOG: {e}")
+
+
+async def _write_breaking_run_log(run_log: BreakingRunLog) -> None:
+    """Write breaking pipeline run log to NHAT_KY_PIPELINE (A6)."""
+    try:
+        from cic_daily_report.storage.sheets_client import SheetsClient
+
+        sheets = SheetsClient()
+        await asyncio.to_thread(sheets.batch_append, "NHAT_KY_PIPELINE", [run_log.to_row()])
+        logger.info("Breaking run log written to NHAT_KY_PIPELINE")
+    except Exception as e:
+        logger.warning(f"Breaking run log write failed: {e}")
 
 
 async def _deliver_breaking(result: BreakingPipelineResult) -> None:

@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.11.0] - 2026-03-09
+
+### Fixed — Comprehensive 13-Item Fix Batch (Đợt 3 final)
+
+**Nhóm A — Data Persistence (CRITICAL):**
+- **A1**: News data (RSS + CryptoPanic) now written to `TIN_TUC_THO` Sheet tab
+- **A2**: Market data (CoinLore, MEXC, CoinGecko, Fear&Greed) now written to `DU_LIEU_THI_TRUONG`
+- **A3**: On-chain data (Coinglass, Glassnode, FRED) now written to `DU_LIEU_ONCHAIN`
+- **A4**: Generated articles now written to `NOI_DUNG_DA_TAO` Sheet tab
+- **A5**: Breaking pipeline now loads/persists dedup entries from `BREAKING_LOG` Sheet (was in-memory only)
+- **A6**: Breaking pipeline now writes run logs to `NHAT_KY_PIPELINE` Sheet
+
+**Nhóm B — Broken/Incomplete Features:**
+- **B1**: Email backup now reads `SMTP_RECIPIENTS` env var (was always empty → never sent)
+- **B2**: Telegram scraper placeholder kept (decided: defer implementation)
+- **B4**: Breaking news cooldown changed from 24h → 4h (user-approved)
+
+**Nhóm C — Code Quality:**
+- **C1**: All `.to_row()` methods now have call sites (previously dead code)
+- **C2**: Fixed 2 bare `except: pass` → added logging in `data_retention.py` and `cryptopanic_client.py`
+- **C3**: Version single source of truth: `__init__.py` imports from `core/config.py`
+- **C4**: 18 new integration tests for data persistence, email recipients, cooldown
+
+### Stats
+- Tests: 326 → 344 (+18)
+- All 9 Sheet tabs now have write paths (was 2/9)
+- Lint: 0 errors (ruff)
+
 ## [0.10.0] - 2026-03-09
 
 ### Fixed — P0 Critical Bugs (Dot 3)

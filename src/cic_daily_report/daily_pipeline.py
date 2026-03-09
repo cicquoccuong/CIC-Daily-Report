@@ -204,6 +204,14 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         f"{len(market_data)} market, {len(onchain_data)} onchain"
     )
 
+    # --- Write raw data to Sheets (A1-A3) ---
+    try:
+        sheets_w = SheetsClient()
+        await _write_raw_data(sheets_w, rss_articles, crypto_articles, market_data, onchain_data)
+    except Exception as e:
+        logger.warning(f"Raw data write failed (non-critical): {e}")
+        errors.append(e)
+
     # --- Stage 2: Content Generation (QĐ2) ---
     logger.info("Stage 2: Content Generation")
     try:
@@ -261,8 +269,78 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         filtered = check_and_fix(summary.content)
         articles_out.append({"tier": "Summary", "content": filtered.content})
 
+    # --- Write generated content to Sheets (A4) ---
+    try:
+        sheets_w2 = SheetsClient()
+        await _write_generated_content(sheets_w2, articles_out)
+    except Exception as e:
+        logger.warning(f"Generated content write failed (non-critical): {e}")
+        errors.append(e)
+
     logger.info(f"Pipeline stages complete: {len(articles_out)} articles ready")
     return articles_out, errors
+
+
+async def _write_raw_data(
+    sheets: object,
+    rss_articles: list,
+    crypto_articles: list,
+    market_data: list,
+    onchain_data: list,
+) -> None:
+    """Write collected raw data to Sheets tabs (A1-A3)."""
+    import asyncio as _aio
+
+    # A1: News → TIN_TUC_THO
+    news_rows = []
+    for a in rss_articles:
+        if hasattr(a, "to_row"):
+            news_rows.append(a.to_row())
+    for a in crypto_articles:
+        if hasattr(a, "to_row"):
+            news_rows.append(a.to_row())
+    if news_rows:
+        await _aio.to_thread(sheets.batch_append, "TIN_TUC_THO", news_rows)
+        logger.info(f"Wrote {len(news_rows)} rows to TIN_TUC_THO")
+
+    # A2: Market data → DU_LIEU_THI_TRUONG
+    market_rows = [p.to_row() for p in market_data]
+    if market_rows:
+        await _aio.to_thread(sheets.batch_append, "DU_LIEU_THI_TRUONG", market_rows)
+        logger.info(f"Wrote {len(market_rows)} rows to DU_LIEU_THI_TRUONG")
+
+    # A3: Onchain data → DU_LIEU_ONCHAIN
+    onchain_rows = [m.to_row() for m in onchain_data]
+    if onchain_rows:
+        await _aio.to_thread(sheets.batch_append, "DU_LIEU_ONCHAIN", onchain_rows)
+        logger.info(f"Wrote {len(onchain_rows)} rows to DU_LIEU_ONCHAIN")
+
+
+async def _write_generated_content(
+    sheets: object,
+    articles: list[dict[str, str]],
+) -> None:
+    """Write generated articles to NOI_DUNG_DA_TAO (A4)."""
+    import asyncio as _aio
+
+    if not articles:
+        return
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    rows = []
+    for article in articles:
+        rows.append([
+            "",  # ID
+            now,
+            "daily_report",
+            article.get("tier", ""),
+            article.get("content", "")[:5000],  # truncate for Sheets cell limit
+            "",  # LLM sử dụng
+            "pending",
+            "",  # Ghi chú
+        ])
+    await _aio.to_thread(sheets.batch_append, "NOI_DUNG_DA_TAO", rows)
+    logger.info(f"Wrote {len(rows)} rows to NOI_DUNG_DA_TAO")
 
 
 async def _deliver(

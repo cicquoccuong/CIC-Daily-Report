@@ -91,7 +91,7 @@ class TestDedupManager:
         assert len(result.new_events) == 2
 
     def test_cooldown_expired_passes(self):
-        old_time = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
         existing = DedupEntry(
             hash=compute_hash("BTC hack", "CoinDesk"),
             title="BTC hack",

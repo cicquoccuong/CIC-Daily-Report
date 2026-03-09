@@ -16,6 +16,13 @@ from cic_daily_report.core.logger import get_logger
 logger = get_logger("email_backup")
 
 
+def _parse_recipients(raw: str) -> list[str]:
+    """Parse comma-separated recipients string into list."""
+    if not raw or not raw.strip():
+        return []
+    return [addr.strip() for addr in raw.split(",") if addr.strip()]
+
+
 class EmailBackup:
     """SMTP-based email backup delivery."""
 
@@ -31,7 +38,7 @@ class EmailBackup:
         self._port = smtp_port
         self._email = smtp_email or os.getenv("SMTP_USER", "")
         self._password = smtp_password or os.getenv("SMTP_PASSWORD", "")
-        self._recipients = recipients or []
+        self._recipients = recipients or _parse_recipients(os.getenv("SMTP_RECIPIENTS", ""))
         self._available = bool(self._email and self._password)
 
     @property

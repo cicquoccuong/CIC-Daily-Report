@@ -104,8 +104,8 @@ def _check_size_warning(sheets: SheetsClient, tab_name: str) -> None:
             logger.warning(f"{tab_name}: {row_count} rows — AT LIMIT! Force cleanup needed.")
         elif row_count >= WARNING_THRESHOLD:
             logger.warning(f"{tab_name}: {row_count} rows — approaching limit (80%)")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Size check skipped for {tab_name}: {e}")
 
 
 def _parse_date(date_str: str) -> datetime | None:

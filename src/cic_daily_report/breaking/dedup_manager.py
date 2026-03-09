@@ -1,7 +1,7 @@
 """Alert Dedup & Cooldown Manager (Story 5.4) — prevents duplicate breaking alerts.
 
 Uses hash(title + source) checked against BREAKING_LOG sheet.
-24h TTL cooldown, 7-day auto-cleanup.
+4h TTL cooldown, 7-day auto-cleanup.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("dedup_manager")
 
-COOLDOWN_HOURS = 24
+COOLDOWN_HOURS = 4
 CLEANUP_DAYS = 7
 
 
@@ -92,7 +92,7 @@ class DedupManager:
         self,
         events: list[BreakingEvent],
     ) -> DedupResult:
-        """Filter out duplicate events based on hash + 24h cooldown.
+        """Filter out duplicate events based on hash + 4h cooldown.
 
         Args:
             events: Detected breaking events to check.

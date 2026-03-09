@@ -70,7 +70,7 @@ class TestFullBreakingFlow:
         assert content.word_count > 0
 
     async def test_duplicate_event_skipped(self):
-        """Duplicate event within 24h is skipped."""
+        """Duplicate event within cooldown window is skipped."""
         event = _event()
         mgr = DedupManager()
 
