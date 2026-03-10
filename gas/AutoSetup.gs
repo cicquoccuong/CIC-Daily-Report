@@ -91,13 +91,51 @@ var SHEET_CONFIGS = [
     numberFormats: {
       "Thứ tự": "0",
       "Số từ tối đa": "#,##0"
-    }
+    },
+    defaultData: [
+      ["L1", "Tổng quan thị trường", "BẬT", "1",
+       "Viết tổng quan ngắn gọn thị trường crypto hôm nay dựa trên dữ liệu bên dưới. Tập trung vào BTC và ETH. Nêu xu hướng chính, mức giá quan trọng, và tâm lý thị trường (Fear & Greed). Viết bằng tiếng Việt, khách quan, không khuyến nghị mua/bán. Ghi rõ: Đây là thông tin tham khảo, không phải lời khuyên đầu tư.", "300"],
+      ["L1", "Tin nổi bật", "BẬT", "2",
+       "Tóm tắt 3-5 tin tức crypto nổi bật nhất hôm nay từ danh sách tin bên dưới. Mỗi tin 1-2 câu. Ưu tiên tin ảnh hưởng lớn đến thị trường. Viết bằng tiếng Việt.", "200"],
+      ["L2", "Phân tích kỹ thuật", "BẬT", "1",
+       "Phân tích kỹ thuật các coin trong danh sách dựa trên dữ liệu giá và khối lượng. Nêu mức hỗ trợ/kháng cự quan trọng, xu hướng ngắn hạn. Viết bằng tiếng Việt, khách quan. Không khuyến nghị mua/bán.", "400"],
+      ["L2", "Altcoin đáng chú ý", "BẬT", "2",
+       "Liệt kê các altcoin có biến động giá lớn (>5%) trong 24h qua. Giải thích ngắn gọn nguyên nhân nếu có tin liên quan. Viết bằng tiếng Việt.", "300"],
+      ["L3", "Phân tích on-chain", "BẬT", "1",
+       "Phân tích dữ liệu on-chain: Funding Rate, dòng tiền vào/ra sàn, và các chỉ số blockchain quan trọng. Giải thích ý nghĩa từng chỉ số cho người đọc. Viết bằng tiếng Việt.", "400"],
+      ["L3", "Phân tích vĩ mô", "BẬT", "2",
+       "Phân tích tác động của yếu tố vĩ mô lên thị trường crypto: chỉ số DXY, giá vàng, chính sách Fed, CPI. Liên hệ với diễn biến crypto. Viết bằng tiếng Việt.", "300"],
+      ["L4", "Chiến lược phân bổ", "BẬT", "1",
+       "Phân tích cơ cấu danh mục gợi ý dựa trên tình hình thị trường hiện tại. Nêu tỷ trọng BTC/ETH/Altcoin/Stablecoin phù hợp. GHI RÕ: Đây chỉ là phân tích tham khảo theo Nghị định 05, không phải lời khuyên đầu tư. Mọi quyết định đầu tư là trách nhiệm của người đọc.", "500"],
+      ["L5", "Báo cáo chuyên sâu", "BẬT", "1",
+       "Viết báo cáo chuyên sâu toàn diện bao gồm: phân tích kỹ thuật chi tiết, on-chain, vĩ mô, sentiment, và đánh giá rủi ro. Đây là báo cáo cao cấp nhất. GHI RÕ disclaimer NQ05: Thông tin chỉ mang tính tham khảo.", "800"]
+    ]
   },
   {
     name: "DANH_SACH_COIN",
     description: "Danh sách coin — phân tier L1-L5",
     headers: [
       "Mã coin", "Tên đầy đủ", "Cấp tier", "Bật/Tắt", "Ghi chú"
+    ],
+    defaultData: [
+      ["BTC", "Bitcoin", "L1", "BẬT", "Tài sản số lớn nhất"],
+      ["ETH", "Ethereum", "L1", "BẬT", "Nền tảng smart contract lớn nhất"],
+      ["SOL", "Solana", "L2", "BẬT", "Layer 1 hiệu suất cao"],
+      ["BNB", "BNB", "L2", "BẬT", "Hệ sinh thái Binance"],
+      ["XRP", "XRP", "L2", "BẬT", "Thanh toán xuyên biên giới"],
+      ["ADA", "Cardano", "L3", "BẬT", "Layer 1 proof-of-stake"],
+      ["DOGE", "Dogecoin", "L3", "BẬT", "Memecoin lớn nhất"],
+      ["AVAX", "Avalanche", "L3", "BẬT", "Layer 1 subnet"],
+      ["TRX", "TRON", "L3", "BẬT", "Mạng stablecoin lớn"],
+      ["DOT", "Polkadot", "L4", "BẬT", "Parachain ecosystem"],
+      ["LINK", "Chainlink", "L4", "BẬT", "Oracle hàng đầu"],
+      ["UNI", "Uniswap", "L4", "BẬT", "DEX lớn nhất"],
+      ["MATIC", "Polygon", "L4", "BẬT", "Layer 2 Ethereum"],
+      ["AAVE", "Aave", "L5", "BẬT", "DeFi lending lớn nhất"],
+      ["ARB", "Arbitrum", "L5", "BẬT", "Layer 2 Ethereum"],
+      ["OP", "Optimism", "L5", "BẬT", "Layer 2 Ethereum"],
+      ["INJ", "Injective", "L5", "BẬT", "DeFi Layer 1"],
+      ["SUI", "Sui", "L5", "BẬT", "Move-based Layer 1"]
     ]
   },
   {
