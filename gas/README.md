@@ -2,7 +2,7 @@
 
 Code Google Apps Script để gắn vào Google Sheets, tự động tạo và định dạng 9 tab dữ liệu.
 
-## Cách Cài Đặt
+## Cài Đặt Lần Đầu (Thủ Công)
 
 ### Bước 1: Mở Google Sheets
 Mở file Google Sheets mà bạn muốn dùng làm database cho CIC Daily Report.
@@ -24,7 +24,35 @@ Mở file Google Sheets mà bạn muốn dùng làm database cho CIC Daily Repor
 3. Chờ vài giây — menu **📊 CIC Daily Report** sẽ xuất hiện
 4. Vào menu **⚙️ Thiết Lập** > **🚀 Thiết Lập Tự Động**
 5. Cấp quyền khi được hỏi (chỉ lần đầu)
-6. Hệ thống tạo 9 tab + header + định dạng
+6. Hệ thống tạo 9 tab + header + định dạng + dữ liệu mẫu
+
+## Deploy Tự Động (clasp)
+
+Sau khi cài lần đầu, dùng `clasp` để deploy code từ máy tính:
+
+### Cài đặt 1 lần:
+```powershell
+# 1. Cài clasp
+npm install -g @google/clasp
+
+# 2. Đăng nhập Google
+clasp login
+
+# 3. Setup (nhập Script ID từ Apps Script > Project Settings)
+cd gas
+.\deploy.ps1 setup
+```
+
+### Deploy code:
+```powershell
+cd gas
+.\deploy.ps1 deploy
+```
+
+### Xem trạng thái:
+```powershell
+.\deploy.ps1 status
+```
 
 ## Menu
 

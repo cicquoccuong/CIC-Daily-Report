@@ -1,0 +1,5 @@
+README.md
+deploy.ps1
+.clasp.json
+.claspignore
+**/*.md
