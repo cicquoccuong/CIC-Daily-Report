@@ -18,7 +18,6 @@ from cic_daily_report.generators.nq05_filter import check_and_fix
 from cic_daily_report.generators.summary_generator import generate_bic_summary
 from cic_daily_report.generators.template_engine import load_templates
 
-
 _MOCK_TEXT = (
     "Thị trường tài sản mã hóa hôm nay có nhiều biến động đáng chú ý. "
     "Giá Bitcoin đang giao dịch quanh mức hỗ trợ quan trọng. "
