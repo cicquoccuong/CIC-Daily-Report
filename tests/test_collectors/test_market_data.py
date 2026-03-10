@@ -172,16 +172,19 @@ class TestCrossVerify:
             MarketDataPoint("BTC", 105100, 2.1, 1e9, 0, "crypto", "MEXC"),
         ]
         result = _cross_verify_prices(data)
-        assert len(result) == 2  # No modification, just logging
+        # MEXC duplicate removed, only CoinLore BTC kept
+        assert len(result) == 1
+        assert result[0].source == "CoinLore"
 
     def test_high_deviation_logs_warning(self):
         data = [
             MarketDataPoint("BTC", 100000, 0, 0, 2e12, "crypto", "CoinLore"),
             MarketDataPoint("BTC", 110000, 0, 0, 0, "crypto", "MEXC"),
         ]
-        # Should log a warning but not crash; data returned unchanged
+        # Should log a warning and remove MEXC duplicate
         result = _cross_verify_prices(data)
-        assert len(result) == 2
+        assert len(result) == 1
+        assert result[0].source == "CoinLore"
 
     def test_no_mexc_data_passes_through(self):
         data = [

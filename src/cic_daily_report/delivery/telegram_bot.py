@@ -20,7 +20,7 @@ from cic_daily_report.core.retry_utils import retry_async
 
 logger = get_logger("telegram_bot")
 
-TG_MAX_LENGTH = 4096
+TG_MAX_LENGTH = 4000  # Telegram limit is 4096 but use 4000 for UTF-8 safety margin
 SEND_DELAY = 1.5  # seconds between messages to avoid rate limiting
 
 

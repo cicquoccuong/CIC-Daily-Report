@@ -158,9 +158,20 @@ async def _generate_single_article(
     full_prompt = (
         f"Viết bài phân tích thị trường tier {tier} cho cộng đồng CIC.\n\n"
         f"Danh sách coin: {variables.get('coin_list', 'N/A')}\n\n"
+        f"DỮ LIỆU THỊ TRƯỜNG (dùng số liệu này, KHÔNG tự bịa):\n"
+        f"{variables.get('market_data') or 'Không có dữ liệu'}\n\n"
+        f"TIN TỨC MỚI NHẤT (chỉ phân tích tin dưới đây, KHÔNG bịa tin):\n"
+        f"{variables.get('news_summary') or 'Không có tin tức'}\n\n"
+        f"DỮ LIỆU ON-CHAIN:\n"
+        f"{variables.get('onchain_data') or 'Không có dữ liệu'}\n\n"
+        f"BẢNG CHỈ SỐ CHÍNH:\n"
+        f"{variables.get('key_metrics_table', 'N/A')}\n\n"
         "BÀI VIẾT CẦN CÓ 2 LỚP (FR14 Dual-Layer):\n"
         "1. **TL;DR** — Ngôn ngữ đơn giản, không thuật ngữ, 2-3 dòng per section\n"
         "2. **Phân tích chi tiết** — Chuyên sâu, có số liệu, thuật ngữ chính xác\n\n"
+        "QUAN TRỌNG: CHỈ sử dụng dữ liệu được cung cấp ở trên. "
+        "KHÔNG tự tạo tin tức, sự kiện, hoặc số liệu. "
+        "Nếu không có dữ liệu cho phần nào, ghi 'Chưa có dữ liệu cập nhật'.\n\n"
         "CÁC PHẦN BÀI VIẾT:\n\n" + "\n\n".join(section_prompts)
     )
 
@@ -168,10 +179,18 @@ async def _generate_single_article(
         prompt=full_prompt,
         system_prompt=NQ05_SYSTEM_PROMPT,
         max_tokens=4096,
-        temperature=0.7,
+        temperature=0.3,
     )
 
     content = response.text.strip()
+
+    # Validate response quality — reject too-short or empty responses
+    word_count_raw = len(content.split())
+    if word_count_raw < 50:
+        raise ValueError(
+            f"LLM response too short for {tier}: {word_count_raw} words (min 50)"
+        )
+
     content_with_disclaimer = content + DISCLAIMER
     word_count = len(content_with_disclaimer.split())
     elapsed = time.monotonic() - start

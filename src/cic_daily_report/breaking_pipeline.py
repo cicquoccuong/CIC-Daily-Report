@@ -195,10 +195,15 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
 
         # Generate content for events to send now
         try:
-            content = await generate_breaking_content(
-                classified_event.event,
-                llm,
-                severity=classified_event.severity,
+            if llm is None:
+                raise RuntimeError("LLM unavailable — using raw data fallback")
+            content = await asyncio.wait_for(
+                generate_breaking_content(
+                    classified_event.event,
+                    llm,
+                    severity=classified_event.severity,
+                ),
+                timeout=60,  # 60s per event to prevent blocking
             )
             result.contents.append(content)
             result.sent_events.append(classified_event)
@@ -256,7 +261,11 @@ async def _load_dedup_from_sheets() -> DedupManager:
 
 
 async def _persist_dedup_to_sheets(dedup_mgr: DedupManager) -> None:
-    """Persist dedup entries back to BREAKING_LOG sheet (A5)."""
+    """Persist dedup entries back to BREAKING_LOG sheet (A5).
+
+    Uses delete-then-append but catches delete failure to prevent data loss.
+    If delete fails, falls back to append-only (may create duplicates but no data loss).
+    """
     try:
         from cic_daily_report.storage.sheets_client import SheetsClient
 
@@ -264,14 +273,25 @@ async def _persist_dedup_to_sheets(dedup_mgr: DedupManager) -> None:
         rows = dedup_mgr.all_rows()
         if not rows:
             return
-        # Clear existing data and rewrite (header preserved by batch_write)
-        ss = await asyncio.to_thread(sheets._connect)
-        ws = await asyncio.to_thread(ss.worksheet, "BREAKING_LOG")
-        all_vals = await asyncio.to_thread(ws.get_all_values)
-        if len(all_vals) > 1:
-            await asyncio.to_thread(ws.delete_rows, 2, len(all_vals))
+
+        # Try to clear existing data first
+        delete_ok = False
+        try:
+            ss = await asyncio.to_thread(sheets._connect)
+            ws = await asyncio.to_thread(ss.worksheet, "BREAKING_LOG")
+            all_vals = await asyncio.to_thread(ws.get_all_values)
+            if len(all_vals) > 1:
+                await asyncio.to_thread(ws.delete_rows, 2, len(all_vals))
+            delete_ok = True
+        except Exception as e:
+            logger.warning(f"BREAKING_LOG delete failed, will append-only: {e}")
+
+        # Append new data — this MUST succeed even if delete failed
         await asyncio.to_thread(sheets.batch_append, "BREAKING_LOG", rows)
-        logger.info(f"Persisted {len(rows)} dedup entries to BREAKING_LOG")
+        logger.info(
+            f"Persisted {len(rows)} dedup entries to BREAKING_LOG"
+            f" ({'clean rewrite' if delete_ok else 'append-only fallback'})"
+        )
     except Exception as e:
         logger.warning(f"Failed to persist BREAKING_LOG: {e}")
 

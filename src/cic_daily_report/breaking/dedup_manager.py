@@ -140,6 +140,9 @@ class DedupManager:
 
         try:
             detected = datetime.fromisoformat(existing.detected_at)
+            # Ensure timezone-aware to avoid TypeError on subtraction
+            if detected.tzinfo is None:
+                detected = detected.replace(tzinfo=timezone.utc)
             age = now - detected
             return age < timedelta(hours=COOLDOWN_HOURS)
         except (ValueError, TypeError):
@@ -157,6 +160,8 @@ class DedupManager:
                 continue  # Remove entries without timestamp
             try:
                 detected = datetime.fromisoformat(entry.detected_at)
+                if detected.tzinfo is None:
+                    detected = detected.replace(tzinfo=timezone.utc)
                 if detected >= cutoff:
                     kept.append(entry)
             except (ValueError, TypeError):

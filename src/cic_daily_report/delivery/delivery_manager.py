@@ -127,8 +127,9 @@ class DeliveryManager:
             except Exception as e:
                 logger.error(f"Error notification failed: {e}")
 
-        # Fallback to email if Telegram failed
-        if not tg_success and self._email and self._email.available:
+        # Fallback to email if Telegram failed completely or partially
+        tg_has_failures = result.messages_sent < result.messages_total
+        if (not tg_success or tg_has_failures) and self._email and self._email.available:
             try:
                 date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 body = _combine_content(articles)

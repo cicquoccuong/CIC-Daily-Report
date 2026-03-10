@@ -65,6 +65,18 @@ class ConfigLoader:
             return fallback
         return value
 
+    def get_setting_bool(self, key: str, default: bool = False) -> bool:
+        """Get a setting as boolean.
+
+        Handles Sheets string values like "TRUE", "FALSE", "1", "0", "BẬT", "TẮT".
+        """
+        value = self.get_setting(key, default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().upper() in ("TRUE", "1", "BẬT", "CÓ", "YES")
+        return bool(value)
+
     def get_setting_int(self, key: str, default: int = 0) -> int:
         """Get a setting as integer."""
         value = self.get_setting(key, default)

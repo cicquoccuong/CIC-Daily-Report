@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import html
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -15,6 +17,16 @@ from cic_daily_report.core.logger import get_logger
 logger = get_logger("rss_collector")
 
 FEED_TIMEOUT = 30  # seconds per feed
+
+
+def _sanitize_text(text: str) -> str:
+    """Remove non-printable chars, decode HTML entities, normalize whitespace."""
+    text = html.unescape(text)
+    # Remove control chars and non-standard Unicode but keep basic Latin + common scripts
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", text)
+    # Normalize whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 @dataclass
@@ -121,9 +133,9 @@ async def _fetch_feed(feed: FeedConfig) -> list[NewsArticle]:
         articles = []
 
         for entry in parsed.entries[:20]:  # max 20 per feed
-            title = entry.get("title", "").strip()
+            title = _sanitize_text(entry.get("title", ""))
             url = entry.get("link", "").strip()
-            summary = entry.get("summary", "").strip()[:500]
+            summary = _sanitize_text(entry.get("summary", ""))[:500]
             published = entry.get("published", "")
 
             if title and url:

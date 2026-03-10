@@ -309,8 +309,9 @@ async def _collect_usdt_vnd() -> list[MarketDataPoint]:
 def _cross_verify_prices(data: list[MarketDataPoint]) -> list[MarketDataPoint]:
     """Cross-verify CoinLore vs MEXC prices (FR22).
 
-    If deviation >5% for any symbol, log warning and flag in note.
-    Uses CoinLore price as primary (already has market cap data).
+    If deviation >5% for any symbol, log warning.
+    Removes MEXC duplicates when CoinLore has the same symbol (CoinLore is primary).
+    Keeps MEXC-only symbols (coins not in CoinLore top 50).
     """
     coinlore: dict[str, MarketDataPoint] = {}
     mexc: dict[str, MarketDataPoint] = {}
@@ -336,7 +337,12 @@ def _cross_verify_prices(data: list[MarketDataPoint]) -> list[MarketDataPoint]:
                 f"(CoinLore=${cl_price:.2f} vs MEXC=${mx_price:.2f})"
             )
 
-    return data
+    # Remove MEXC duplicates — keep CoinLore as primary (has market cap)
+    mexc_only_symbols = set(mexc.keys()) - set(coinlore.keys())
+    return [
+        p for p in data
+        if p.source != "MEXC" or p.symbol in mexc_only_symbols
+    ]
 
 
 async def _collect_fear_greed() -> list[MarketDataPoint]:

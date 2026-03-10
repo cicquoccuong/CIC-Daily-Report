@@ -118,7 +118,13 @@ async def _fetch_posts(api_key: str) -> list[CryptoPanicArticle]:
 
 
 def _calc_panic_score(votes: dict[str, Any]) -> float:
-    """Calculate panic score from vote counts."""
+    """Calculate sentiment score from vote counts.
+
+    NOTE: Despite the field name 'panic_score', this is a SENTIMENT score:
+      0 = extreme bearish, 100 = extreme bullish, 50 = neutral.
+    This is DIFFERENT from event_detector's panic score which measures
+    negative/toxic votes for breaking news severity classification.
+    """
     bullish = votes.get("positive", 0)
     bearish = votes.get("negative", 0)
     total = bullish + bearish

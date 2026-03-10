@@ -54,6 +54,18 @@ class TestGeneratedArticle:
         assert row[7] == "pass"
 
 
+_MOCK_ARTICLE = (
+    "Thị trường tài sản mã hóa hôm nay có nhiều biến động đáng chú ý. "
+    "Giá Bitcoin đang giao dịch quanh mức hỗ trợ quan trọng. "
+    "Ethereum cũng có xu hướng tương tự với khối lượng giao dịch tăng. "
+    "Theo dữ liệu từ CoinLore, tâm lý thị trường đang thận trọng. "
+    "Các chỉ số kỹ thuật cho thấy xu hướng ngắn hạn chưa rõ ràng. "
+    "Nhà đầu tư cần theo dõi thêm các yếu tố vĩ mô. "
+    "Dữ liệu on-chain cho thấy dòng tiền vào sàn giao dịch đang giảm. "
+    "Điều này có thể ảnh hưởng đến giá trong thời gian tới."
+)
+
+
 class TestGenerateTierArticles:
     async def test_generates_articles_for_available_tiers(self):
         templates = _make_templates("L1", "L2")
@@ -61,7 +73,7 @@ class TestGenerateTierArticles:
 
         mock_llm = AsyncMock()
         mock_llm.generate = AsyncMock(
-            return_value=LLMResponse(text="Generated content", tokens_used=100, model="test-model")
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=100, model="test-model")
         )
 
         articles = await generate_tier_articles(mock_llm, templates, context)
@@ -76,7 +88,7 @@ class TestGenerateTierArticles:
 
         mock_llm = AsyncMock()
         mock_llm.generate = AsyncMock(
-            return_value=LLMResponse(text="Analysis text", tokens_used=50, model="m")
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=50, model="m")
         )
 
         articles = await generate_tier_articles(mock_llm, templates, context)
@@ -90,7 +102,7 @@ class TestGenerateTierArticles:
 
         mock_llm = AsyncMock()
         mock_llm.generate = AsyncMock(
-            return_value=LLMResponse(text="ok", tokens_used=10, model="m")
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=10, model="m")
         )
 
         articles = await generate_tier_articles(mock_llm, templates, context)
@@ -107,7 +119,7 @@ class TestGenerateTierArticles:
         mock_llm.generate = AsyncMock(
             side_effect=[
                 Exception("LLM down"),
-                LLMResponse(text="L2 ok", tokens_used=10, model="m"),
+                LLMResponse(text=_MOCK_ARTICLE, tokens_used=10, model="m"),
             ]
         )
 

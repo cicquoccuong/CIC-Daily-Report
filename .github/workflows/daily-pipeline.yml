@@ -5,6 +5,10 @@ on:
     - cron: '0 1 * * *'  # 01:00 UTC = 08:00 VN
   workflow_dispatch:      # manual trigger
 
+concurrency:
+  group: gh-pages-deploy
+  cancel-in-progress: false
+
 jobs:
   daily-report:
     runs-on: ubuntu-latest
@@ -43,6 +47,8 @@ jobs:
         run: uv sync
 
       - name: Run daily pipeline
+        id: pipeline
+        continue-on-error: true
         env:
           GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
           GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
@@ -57,6 +63,26 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_RECIPIENTS: ${{ secrets.SMTP_RECIPIENTS }}
         run: uv run cic-daily
+
+      - name: Retry pipeline on failure
+        if: steps.pipeline.outcome == 'failure'
+        env:
+          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+          GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CRYPTOPANIC_API_KEY: ${{ secrets.CRYPTOPANIC_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_RECIPIENTS: ${{ secrets.SMTP_RECIPIENTS }}
+        run: |
+          echo "Pipeline failed, retrying after 30s..."
+          sleep 30
+          uv run cic-daily
 
       - name: Update dashboard on gh-pages
         if: always()
@@ -79,4 +105,9 @@ jobs:
           git add dashboard-data.json
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           git commit -m "chore: update dashboard data $TIMESTAMP" || true
-          git push origin gh-pages || true
+          for i in 1 2 3; do
+            git pull --rebase origin gh-pages 2>/dev/null || true
+            git push origin gh-pages && break
+            echo "Push attempt $i failed, retrying in 5s..."
+            sleep 5
+          done

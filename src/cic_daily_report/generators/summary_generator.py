@@ -89,7 +89,7 @@ async def generate_bic_summary(
         prompt=prompt,
         system_prompt=NQ05_SYSTEM_PROMPT,
         max_tokens=2048,
-        temperature=0.7,
+        temperature=0.3,
     )
 
     content = response.text.strip() + DISCLAIMER

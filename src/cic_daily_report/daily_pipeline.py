@@ -198,12 +198,18 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         elif p.symbol == "BTC_Dominance":
             key_metrics["BTC Dominance"] = f"{p.price:.1f}%"
         elif p.symbol == "Total_MCap":
-            key_metrics["Total MCap"] = f"${p.price / 1e12:.2f}T"
+            key_metrics["Total Market Cap"] = f"${p.price / 1e12:.2f}T"
         elif p.symbol == "USDT/VND":
             key_metrics["USDT/VND"] = f"{p.price:,.0f}"
     for m in onchain_data:
         if m.metric_name == "BTC_Funding_Rate":
             key_metrics["Funding Rate"] = f"{m.value:.4f}"
+
+    # Warn if critical data is missing
+    if not cleaned_news:
+        logger.warning("No news articles collected — LLM will have no news context")
+    if not market_data:
+        logger.warning("No market data collected — LLM will have no price context")
 
     logger.info(
         f"Collection done: {len(cleaned_news)} news, "

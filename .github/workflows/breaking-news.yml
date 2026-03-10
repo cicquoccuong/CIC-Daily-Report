@@ -5,6 +5,10 @@ on:
     - cron: '0 * * * *'  # Hourly
   workflow_dispatch:      # manual trigger
 
+concurrency:
+  group: gh-pages-deploy
+  cancel-in-progress: false
+
 jobs:
   breaking-check:
     runs-on: ubuntu-latest
@@ -74,4 +78,9 @@ jobs:
           git add dashboard-data.json
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           git commit -m "chore: update dashboard data $TIMESTAMP" || true
-          git push origin gh-pages || true
+          for i in 1 2 3; do
+            git pull --rebase origin gh-pages 2>/dev/null || true
+            git push origin gh-pages && break
+            echo "Push attempt $i failed, retrying in 5s..."
+            sleep 5
+          done

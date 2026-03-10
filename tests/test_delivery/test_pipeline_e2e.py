@@ -19,11 +19,23 @@ from cic_daily_report.generators.summary_generator import generate_bic_summary
 from cic_daily_report.generators.template_engine import load_templates
 
 
+_MOCK_TEXT = (
+    "Thị trường tài sản mã hóa hôm nay có nhiều biến động đáng chú ý. "
+    "Giá Bitcoin đang giao dịch quanh mức hỗ trợ quan trọng. "
+    "Ethereum cũng có xu hướng tương tự với khối lượng giao dịch tăng. "
+    "Theo dữ liệu từ CoinLore, tâm lý thị trường đang thận trọng. "
+    "Các chỉ số kỹ thuật cho thấy xu hướng ngắn hạn chưa rõ ràng. "
+    "Nhà đầu tư cần theo dõi thêm các yếu tố vĩ mô. "
+    "Dữ liệu on-chain cho thấy dòng tiền vào sàn giao dịch đang giảm. "
+    "Điều này có thể ảnh hưởng đến giá trong thời gian tới."
+)
+
+
 def _mock_llm() -> AsyncMock:
     mock = AsyncMock()
     mock.generate = AsyncMock(
         return_value=LLMResponse(
-            text="Thị trường tài sản mã hóa hôm nay ổn định.",
+            text=_MOCK_TEXT,
             tokens_used=50,
             model="test-model",
         )
@@ -114,11 +126,11 @@ class TestFullPipelineE2E:
         llm.generate = AsyncMock(
             side_effect=[
                 Exception("LLM fail"),
-                LLMResponse(text="L2 content", tokens_used=10, model="m"),
-                LLMResponse(text="L3 content", tokens_used=10, model="m"),
-                LLMResponse(text="L4 content", tokens_used=10, model="m"),
-                LLMResponse(text="L5 content", tokens_used=10, model="m"),
-                LLMResponse(text="Summary", tokens_used=10, model="m"),
+                LLMResponse(text=_MOCK_TEXT, tokens_used=10, model="m"),
+                LLMResponse(text=_MOCK_TEXT, tokens_used=10, model="m"),
+                LLMResponse(text=_MOCK_TEXT, tokens_used=10, model="m"),
+                LLMResponse(text=_MOCK_TEXT, tokens_used=10, model="m"),
+                LLMResponse(text=_MOCK_TEXT, tokens_used=10, model="m"),
             ]
         )
 

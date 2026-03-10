@@ -6,6 +6,7 @@ renders Key Metrics Table (FR20), and respects enabled/disabled sections.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -104,6 +105,13 @@ def render_sections(
         prompt = section.prompt_template
         for key, value in variables.items():
             prompt = prompt.replace(f"{{{key}}}", value)
+
+        # Warn about unreplaced placeholders
+        unreplaced = re.findall(r"\{(\w+)\}", prompt)
+        if unreplaced:
+            logger.warning(
+                f"Unreplaced placeholders in '{section.section_name}': {unreplaced}"
+            )
 
         rendered.append(
             RenderedSection(

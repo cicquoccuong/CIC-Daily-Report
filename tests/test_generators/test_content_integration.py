@@ -162,11 +162,20 @@ class TestFullContentPipeline:
     async def test_llm_fallback_scenario(self):
         """FR34: Fallback kicks in when primary fails."""
         llm = AsyncMock()
+        fallback_text = (
+            "Thị trường tài sản mã hóa hôm nay có nhiều biến động đáng chú ý. "
+            "Giá Bitcoin đang giao dịch quanh mức hỗ trợ quan trọng. "
+            "Ethereum cũng có xu hướng tương tự với khối lượng giao dịch tăng. "
+            "Theo dữ liệu từ CoinLore, tâm lý thị trường đang thận trọng. "
+            "Các chỉ số kỹ thuật cho thấy xu hướng ngắn hạn chưa rõ ràng. "
+            "Nhà đầu tư cần theo dõi thêm các yếu tố vĩ mô. "
+            "Dữ liệu on-chain cho thấy dòng tiền vào sàn giao dịch đang giảm."
+        )
         # First call fails (L1), second succeeds (L2)
         llm.generate = AsyncMock(
             side_effect=[
                 Exception("Primary LLM down"),
-                LLMResponse(text="Fallback content", tokens_used=50, model="gemini-flash"),
+                LLMResponse(text=fallback_text, tokens_used=50, model="gemini-flash"),
             ]
         )
 
