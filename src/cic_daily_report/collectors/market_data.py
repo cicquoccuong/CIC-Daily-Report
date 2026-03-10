@@ -339,10 +339,7 @@ def _cross_verify_prices(data: list[MarketDataPoint]) -> list[MarketDataPoint]:
 
     # Remove MEXC duplicates — keep CoinLore as primary (has market cap)
     mexc_only_symbols = set(mexc.keys()) - set(coinlore.keys())
-    return [
-        p for p in data
-        if p.source != "MEXC" or p.symbol in mexc_only_symbols
-    ]
+    return [p for p in data if p.source != "MEXC" or p.symbol in mexc_only_symbols]
 
 
 async def _collect_fear_greed() -> list[MarketDataPoint]:

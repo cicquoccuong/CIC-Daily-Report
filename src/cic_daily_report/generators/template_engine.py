@@ -109,9 +109,7 @@ def render_sections(
         # Warn about unreplaced placeholders
         unreplaced = re.findall(r"\{(\w+)\}", prompt)
         if unreplaced:
-            logger.warning(
-                f"Unreplaced placeholders in '{section.section_name}': {unreplaced}"
-            )
+            logger.warning(f"Unreplaced placeholders in '{section.section_name}': {unreplaced}")
 
         rendered.append(
             RenderedSection(

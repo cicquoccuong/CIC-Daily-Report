@@ -187,9 +187,7 @@ async def _generate_single_article(
     # Validate response quality — reject too-short or empty responses
     word_count_raw = len(content.split())
     if word_count_raw < 50:
-        raise ValueError(
-            f"LLM response too short for {tier}: {word_count_raw} words (min 50)"
-        )
+        raise ValueError(f"LLM response too short for {tier}: {word_count_raw} words (min 50)")
 
     content_with_disclaimer = content + DISCLAIMER
     word_count = len(content_with_disclaimer.split())
