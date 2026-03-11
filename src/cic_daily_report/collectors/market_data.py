@@ -302,10 +302,123 @@ async def _collect_coinlore_global() -> list[MarketDataPoint]:
 
 
 async def _collect_usdt_vnd() -> list[MarketDataPoint]:
-    """Collect USDT/VND rate from CoinGecko (FR10b).
+    """Collect USDT/VND P2P rate (FR10b).
 
-    Free, no key. Endpoint: GET /api/v3/simple/price?ids=tether&vs_currencies=vnd
+    Fallback chain: Binance P2P → HTX OTC → CoinGecko (official rate).
+    P2P rates reflect actual trading price in Vietnam (~3-4% premium over official).
     """
+    # 1. Binance P2P — highest liquidity in VN
+    rate = await _fetch_binance_p2p_vnd()
+    if rate:
+        return [rate]
+
+    # 2. HTX (Huobi) OTC — independent P2P source
+    rate = await _fetch_htx_otc_vnd()
+    if rate:
+        return [rate]
+
+    # 3. CoinGecko official rate (last resort)
+    logger.warning("USDT/VND: P2P sources failed, falling back to CoinGecko official rate")
+    return await _fetch_coingecko_vnd()
+
+
+async def _fetch_binance_p2p_vnd() -> MarketDataPoint | None:
+    """Fetch USDT/VND from Binance P2P (median of top 5 BUY ads)."""
+    url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (compatible; CIC-Daily-Report/1.0)",
+    }
+    body = {
+        "asset": "USDT",
+        "fiat": "VND",
+        "tradeType": "BUY",
+        "page": 1,
+        "rows": 5,
+        "payTypes": [],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(url, json=body, headers=headers)
+            resp.raise_for_status()
+
+        data = resp.json()
+        ads = data.get("data", [])
+        if not ads:
+            logger.warning("Binance P2P: no ads returned")
+            return None
+
+        prices = sorted(float(ad["adv"]["price"]) for ad in ads if "adv" in ad)
+        if not prices:
+            return None
+
+        # Median price for stability
+        mid = len(prices) // 2
+        median_price = prices[mid] if len(prices) % 2 else (prices[mid - 1] + prices[mid]) / 2
+
+        logger.info(f"Binance P2P USDT/VND: {median_price:,.0f} (from {len(prices)} ads)")
+        return MarketDataPoint(
+            symbol="USDT/VND",
+            price=median_price,
+            change_24h=0,
+            volume_24h=0,
+            market_cap=0,
+            data_type="macro",
+            source="Binance P2P",
+        )
+
+    except Exception as e:
+        logger.warning(f"Binance P2P USDT/VND failed: {e}")
+        return None
+
+
+async def _fetch_htx_otc_vnd() -> MarketDataPoint | None:
+    """Fetch USDT/VND from HTX (Huobi) OTC market."""
+    url = "https://otc-api.trygofast.com/v1/data/trade-market"
+    params = {
+        "coinId": 2,       # USDT
+        "currencyId": 75,  # VND
+        "tradeType": "buy",
+        "blockType": "general",
+        "online": 1,
+        "range": 0,
+        "payMethod": 0,
+        "page": 1,
+        "size": 3,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+
+        data = resp.json()
+        trades = data.get("data", [])
+        if not trades:
+            logger.warning("HTX OTC: no trades returned")
+            return None
+
+        price = float(trades[0].get("price", 0))
+        if price <= 0:
+            return None
+
+        logger.info(f"HTX OTC USDT/VND: {price:,.0f}")
+        return MarketDataPoint(
+            symbol="USDT/VND",
+            price=price,
+            change_24h=0,
+            volume_24h=0,
+            market_cap=0,
+            data_type="macro",
+            source="HTX OTC",
+        )
+
+    except Exception as e:
+        logger.warning(f"HTX OTC USDT/VND failed: {e}")
+        return None
+
+
+async def _fetch_coingecko_vnd() -> list[MarketDataPoint]:
+    """Fetch USDT/VND official rate from CoinGecko (last resort fallback)."""
     url = "https://api.coingecko.com/api/v3/simple/price"
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -333,7 +446,7 @@ async def _collect_usdt_vnd() -> list[MarketDataPoint]:
                     volume_24h=0,
                     market_cap=0,
                     data_type="macro",
-                    source="CoinGecko",
+                    source="CoinGecko (official)",
                 )
             ]
         return []

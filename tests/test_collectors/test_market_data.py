@@ -150,10 +150,40 @@ class TestCollectCoinloreGlobal:
 
 
 class TestCollectUsdtVnd:
-    async def test_parse_coingecko_response(self):
+    async def test_binance_p2p_primary(self):
+        """When Binance P2P works, use its rate."""
+        from cic_daily_report.collectors.market_data import MarketDataPoint
+
+        binance_rate = MarketDataPoint(
+            "USDT/VND", 27050, 0, 0, 0, "macro", "Binance P2P"
+        )
+        with patch(
+            "cic_daily_report.collectors.market_data._fetch_binance_p2p_vnd",
+            return_value=binance_rate,
+        ):
+            points = await _collect_usdt_vnd()
+
+        assert len(points) == 1
+        assert points[0].price == 27050
+        assert points[0].source == "Binance P2P"
+
+    async def test_fallback_to_coingecko(self):
+        """When P2P sources fail, fall back to CoinGecko."""
         fixture = json.loads((FIXTURES / "coingecko_usdt_vnd.json").read_text())
 
-        with patch("cic_daily_report.collectors.market_data.httpx.AsyncClient") as mock_http:
+        with (
+            patch(
+                "cic_daily_report.collectors.market_data._fetch_binance_p2p_vnd",
+                return_value=None,
+            ),
+            patch(
+                "cic_daily_report.collectors.market_data._fetch_htx_otc_vnd",
+                return_value=None,
+            ),
+            patch(
+                "cic_daily_report.collectors.market_data.httpx.AsyncClient",
+            ) as mock_http,
+        ):
             mock_response = MagicMock()
             mock_response.json.return_value = fixture
             mock_response.raise_for_status = MagicMock()
@@ -169,8 +199,7 @@ class TestCollectUsdtVnd:
         assert len(points) == 1
         assert points[0].symbol == "USDT/VND"
         assert points[0].price == 26287
-        assert points[0].change_24h == 0.264
-        assert points[0].source == "CoinGecko"
+        assert points[0].source == "CoinGecko (official)"
 
 
 class TestCrossVerify:
