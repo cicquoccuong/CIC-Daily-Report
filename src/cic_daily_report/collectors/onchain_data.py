@@ -155,9 +155,11 @@ async def _collect_coinglass() -> list[OnChainMetric]:
                     value = extractor(data)
                     if value == 0:
                         logger.warning(
-                            f"Coinglass {name}: returned 0"
-                            " (API may be deprecated or empty)"
+                            f"Coinglass {name}: returned 0 — skipping to avoid "
+                            "misleading data. v2 public API is deprecated; "
+                            "migrate to v4 (open-api-v4.coinglass.com) with CG-API-KEY header"
                         )
+                        continue
                     metrics.append(
                         OnChainMetric(
                             metric_name=name,

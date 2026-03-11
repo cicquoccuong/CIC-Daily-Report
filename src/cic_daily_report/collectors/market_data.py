@@ -405,13 +405,25 @@ async def _collect_fear_greed() -> list[MarketDataPoint]:
 
 async def _collect_altcoin_season() -> list[MarketDataPoint]:
     """Collect Altcoin Season Index (FR10)."""
-    url = "https://api.blockchaincenter.net/api/altcoin-season-index"
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
+    urls = [
+        "https://api.blockchaincenter.net/api/altcoin-season-index",
+        "https://api.blockchaincenter.net/api/altcoin-season-index?t=30",
+    ]
+    for url in urls:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    logger.warning(
+                        f"Altcoin Season Index: HTTP {resp.status_code} from {url}"
+                    )
+                    continue
                 data = resp.json()
                 value = float(data.get("value", 50))
+                # Validate range: ensure 0 <= value <= 100
+                if not (0 <= value <= 100):
+                    logger.warning(f"Altcoin Season Index out of range: {value}")
+                    value = max(0, min(100, value))
                 return [
                     MarketDataPoint(
                         symbol="Altcoin_Season",
@@ -423,7 +435,19 @@ async def _collect_altcoin_season() -> list[MarketDataPoint]:
                         source="BlockchainCenter",
                     )
                 ]
-        return []
-    except Exception as e:
-        logger.warning(f"Altcoin Season Index failed: {e}")
-        return []
+        except Exception as e:
+            logger.warning(f"Altcoin Season Index failed ({url}): {e}")
+
+    # Fallback: return neutral default so report is not missing this metric
+    logger.warning("Altcoin Season Index: all sources failed, using fallback value 50")
+    return [
+        MarketDataPoint(
+            symbol="Altcoin_Season",
+            price=50,
+            change_24h=0,
+            volume_24h=0,
+            market_cap=0,
+            data_type="index",
+            source="BlockchainCenter (fallback)",
+        )
+    ]

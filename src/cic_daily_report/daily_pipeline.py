@@ -274,6 +274,65 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         logger.warning(f"Config load failed, using defaults: {e}")
         errors.append(e)
 
+    # Build interpretation notes for LLM context
+    interpretation_notes: list[str] = []
+    fg_raw = key_metrics.get("Fear & Greed")
+    if isinstance(fg_raw, int):
+        if fg_raw <= 20:
+            interpretation_notes.append(
+                f"Fear & Greed = {fg_raw} (Extreme Fear) — lịch sử cho thấy đây thường là "
+                "vùng tích lũy, smart money có xu hướng mua vào ở vùng này"
+            )
+        elif fg_raw <= 40:
+            interpretation_notes.append(
+                f"Fear & Greed = {fg_raw} (Fear) — thị trường thận trọng, "
+                "cần theo dõi volume để xác nhận xu hướng"
+            )
+        elif fg_raw >= 80:
+            interpretation_notes.append(
+                f"Fear & Greed = {fg_raw} (Extreme Greed) — lịch sử cho thấy "
+                "rủi ro điều chỉnh tăng cao ở vùng này"
+            )
+        elif fg_raw >= 60:
+            interpretation_notes.append(
+                f"Fear & Greed = {fg_raw} (Greed) — tâm lý tích cực nhưng cần "
+                "cảnh giác nếu tiếp tục tăng"
+            )
+    for p in market_data:
+        if p.symbol == "BTC" and p.data_type == "crypto":
+            if abs(p.change_24h) >= 5:
+                interpretation_notes.append(
+                    f"BTC biến động {p.change_24h:+.1f}% trong 24h — mức biến động bất thường, "
+                    "cần phân tích nguyên nhân (tin tức, liquidation, whale activity)"
+                )
+            elif abs(p.change_24h) < 1:
+                interpretation_notes.append(
+                    f"BTC biến động chỉ {p.change_24h:+.1f}% — thị trường đi ngang, "
+                    "thường báo hiệu giai đoạn tích lũy trước breakout"
+                )
+    alt_season = key_metrics.get("Altcoin Season")
+    if isinstance(alt_season, int):
+        if alt_season >= 75:
+            interpretation_notes.append(
+                f"Altcoin Season Index = {alt_season} — đang là mùa altcoin, "
+                "dòng tiền chảy mạnh vào altcoin"
+            )
+        elif alt_season <= 25:
+            interpretation_notes.append(
+                f"Altcoin Season Index = {alt_season} — BTC season, "
+                "altcoin underperform so với BTC"
+            )
+    dxy_val = key_metrics.get("DXY")
+    if isinstance(dxy_val, (int, float)):
+        if dxy_val >= 105:
+            interpretation_notes.append(
+                f"DXY = {dxy_val} (cao) — USD mạnh thường gây áp lực giảm lên crypto"
+            )
+        elif dxy_val <= 100:
+            interpretation_notes.append(
+                f"DXY = {dxy_val} (thấp) — USD yếu thường hỗ trợ crypto tăng giá"
+            )
+
     # Build per-tier analysis context (different tiers get different focus)
     tier_context: dict[str, str] = {}
     tier_context["L1"] = (
@@ -308,6 +367,11 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         "Viết chuyên sâu, dùng thuật ngữ chính xác, có dẫn chứng data."
     )
 
+    # Format interpretation notes for LLM
+    interpretation_text = ""
+    if interpretation_notes:
+        interpretation_text = "\n".join(f"• {n}" for n in interpretation_notes)
+
     context = GenerationContext(
         coin_lists=coin_lists,
         market_data=market_text,
@@ -315,6 +379,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         onchain_data=onchain_text,
         key_metrics=key_metrics,
         tier_context=tier_context,
+        interpretation_notes=interpretation_text,
     )
 
     generated = []

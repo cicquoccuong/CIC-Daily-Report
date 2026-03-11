@@ -232,5 +232,7 @@ class TestCollectMarketData:
             data = await collect_market_data()
 
         # Should have Fear&Greed even though CoinLore failed
-        assert len(data) == 1
-        assert data[0].symbol == "FnG"
+        # Also includes Altcoin_Season fallback
+        assert len(data) >= 1
+        symbols = [d.symbol for d in data]
+        assert "FnG" in symbols

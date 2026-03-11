@@ -92,6 +92,7 @@ class GenerationContext:
     onchain_data: str = ""
     key_metrics: dict[str, str | float] = field(default_factory=dict)
     tier_context: dict[str, str] = field(default_factory=dict)
+    interpretation_notes: str = ""
 
 
 async def generate_tier_articles(
@@ -130,6 +131,7 @@ async def generate_tier_articles(
             "key_metrics_table": metrics_table,
             "tier": tier,
             "tier_context": context.tier_context.get(tier, ""),
+            "interpretation_notes": context.interpretation_notes,
         }
 
         try:
@@ -178,10 +180,22 @@ async def _generate_single_article(
         f"{variables.get('onchain_data') or 'Không có dữ liệu'}\n\n"
         f"BẢNG CHỈ SỐ CHÍNH:\n"
         f"{variables.get('key_metrics_table', 'N/A')}\n\n"
+    )
+    # Add interpretation notes if available
+    interp = variables.get("interpretation_notes", "")
+    if interp:
+        full_prompt += (
+            "DIỄN GIẢI QUAN TRỌNG (dùng để phân tích sâu, KHÔNG copy nguyên văn):\n"
+            f"{interp}\n\n"
+        )
+    full_prompt += (
         "BÀI VIẾT CẦN CÓ 2 LỚP (FR14 Dual-Layer):\n"
         "1. **TL;DR** — Ngôn ngữ đơn giản, không thuật ngữ, 2-3 dòng per section\n"
         "2. **Phân tích chi tiết** — Chuyên sâu, có số liệu, thuật ngữ chính xác\n\n"
-        "QUAN TRỌNG: CHỈ sử dụng dữ liệu được cung cấp ở trên. "
+        "LƯU Ý QUAN TRỌNG: KHÔNG chỉ liệt kê lại số liệu. "
+        "Hãy PHÂN TÍCH ý nghĩa của dữ liệu, giải thích MỐI QUAN HỆ giữa các chỉ số, "
+        "và đưa ra NHẬN ĐỊNH có giá trị cho người đọc. "
+        "CHỈ sử dụng dữ liệu được cung cấp ở trên. "
         "KHÔNG tự tạo tin tức, sự kiện, hoặc số liệu. "
         "Nếu không có dữ liệu cho phần nào, ghi 'Chưa có dữ liệu cập nhật'.\n\n"
         "CÁC PHẦN BÀI VIẾT:\n\n" + "\n\n".join(section_prompts)

@@ -89,6 +89,8 @@ async def _fetch_posts(api_key: str) -> list[CryptoPanicArticle]:
         "auth_token": api_key,
         "filter": "hot",
         "public": "true",
+        "currencies": "BTC,ETH,SOL,BNB,XRP,ADA,DOGE,AVAX,DOT,MATIC,LINK,UNI",
+        "kind": "news",
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
