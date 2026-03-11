@@ -137,8 +137,10 @@ class TestCollectCoinloreGlobal:
         assert len(points) == 4
         btc_d = next(p for p in points if p.symbol == "BTC_Dominance")
         assert btc_d.price == 52.15
+        assert btc_d.source == "CoinGecko"
         total = next(p for p in points if p.symbol == "Total_MCap")
         assert total.price == 2450000000000
+        assert total.change_24h == 1.25
         eth_d = next(p for p in points if p.symbol == "ETH_Dominance")
         assert eth_d.price == 16.80
         total3 = next(p for p in points if p.symbol == "TOTAL3")

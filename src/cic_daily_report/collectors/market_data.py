@@ -213,24 +213,27 @@ async def _collect_mexc() -> list[MarketDataPoint]:
 
 
 async def _collect_coinlore_global() -> list[MarketDataPoint]:
-    """Collect BTC Dominance + Total Market Cap from CoinLore /api/global/ (FR20).
+    """Collect BTC/ETH Dominance + Total Market Cap from CoinGecko /api/v3/global (FR20).
 
-    Free, no key, no rate limit.
+    Switched from CoinLore (inaccurate data) to CoinGecko (free, no key, accurate).
+    CoinGecko global returns: total_market_cap, market_cap_percentage (dominance).
     """
-    url = "https://api.coinlore.net/api/global/"
+    url = "https://api.coingecko.com/api/v3/global"
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(url)
             resp.raise_for_status()
 
-        data = resp.json()
-        if not data or not isinstance(data, list):
+        raw = resp.json()
+        global_data = raw.get("data", {})
+        if not global_data:
+            logger.warning("CoinGecko global: empty data")
             return []
 
-        global_data = data[0]
         points = []
+        dominance = global_data.get("market_cap_percentage", {})
 
-        btc_d = float(global_data.get("btc_d", 0))
+        btc_d = float(dominance.get("btc", 0))
         if btc_d > 0:
             points.append(
                 MarketDataPoint(
@@ -240,25 +243,27 @@ async def _collect_coinlore_global() -> list[MarketDataPoint]:
                     volume_24h=0,
                     market_cap=0,
                     data_type="index",
-                    source="CoinLore",
+                    source="CoinGecko",
                 )
             )
 
-        total_mcap = float(global_data.get("total_mcap", 0))
+        total_mcap = float(global_data.get("total_market_cap", {}).get("usd", 0))
+        total_vol = float(global_data.get("total_volume", {}).get("usd", 0))
+        mcap_change = float(global_data.get("market_cap_change_percentage_24h_usd", 0))
         if total_mcap > 0:
             points.append(
                 MarketDataPoint(
                     symbol="Total_MCap",
                     price=total_mcap,
-                    change_24h=float(global_data.get("mcap_change", 0)),
-                    volume_24h=float(global_data.get("total_volume", 0)),
+                    change_24h=mcap_change,
+                    volume_24h=total_vol,
                     market_cap=total_mcap,
                     data_type="index",
-                    source="CoinLore",
+                    source="CoinGecko",
                 )
             )
 
-        eth_d = float(global_data.get("eth_d", 0))
+        eth_d = float(dominance.get("eth", 0))
         if eth_d > 0:
             points.append(
                 MarketDataPoint(
@@ -268,12 +273,11 @@ async def _collect_coinlore_global() -> list[MarketDataPoint]:
                     volume_24h=0,
                     market_cap=0,
                     data_type="index",
-                    source="CoinLore",
+                    source="CoinGecko",
                 )
             )
 
-        # TOTAL3 = Total MCap - BTC MCap - ETH MCap (alt market)
-        # CoinLore doesn't give btc_mcap/eth_mcap, derive from dominance %
+        # TOTAL3 = Total MCap - BTC MCap - ETH MCap (altcoin market)
         btc_mcap = total_mcap * btc_d / 100 if btc_d > 0 else 0
         eth_mcap = total_mcap * eth_d / 100 if eth_d > 0 else 0
         altcoin_mcap = total_mcap - btc_mcap - eth_mcap
@@ -286,14 +290,14 @@ async def _collect_coinlore_global() -> list[MarketDataPoint]:
                     volume_24h=0,
                     market_cap=0,
                     data_type="index",
-                    source="CoinLore",
+                    source="CoinGecko",
                 )
             )
 
         return points
 
     except Exception as e:
-        logger.warning(f"CoinLore global failed: {e}")
+        logger.warning(f"CoinGecko global failed: {e}")
         return []
 
 
