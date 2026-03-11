@@ -43,6 +43,13 @@ TERMINOLOGY_FIXES = {
     "crypto currency": "tài sản mã hóa",
 }
 
+# Patterns that suggest specific portfolio allocation (NQ05 violation)
+ALLOCATION_PATTERNS = [
+    r"\b(\d{1,3})\s*%\s+(?:cho\s+|to\s+|vào\s+)?(?:BTC|ETH|SOL|BNB|XRP|ADA|DOGE|AVAX|Altcoin|Stablecoin)\b",
+    r"(?:phân bổ|allocat|tỷ trọng|tỷ lệ)\s*[:\-]?\s*\d{1,3}\s*%",
+    r"(?:gợi ý|recommend|suggest)\s+(?:phân bổ|allocation|portfolio)",
+]
+
 
 @dataclass
 class FilterResult:
@@ -94,6 +101,18 @@ def check_and_fix(
             result.auto_fixed += len(matches)
             result.flagged_for_review.append(f"Removed: '{keyword}' ({len(matches)}x)")
 
+    # Step 1b: Check allocation percentage patterns (NQ05 violation)
+    for pattern_str in ALLOCATION_PATTERNS:
+        pattern = re.compile(pattern_str, re.IGNORECASE)
+        matches = pattern.findall(result.content)
+        if matches:
+            result.violations_found += len(matches)
+            result.content = pattern.sub("[đã biên tập]", result.content)
+            result.auto_fixed += len(matches)
+            result.flagged_for_review.append(
+                f"Allocation pattern removed: '{pattern_str}' ({len(matches)}x)"
+            )
+
     # Step 2: Fix terminology
     for wrong, correct in TERMINOLOGY_FIXES.items():
         pattern = re.compile(re.escape(wrong), re.IGNORECASE)
@@ -112,10 +131,12 @@ def check_and_fix(
     # Determine pass/fail
     result.passed = True  # Auto-fixed violations count as passed
 
+    if result.flagged_for_review:
+        for flag in result.flagged_for_review:
+            logger.warning(f"NQ05 audit: {flag}")
     logger.info(
-        f"NQ05 filter: {result.violations_found} violations found, "
-        f"{result.auto_fixed} auto-fixed, "
-        f"{len(result.flagged_for_review)} flagged for review"
+        f"NQ05 filter: {result.violations_found} violations, "
+        f"{result.auto_fixed} auto-fixed, status={result.status}"
     )
 
     return result

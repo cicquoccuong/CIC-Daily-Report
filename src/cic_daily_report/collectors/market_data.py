@@ -52,6 +52,7 @@ async def collect_market_data() -> list[MarketDataPoint]:
         _collect_usdt_vnd(),
         _collect_macro_indices(),
         _collect_fear_greed(),
+        _collect_altcoin_season(),
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -257,6 +258,38 @@ async def _collect_coinlore_global() -> list[MarketDataPoint]:
                 )
             )
 
+        eth_d = float(global_data.get("eth_d", 0))
+        if eth_d > 0:
+            points.append(
+                MarketDataPoint(
+                    symbol="ETH_Dominance",
+                    price=eth_d,
+                    change_24h=0,
+                    volume_24h=0,
+                    market_cap=0,
+                    data_type="index",
+                    source="CoinLore",
+                )
+            )
+
+        # TOTAL3 = Total MCap - BTC MCap - ETH MCap (alt market)
+        # CoinLore doesn't give btc_mcap/eth_mcap, derive from dominance %
+        btc_mcap = total_mcap * btc_d / 100 if btc_d > 0 else 0
+        eth_mcap = total_mcap * eth_d / 100 if eth_d > 0 else 0
+        altcoin_mcap = total_mcap - btc_mcap - eth_mcap
+        if altcoin_mcap > 0:
+            points.append(
+                MarketDataPoint(
+                    symbol="TOTAL3",
+                    price=altcoin_mcap,
+                    change_24h=0,
+                    volume_24h=0,
+                    market_cap=0,
+                    data_type="index",
+                    source="CoinLore",
+                )
+            )
+
         return points
 
     except Exception as e:
@@ -367,4 +400,30 @@ async def _collect_fear_greed() -> list[MarketDataPoint]:
         ]
     except Exception as e:
         logger.warning(f"Fear & Greed Index failed: {e}")
+        return []
+
+
+async def _collect_altcoin_season() -> list[MarketDataPoint]:
+    """Collect Altcoin Season Index (FR10)."""
+    url = "https://api.blockchaincenter.net/api/altcoin-season-index"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                value = float(data.get("value", 50))
+                return [
+                    MarketDataPoint(
+                        symbol="Altcoin_Season",
+                        price=value,
+                        change_24h=0,
+                        volume_24h=0,
+                        market_cap=0,
+                        data_type="index",
+                        source="BlockchainCenter",
+                    )
+                ]
+        return []
+    except Exception as e:
+        logger.warning(f"Altcoin Season Index failed: {e}")
         return []

@@ -149,6 +149,8 @@ async def _extract_fulltext(articles: list[CryptoPanicArticle]) -> None:
             text = await asyncio.to_thread(trafilatura.extract, resp.text, include_comments=False)
             if text:
                 article.full_text = text[:2000]
+                if not article.summary:
+                    article.summary = text[:500]
         except Exception as e:
             logger.debug(f"Full-text extraction failed for {article.url}: {e}")
 

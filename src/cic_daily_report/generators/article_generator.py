@@ -44,6 +44,14 @@ NQ05_SYSTEM_PROMPT = (
 
 TIERS = ["L1", "L2", "L3", "L4", "L5"]
 
+TIER_MAX_TOKENS = {
+    "L1": 2048,
+    "L2": 3072,
+    "L3": 4096,
+    "L4": 3072,
+    "L5": 6144,
+}
+
 
 @dataclass
 class GeneratedArticle:
@@ -83,6 +91,7 @@ class GenerationContext:
     news_summary: str = ""
     onchain_data: str = ""
     key_metrics: dict[str, str | float] = field(default_factory=dict)
+    tier_context: dict[str, str] = field(default_factory=dict)
 
 
 async def generate_tier_articles(
@@ -120,6 +129,7 @@ async def generate_tier_articles(
             "onchain_data": context.onchain_data,
             "key_metrics_table": metrics_table,
             "tier": tier,
+            "tier_context": context.tier_context.get(tier, ""),
         }
 
         try:
@@ -157,6 +167,8 @@ async def _generate_single_article(
 
     full_prompt = (
         f"Viết bài phân tích thị trường tier {tier} cho cộng đồng CIC.\n\n"
+        f"HƯỚNG DẪN PHÂN TÍCH CHO TIER NÀY:\n"
+        f"{variables.get('tier_context', '')}\n\n"
         f"Danh sách coin: {variables.get('coin_list', 'N/A')}\n\n"
         f"DỮ LIỆU THỊ TRƯỜNG (dùng số liệu này, KHÔNG tự bịa):\n"
         f"{variables.get('market_data') or 'Không có dữ liệu'}\n\n"
@@ -178,8 +190,8 @@ async def _generate_single_article(
     response: LLMResponse = await llm.generate(
         prompt=full_prompt,
         system_prompt=NQ05_SYSTEM_PROMPT,
-        max_tokens=4096,
-        temperature=0.3,
+        max_tokens=TIER_MAX_TOKENS.get(tier, 4096),
+        temperature=0.5,
     )
 
     content = response.text.strip()

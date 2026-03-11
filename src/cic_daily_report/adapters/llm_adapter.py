@@ -212,11 +212,17 @@ async def _call_gemini(
         resp.raise_for_status()
 
     data = resp.json()
-    candidates = data.get("candidates", [{}])
-    text = ""
-    if candidates:
-        parts = candidates[0].get("content", {}).get("parts", [])
-        text = parts[0].get("text", "") if parts else ""
+    candidates = data.get("candidates", [])
+    if not candidates:
+        block_reason = data.get("promptFeedback", {}).get("blockReason", "unknown")
+        raise LLMError(
+            f"Gemini returned no candidates (blockReason={block_reason})",
+            source="llm_adapter",
+        )
+    parts = candidates[0].get("content", {}).get("parts", [])
+    text = parts[0].get("text", "") if parts else ""
+    if not text.strip():
+        raise LLMError("Gemini returned empty text", source="llm_adapter")
 
     usage = data.get("usageMetadata", {})
     tokens = usage.get("totalTokenCount", 0)

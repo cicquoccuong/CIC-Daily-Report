@@ -94,14 +94,17 @@ async def _collect_glassnode() -> list[OnChainMetric]:
                         metrics.append(
                             OnChainMetric(
                                 metric_name=name,
-                                value=float(latest.get("v", 0)),
+                                value=float(latest.get("v", 0)) if "v" in latest else 0.0,
                                 source="Glassnode",
                             )
                         )
                 else:
-                    logger.debug(f"Glassnode {name}: HTTP {resp.status_code}")
+                    logger.warning(
+                        f"Glassnode {name}: HTTP {resp.status_code}"
+                        " (endpoint may require paid tier)"
+                    )
         except Exception as e:
-            logger.debug(f"Glassnode {name} failed: {e}")
+            logger.warning(f"Glassnode {name} failed: {e}")
 
     if not metrics:
         logger.warning("Glassnode: no metrics available (free tier limited)")
@@ -150,6 +153,11 @@ async def _collect_coinglass() -> list[OnChainMetric]:
                 if resp.status_code == 200:
                     data = resp.json()
                     value = extractor(data)
+                    if value == 0:
+                        logger.warning(
+                            f"Coinglass {name}: returned 0"
+                            " (API may be deprecated or empty)"
+                        )
                     metrics.append(
                         OnChainMetric(
                             metric_name=name,

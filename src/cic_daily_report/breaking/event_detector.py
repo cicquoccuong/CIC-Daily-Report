@@ -162,10 +162,14 @@ def _evaluate_items(
 
 
 def _calculate_panic_score(votes: dict) -> int:
-    """Calculate panic score from CryptoPanic votes.
+    """Calculate BREAKING panic score from CryptoPanic votes.
 
-    Score = negative + toxic + disliked, normalized to 0-100.
-    Higher = more panic-worthy.
+    This is a PANIC score (higher = more panic-worthy):
+      negative + toxic*2 + disliked, normalized 0-100.
+
+    NOTE: This is DIFFERENT from cryptopanic_client._calc_panic_score()
+    which calculates a SENTIMENT score (0=bearish, 100=bullish).
+    The two scores measure opposite things and should NOT be compared.
     """
     if not votes:
         return 0

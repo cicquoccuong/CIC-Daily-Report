@@ -134,11 +134,17 @@ class TestCollectCoinloreGlobal:
 
             points = await _collect_coinlore_global()
 
-        assert len(points) == 2
+        assert len(points) == 4
         btc_d = next(p for p in points if p.symbol == "BTC_Dominance")
         assert btc_d.price == 52.15
         total = next(p for p in points if p.symbol == "Total_MCap")
         assert total.price == 2450000000000
+        eth_d = next(p for p in points if p.symbol == "ETH_Dominance")
+        assert eth_d.price == 16.80
+        total3 = next(p for p in points if p.symbol == "TOTAL3")
+        # TOTAL3 = total_mcap - btc_mcap(from dominance) - eth_mcap(from dominance)
+        expected_total3 = 2450000000000 * (1 - 0.5215 - 0.168)
+        assert abs(total3.price - expected_total3) < 1e6
 
 
 class TestCollectUsdtVnd:

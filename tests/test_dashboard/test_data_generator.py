@@ -142,6 +142,21 @@ class TestErrorHistory:
         data = generate_dashboard_data(error_history=[])
         assert data.error_history == []
 
+    def test_empty_timestamp_gets_default(self):
+        """Errors with empty timestamp should get a default (current time)."""
+        error = ErrorEntry(
+            timestamp="",
+            code="ERR_NO_TS",
+            message="Error without timestamp",
+        )
+        data = generate_dashboard_data(error_history=[error])
+        # _trim_error_history assigns a default timestamp to empty ones
+        assert len(data.error_history) == 1
+        assert data.error_history[0].timestamp != ""
+        # Verify it's a valid ISO timestamp
+        parsed = datetime.fromisoformat(data.error_history[0].timestamp)
+        assert parsed.year >= 2026
+
 
 class TestMergeErrorHistory:
     def test_merges_new_errors(self):

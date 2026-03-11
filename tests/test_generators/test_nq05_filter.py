@@ -74,6 +74,34 @@ class TestCheckAndFix:
         assert result.status == "review"  # Has flagged items
 
 
+class TestAllocationPatterns:
+    """Tests for NQ05 allocation percentage pattern detection (Wave D)."""
+
+    def test_detects_percentage_for_btc(self):
+        content = "Phân bổ 30% cho BTC trong danh mục." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "30% cho BTC" not in result.content
+
+    def test_detects_allocation_keyword_with_percentage(self):
+        content = "Gợi ý phân bổ: 50% BTC, 30% ETH." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "[đã biên tập]" in result.content
+
+    def test_detects_ty_trong_pattern(self):
+        content = "Tỷ trọng: 40% cho SOL là hợp lý." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+
+    def test_clean_percentage_not_flagged(self):
+        """Generic percentage not tied to allocation should pass."""
+        content = "BTC tăng 5% trong 24h qua." + DISCLAIMER
+        result = check_and_fix(content)
+        # Should not flag non-allocation percentages
+        assert "5%" in result.content
+
+
 class TestBatchFilter:
     def test_filters_multiple(self):
         contents = [

@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.13.0] - 2026-03-11
+
+### Fixed — Data Context Starvation (Root Cause of Generic Output)
+
+**Root cause**: Pipeline collected rich data but compressed it to titles+prices before passing to LLM, causing generic output lacking insight.
+
+**Wave A — Quick Wins (LLM Context Enrichment):**
+- Spam articles (`filtered=True`) now excluded from LLM context (was polluting prompt)
+- News text enriched with article summaries (300 chars each) instead of titles only
+- Market text enriched with volume + market cap alongside price/change
+- CryptoPanic `summary` field populated from full_text when API returns empty
+- LLM temperature 0.3 → 0.5 for more natural, varied analysis
+- BIC Chat summary excerpt 300 → 800 chars for richer source context
+
+**Wave B — Data Enrichment (New Metrics FR10/FR20):**
+- Added **ETH Dominance** collection from CoinLore API
+- Added **TOTAL3** (altcoin market cap) calculated from dominance percentages
+- Added **Altcoin Season Index** from BlockchainCenter API (graceful degradation)
+- KEY_METRICS_LABELS expanded 7 → 11 items (ETH Dominance, TOTAL3, Altcoin Season, USDT/VND)
+- Key metrics mapping in pipeline: ETH_Dominance, TOTAL3, Altcoin_Season → dashboard
+- Anomaly detection flags: Extreme Fear/Greed (≤20/≥80), significant BTC moves (≥5%)
+- Gemini `_call_gemini()` now raises `LLMError` on empty candidates/text (was silently returning "")
+- Improved on-chain collector logging (Glassnode warnings, Coinglass zero-value alerts)
+
+**Wave C — Tier Differentiation:**
+- Per-tier Vietnamese analysis instructions (L1=beginner, L2=technical, L3=on-chain+macro, L4=risk, L5=comprehensive)
+- `TIER_MAX_TOKENS` dict: L1=2048, L2=3072, L3=4096, L4=3072, L5=6144 (was fixed 4096)
+- `GenerationContext.tier_context` field added to pass tier-specific instructions to LLM
+- L4 tier explicitly warns: "TUYỆT ĐỐI KHÔNG đưa ra tỷ lệ phân bổ cụ thể (%) — vi phạm NQ05"
+
+**Wave D — NQ05 Hardening:**
+- Added `ALLOCATION_PATTERNS` (3 regex patterns) detecting portfolio allocation percentages
+- `check_and_fix()` Step 1b: scans and removes allocation patterns (e.g., "30% cho BTC")
+- Per-violation audit trail logging with `logger.warning()`
+
+**Wave E — Infrastructure & Breaking News:**
+- gh-pages deploy: replaced git-stash-based approach with proper fetch/checkout (race condition fix)
+- Dashboard `_trim_error_history()`: assigns default timestamp for errors without one
+- Breaking `_calculate_panic_score()`: clarified docstring (panic score ≠ sentiment score)
+
+### Tests
+- Fixed 4 tests broken by Wave A-E changes (Gemini empty candidates, coinlore 4 points, 11 metrics)
+- All tests passing: 357+ passed, 0 failed
+
+### Stats
+- Version: 0.12.0 → 0.13.0
+- Metrics tracked: 7 → 11 (KEY_METRICS_LABELS)
+- LLM context: ~5% of collected data → ~60% (summaries, volume, mcap, anomalies)
+- NQ05 patterns: keyword-only → keywords + allocation regex + per-tier warnings
+
 ## [0.12.0] - 2026-03-09
 
 ### Added — GAS Menu & Auto Setup

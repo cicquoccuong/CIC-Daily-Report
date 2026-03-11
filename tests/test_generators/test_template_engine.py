@@ -1,6 +1,7 @@
 """Tests for generators/template_engine.py."""
 
 from cic_daily_report.generators.template_engine import (
+    KEY_METRICS_LABELS,
     ArticleTemplate,
     SectionTemplate,
     load_templates,
@@ -124,9 +125,36 @@ class TestRenderKeyMetricsTable:
 
     def test_missing_metrics_show_na(self):
         table = render_key_metrics_table({})
-        assert table.count("N/A") == 7
+        assert table.count("N/A") == 11
 
     def test_partial_metrics(self):
         table = render_key_metrics_table({"BTC Price": "$100K"})
         assert "$100K" in table
-        assert table.count("N/A") == 6
+        assert table.count("N/A") == 10
+
+
+class TestKeyMetricsLabels:
+    """Tests for FR20 key metrics — 11 mandatory metrics (Wave E)."""
+
+    def test_exactly_11_metrics(self):
+        assert len(KEY_METRICS_LABELS) == 11
+
+    def test_new_metrics_present(self):
+        """Wave E added ETH Dominance, TOTAL3, Altcoin Season, USDT/VND."""
+        assert "ETH Dominance" in KEY_METRICS_LABELS
+        assert "TOTAL3" in KEY_METRICS_LABELS
+        assert "Altcoin Season" in KEY_METRICS_LABELS
+        assert "USDT/VND" in KEY_METRICS_LABELS
+
+    def test_original_metrics_still_present(self):
+        for label in ["BTC Price", "BTC Dominance", "Total Market Cap",
+                       "Fear & Greed", "DXY", "Gold", "Funding Rate"]:
+            assert label in KEY_METRICS_LABELS
+
+    def test_new_metrics_in_rendered_table(self):
+        """All 11 metrics appear as rows in the rendered table."""
+        metrics = {label: f"val_{i}" for i, label in enumerate(KEY_METRICS_LABELS)}
+        table = render_key_metrics_table(metrics)
+        for label in KEY_METRICS_LABELS:
+            assert label in table
+        assert table.count("N/A") == 0

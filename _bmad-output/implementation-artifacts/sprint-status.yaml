@@ -1,4 +1,4 @@
-# generated: 2026-03-09
+# generated: 2026-03-11
 # project: CIC Daily Report
 # tracking_system: file-system
 # story_location: _bmad-output/implementation-artifacts
@@ -106,3 +106,12 @@ development_status:
   7-3-one-click-test-run-confirmation: done
   7-4-readme-project-documentation: done
   epic-7-retrospective: optional
+
+  # Post-Launch: Data Context Starvation Fix (v0.13.0, 2026-03-11)
+  # Root cause: Pipeline collected data but compressed to titles+prices → generic LLM output
+  post-launch-data-context-fix: done
+  # Wave A: Spam filter, enriched news/market text, temperature tuning
+  # Wave B: ETH Dominance, TOTAL3, Altcoin Season, 11 metrics, anomaly flags
+  # Wave C: Per-tier Vietnamese instructions, TIER_MAX_TOKENS, tier_context
+  # Wave D: NQ05 allocation pattern regex, audit logging
+  # Wave E: gh-pages deploy fix, dashboard error timestamps, docstring fixes

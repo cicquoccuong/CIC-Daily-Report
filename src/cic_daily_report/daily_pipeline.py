@@ -173,15 +173,26 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
             }
         )
     clean_result = clean_articles(all_news)
-    cleaned_news = clean_result.articles
+    cleaned_news = [a for a in clean_result.articles if not a.get("filtered", False)]
 
     # Build text summaries for LLM context
-    news_text = "\n".join(
-        f"- {a.get('title', '')} ({a.get('source_name', '')})" for a in cleaned_news[:30]
-    )
-    market_text = "\n".join(
-        f"- {p.symbol}: ${p.price} ({p.change_24h:+.1f}%)" for p in market_data[:20]
-    )
+    news_items = []
+    for a in cleaned_news[:30]:
+        line = f"- {a.get('title', '')} ({a.get('source_name', '')})"
+        summary = a.get("summary", "")
+        if summary:
+            line += f"\n  Tóm tắt: {summary[:300]}"
+        news_items.append(line)
+    news_text = "\n".join(news_items)
+    market_items = []
+    for p in market_data[:20]:
+        line = f"- {p.symbol}: ${p.price:,.2f} ({p.change_24h:+.1f}%)"
+        if p.volume_24h > 0:
+            line += f" | Vol: ${p.volume_24h / 1e6:,.1f}M"
+        if p.market_cap > 0:
+            line += f" | MCap: ${p.market_cap / 1e9:,.1f}B"
+        market_items.append(line)
+    market_text = "\n".join(market_items)
     onchain_text = "\n".join(f"- {m.metric_name}: {m.value} ({m.source})" for m in onchain_data)
 
     # Build key metrics dict (FR20)
@@ -201,9 +212,26 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
             key_metrics["Total Market Cap"] = f"${p.price / 1e12:.2f}T"
         elif p.symbol == "USDT/VND":
             key_metrics["USDT/VND"] = f"{p.price:,.0f}"
+        elif p.symbol == "ETH_Dominance":
+            key_metrics["ETH Dominance"] = f"{p.price:.1f}%"
+        elif p.symbol == "TOTAL3":
+            key_metrics["TOTAL3"] = f"${p.price / 1e9:,.1f}B"
+        elif p.symbol == "Altcoin_Season":
+            key_metrics["Altcoin Season"] = int(p.price)
     for m in onchain_data:
         if m.metric_name == "BTC_Funding_Rate":
             key_metrics["Funding Rate"] = f"{m.value:.4f}"
+
+    # Anomaly detection flags for LLM context
+    fg_value = key_metrics.get("Fear & Greed")
+    if isinstance(fg_value, int):
+        if fg_value <= 20:
+            key_metrics["⚠️ Sentiment"] = f"EXTREME FEAR ({fg_value}) — historically rare level"
+        elif fg_value >= 80:
+            key_metrics["⚠️ Sentiment"] = f"EXTREME GREED ({fg_value}) — historically rare level"
+    for p in market_data:
+        if p.symbol == "BTC" and p.data_type == "crypto" and abs(p.change_24h) >= 5:
+            key_metrics["⚠️ BTC Move"] = f"{p.change_24h:+.1f}% — significant daily move"
 
     # Warn if critical data is missing
     if not cleaned_news:
@@ -246,12 +274,47 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         logger.warning(f"Config load failed, using defaults: {e}")
         errors.append(e)
 
+    # Build per-tier analysis context (different tiers get different focus)
+    tier_context: dict[str, str] = {}
+    tier_context["L1"] = (
+        "Tier L1: Viết cho người mới, chỉ BTC và ETH. "
+        "Tập trung: giá hiện tại, xu hướng ngắn hạn, tâm lý thị trường. "
+        "Giải thích đơn giản, không thuật ngữ phức tạp."
+    )
+    tier_context["L2"] = (
+        "Tier L2: Phân tích kỹ thuật cho 19 coins. "
+        "Tập trung: support/resistance dựa trên giá hiện tại, volume analysis, "
+        "altcoin nổi bật (biến động >3%). "
+        "Nêu rõ mức hỗ trợ/kháng cự cụ thể nếu có data."
+    )
+    tier_context["L3"] = (
+        "Tier L3: Phân tích on-chain + macro chuyên sâu. "
+        "Tập trung: DXY-BTC correlation, Gold signal, on-chain metrics interpretation, "
+        "funding rate ý nghĩa gì cho sentiment. "
+        "Giải thích mối quan hệ giữa macro và crypto."
+    )
+    tier_context["L4"] = (
+        "Tier L4: Phân tích rủi ro và quản lý danh mục. "
+        "Tập trung: phân tích rủi ro theo sector (L1/DeFi/L2/AI), "
+        "so sánh hiệu suất giữa các nhóm coin. "
+        "TUYỆT ĐỐI KHÔNG đưa ra tỷ lệ phân bổ cụ thể (%) — vi phạm NQ05. "
+        "Chỉ phân tích rủi ro, KHÔNG gợi ý mua/bán/phân bổ."
+    )
+    tier_context["L5"] = (
+        "Tier L5: Báo cáo chuyên sâu toàn diện cho Master members. "
+        "Tập trung: macro-crypto correlation, on-chain deep dive, "
+        "sector rotation analysis (DeFi vs L1 vs AI tokens), "
+        "derivatives insight (funding rate, OI), risk flags. "
+        "Viết chuyên sâu, dùng thuật ngữ chính xác, có dẫn chứng data."
+    )
+
     context = GenerationContext(
         coin_lists=coin_lists,
         market_data=market_text,
         news_summary=news_text,
         onchain_data=onchain_text,
         key_metrics=key_metrics,
+        tier_context=tier_context,
     )
 
     generated = []

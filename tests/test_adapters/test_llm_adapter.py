@@ -234,7 +234,5 @@ class TestCallGemini:
             "cic_daily_report.adapters.llm_adapter.httpx.AsyncClient",
             return_value=mock_client,
         ):
-            result = await _call_gemini(provider, "prompt", 1024, 0.7, "")
-
-        assert result.text == ""
-        assert result.tokens_used == 0
+            with pytest.raises(LLMError, match="Gemini returned no candidates"):
+                await _call_gemini(provider, "prompt", 1024, 0.7, "")

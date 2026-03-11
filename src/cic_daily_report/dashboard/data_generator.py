@@ -151,7 +151,8 @@ def _trim_error_history(
 
     for error in errors:
         if not error.timestamp:
-            kept.append(error)  # Keep errors without timestamp
+            error.timestamp = now.isoformat()  # Set default timestamp
+            kept.append(error)
             continue
         try:
             ts = datetime.fromisoformat(error.timestamp)

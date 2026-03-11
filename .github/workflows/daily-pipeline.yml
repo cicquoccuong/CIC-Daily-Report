@@ -87,18 +87,17 @@ jobs:
       - name: Update dashboard on gh-pages
         if: always()
         run: |
-          if [ ! -f dashboard-data.json ]; then
-            echo "No dashboard-data.json, skipping"
+          if [ ! -f gh-pages/dashboard-data.json ]; then
+            echo "No dashboard-data.json generated, skipping"
             exit 0
           fi
-          NEW_HASH=$(sha256sum dashboard-data.json | cut -d' ' -f1)
+          cp gh-pages/dashboard-data.json /tmp/dashboard-data.json
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git stash --include-untracked || true
+          git fetch origin gh-pages:gh-pages 2>/dev/null || true
           git checkout gh-pages 2>/dev/null || git checkout --orphan gh-pages
-          OLD_HASH=$(sha256sum dashboard-data.json 2>/dev/null | cut -d' ' -f1 || echo "none")
-          git stash pop 2>/dev/null || true
-          if [ "$NEW_HASH" = "$OLD_HASH" ]; then
+          cp /tmp/dashboard-data.json dashboard-data.json
+          if git diff --quiet dashboard-data.json 2>/dev/null; then
             echo "Dashboard data unchanged"
             exit 0
           fi

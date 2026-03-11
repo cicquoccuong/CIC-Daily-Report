@@ -66,8 +66,8 @@ async def generate_bic_summary(
     # Extract key content from articles for context
     article_summaries = []
     for article in articles:
-        # Take first 300 chars as excerpt
-        excerpt = article.content[:300].replace(DISCLAIMER, "").strip()
+        # Take first 800 chars as excerpt
+        excerpt = article.content[:800].replace(DISCLAIMER, "").strip()
         article_summaries.append(f"[{article.tier}]: {excerpt}...")
 
     articles_context = "\n".join(article_summaries) if article_summaries else "Không có dữ liệu"
@@ -89,7 +89,7 @@ async def generate_bic_summary(
         prompt=prompt,
         system_prompt=NQ05_SYSTEM_PROMPT,
         max_tokens=2048,
-        temperature=0.3,
+        temperature=0.5,
     )
 
     content = response.text.strip() + DISCLAIMER

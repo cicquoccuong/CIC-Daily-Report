@@ -14,12 +14,16 @@ from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("template_engine")
 
-# FR20: 7 mandatory key metrics
+# FR20: 11 mandatory key metrics
 KEY_METRICS_LABELS = [
     "BTC Price",
     "BTC Dominance",
+    "ETH Dominance",
     "Total Market Cap",
+    "TOTAL3",
     "Fear & Greed",
+    "Altcoin Season",
+    "USDT/VND",
     "DXY",
     "Gold",
     "Funding Rate",
