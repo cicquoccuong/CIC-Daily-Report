@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock
 from cic_daily_report.adapters.llm_adapter import LLMResponse
 from cic_daily_report.generators.article_generator import (
     DISCLAIMER,
-    GeneratedArticle,
     GenerationContext,
     generate_tier_articles,
 )
@@ -35,23 +34,6 @@ def _make_context() -> GenerationContext:
         news_summary="SEC news today",
         key_metrics={"BTC Price": "$105,000"},
     )
-
-
-class TestGeneratedArticle:
-    def test_to_row(self):
-        article = GeneratedArticle(
-            tier="L1",
-            title="[L1] Test",
-            content="Content here",
-            word_count=50,
-            llm_used="llama-3.3",
-            generation_time_sec=2.5,
-            nq05_status="pass",
-        )
-        row = article.to_row()
-        assert len(row) == 8
-        assert row[1] == "L1"
-        assert row[7] == "pass"
 
 
 _MOCK_ARTICLE = (

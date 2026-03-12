@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.13.1] - 2026-03-12
+
+### Fixed — Hotfix Wave E (Cleanup)
+
+**E1: Xóa 3 RSS feed chết**
+- `TNCK` (404), `BitcoinMag` (403), `BeInCrypto` (403) bị gọi mỗi ngày nhưng không bao giờ thành công
+- DEFAULT_FEEDS: 15 → 12 feeds
+
+**E2: Refactor breaking_pipeline dùng private `sheets._connect()`**
+- Thêm public method `SheetsClient.clear_and_rewrite()` thay thế truy cập private
+- Fix luôn bug cũ: `batch_append` luôn chạy kể cả khi delete thành công (double-write)
+- Thêm 4 test cases cho `clear_and_rewrite()`
+
+### Fixed — Hotfix Wave B (Pipeline Reliability)
+
+**D1: Fix test version mismatch**
+- Test assert `VERSION == "0.13.0"` → `"0.13.1"` (CI sẽ fail nếu không sửa)
+
+**D2: ValueError → LLMError trong article_generator**
+- `raise ValueError(...)` → `raise LLMError(...)` — đúng chuẩn QĐ3 (CICError hierarchy)
+
+**D3: Xóa dead code escape_markdown_v2()**
+- Hàm `escape_markdown_v2()` trong telegram_bot.py không được gọi ở đâu → xóa cùng tests
+
+**D5: Bật SSL verification cho Altcoin Season Index**
+- `verify=False` → `verify=True` — sửa lỗ hổng bảo mật HTTPS
+
+**D6: Fix ErrorEntry mutation side effect**
+- `_trim_error_history()` sửa trực tiếp input object → dùng `dataclasses.replace()` tạo copy
+
+**D7+D8: Xóa dead code to_row() trong GeneratedArticle + GeneratedSummary**
+- Hai hàm `to_row()` không được gọi trong pipeline (pipeline dùng dict trực tiếp) → xóa cùng tests + unused imports
+
+**C1: Tách Concurrency Group + Offset Cron**
+- Daily pipeline và Breaking News dùng chung concurrency group → block nhau khi trigger cùng lúc
+- Tách thành `daily-pipeline` / `breaking-news` groups, daily cron offset 5 phút (01:05 UTC)
+
+**C3: Pipeline Fail Khi Delivery Gửi 0 Tin**
+- `_deliver()` catch exception nhưng không propagate → pipeline báo "success" dù delivery fail
+- `_deliver()` giờ return `DeliveryResult`, `_run_pipeline()` check 0-sent → set status "error" + `sys.exit(1)`
+- Partial delivery (ví dụ 3/6 sent) vẫn là "partial", không fail pipeline
+
+**C5: Fix pyproject.toml Version**
+- Version `0.12.0` không khớp `core/config.py` `0.13.0` → sửa đồng bộ
+
+**H6: Validate Groq Empty Response**
+- Groq thiếu validation empty text (Gemini đã có 2 lớp)
+- Thêm validation trong `_call_groq()` + safety net trong `generate()` cho TẤT CẢ providers
+
+**M1: HTML Escape cho Telegram Messages**
+- `parse_mode="HTML"` nhưng không escape `<`, `>`, `&` → TG parsing error
+- Thêm `html.escape()` trong `_send_raw()` — tầng thấp nhất, cover mọi message
+
 ## [0.13.0] - 2026-03-11
 
 ### Fixed — Data Context Starvation (Root Cause of Generic Output)

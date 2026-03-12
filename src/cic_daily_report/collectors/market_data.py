@@ -528,7 +528,7 @@ async def _collect_altcoin_season() -> list[MarketDataPoint]:
     ]
     for url in urls:
         try:
-            async with httpx.AsyncClient(timeout=15, verify=False) as client:
+            async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(url)
                 if resp.status_code != 200:
                     logger.warning(

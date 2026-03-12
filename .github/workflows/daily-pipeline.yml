@@ -2,11 +2,11 @@ name: Daily Pipeline
 
 on:
   schedule:
-    - cron: '0 1 * * *'  # 01:00 UTC = 08:00 VN
+    - cron: '5 1 * * *'  # 01:05 UTC = 08:05 VN (offset 5m to avoid collision with breaking-news at :00)
   workflow_dispatch:      # manual trigger
 
 concurrency:
-  group: gh-pages-deploy
+  group: daily-pipeline
   cancel-in-progress: false
 
 jobs:

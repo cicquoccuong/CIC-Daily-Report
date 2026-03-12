@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import time
 from datetime import datetime, timezone
 
@@ -34,11 +35,16 @@ def main() -> None:
     if is_test_mode():
         logger.info("[TEST] Manual trigger detected — running in test mode")
 
-    asyncio.run(_run_pipeline())
+    status = asyncio.run(_run_pipeline())
+    if status == "error":
+        sys.exit(1)
 
 
-async def _run_pipeline() -> None:
-    """Execute the daily pipeline with timeout and error handling."""
+async def _run_pipeline() -> str:
+    """Execute the daily pipeline with timeout and error handling.
+
+    Returns pipeline status: "success", "partial", "timeout", or "error".
+    """
     start = time.monotonic()
     run_log = _new_run_log()
     errors: list[Exception] = []
@@ -60,9 +66,19 @@ async def _run_pipeline() -> None:
 
     # Deliver whatever we have (NFR7: always send something)
     try:
-        await _deliver(articles, errors)
+        delivery_result = await _deliver(articles, errors)
+        # C3 fix: detect full delivery failure (0 sent but had messages to send)
+        if delivery_result.messages_total > 0 and delivery_result.messages_sent == 0:
+            logger.error("Delivery failed: 0 messages sent out of "
+                         f"{delivery_result.messages_total}")
+            errors.append(Exception(
+                f"Delivery failed: 0/{delivery_result.messages_total} messages sent"
+            ))
+            run_log["status"] = "error"
     except Exception as e:
         logger.error(f"Delivery failed: {e}")
+        errors.append(e)
+        run_log["status"] = "error"
 
     # FR54: Send test mode confirmation
     if is_test_mode():
@@ -95,6 +111,8 @@ async def _run_pipeline() -> None:
         _write_dashboard_data(run_log, articles, errors)
     except Exception as e:
         logger.error(f"Dashboard data write failed (non-critical): {e}")
+
+    return run_log["status"]
 
 
 async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
@@ -498,8 +516,11 @@ async def _write_generated_content(
 async def _deliver(
     articles: list[dict[str, str]],
     errors: list[Exception],
-) -> None:
-    """Deliver content via DeliveryManager (TG → email backup)."""
+) -> object:
+    """Deliver content via DeliveryManager (TG → email backup).
+
+    Returns DeliveryResult so caller can detect full delivery failure (C3 fix).
+    """
     from cic_daily_report.delivery.delivery_manager import DeliveryManager
     from cic_daily_report.delivery.email_backup import EmailBackup
     from cic_daily_report.delivery.telegram_bot import TelegramBot
@@ -516,6 +537,7 @@ async def _deliver(
         f"{result.messages_sent}/{result.messages_total} sent, "
         f"status: {result.status_line()}"
     )
+    return result
 
 
 async def _write_run_log(run_log: dict) -> None:

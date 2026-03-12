@@ -8,7 +8,6 @@ from cic_daily_report.core.error_handler import DeliveryError
 from cic_daily_report.delivery.telegram_bot import (
     TelegramBot,
     TelegramMessage,
-    escape_markdown_v2,
     prepare_messages,
     split_message,
 )
@@ -23,17 +22,6 @@ class TestTelegramMessage:
         msg = TelegramMessage(tier_label="L3", content="Part 2", part=2, total_parts=3)
         assert "[L3 - Phần 2/3]" in msg.formatted
         assert "Part 2" in msg.formatted
-
-
-class TestEscapeMarkdownV2:
-    def test_escapes_special_chars(self):
-        result = escape_markdown_v2("Hello (world) [test]")
-        assert "\\(" in result
-        assert "\\[" in result
-
-    def test_preserves_regular_text(self):
-        result = escape_markdown_v2("BTC price is 105K")
-        assert result == "BTC price is 105K"
 
 
 class TestSplitMessage:

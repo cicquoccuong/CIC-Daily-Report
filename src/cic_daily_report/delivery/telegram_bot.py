@@ -7,6 +7,7 @@ tier labels, MarkdownV2 escaping, rate limiting delay.
 from __future__ import annotations
 
 import asyncio
+import html as html_lib
 import os
 import re
 from dataclasses import dataclass
@@ -41,16 +42,6 @@ class TelegramMessage:
         else:
             header = f"[{self.tier_label}]"
         return f"{header}\n\n{self.content}"
-
-
-def escape_markdown_v2(text: str) -> str:
-    """Escape special characters for Telegram MarkdownV2.
-
-    Preserves bold (**) and italic (_) markdown formatting.
-    """
-    # Characters that need escaping in MarkdownV2 (excluding * and _ for formatting)
-    special_chars = r"[\[\]()~`>#\+\-=|{}.!]"
-    return re.sub(special_chars, r"\\\g<0>", text)
 
 
 def split_message(tier_label: str, content: str) -> list[TelegramMessage]:
@@ -143,8 +134,14 @@ class TelegramBot:
         )
 
     async def _send_raw(self, text: str, parse_mode: str = "HTML") -> dict[str, Any]:
-        """Raw send — called by retry wrapper."""
+        """Raw send — called by retry wrapper.
+
+        Note: All text is HTML-escaped at this level to prevent parsing errors.
+        If HTML formatting tags are needed in future, move escaping to caller level.
+        """
         url = f"https://api.telegram.org/bot{self._token}/sendMessage"
+        # Escape HTML entities to prevent TG parsing errors (M1 fix)
+        text = html_lib.escape(text)
         payload = {
             "chat_id": self._chat_id,
             "text": text,

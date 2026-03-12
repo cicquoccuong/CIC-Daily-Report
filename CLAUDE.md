@@ -1,7 +1,7 @@
 # CIC Daily Report
 
 ## System
-- **Version**: 0.13.0 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
+- **Version**: 0.13.1 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
 - **Purpose**: Automated crypto daily report pipeline for CIC community (BIC Group/BIC Chat)
 - **Output**: 5 tier articles (L1→L5 cumulative) + 1 BIC Chat summary + Breaking news alerts
 - **Operator**: Anh Cường (no-code user, receives on Telegram, copy-pastes to BIC)
@@ -56,7 +56,7 @@ docs/               # planning docs, guides
 ## Pipelines
 | Pipeline | Schedule | Duration Target |
 |----------|----------|----------------|
-| Daily | 01:00 UTC (08:00 VN) | ≤40 min |
+| Daily | 01:05 UTC (08:05 VN) | ≤40 min |
 | Breaking | Hourly (`0 * * * *`) | ≤20 min |
 
 ## Quy Trình Làm Việc (MANDATORY)

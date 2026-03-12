@@ -191,8 +191,8 @@ class TestFullContentPipeline:
         assert articles[0].tier == "L2"
         assert articles[0].llm_used == "gemini-flash"
 
-    async def test_content_written_to_rows(self):
-        """Verify to_row() format for NOI_DUNG_DA_TAO sheet."""
+    async def test_content_has_required_fields(self):
+        """Verify GeneratedArticle/Summary have required fields for sheet writing."""
         llm = _mock_llm()
         templates = _full_templates()
         context = _full_context()
@@ -200,11 +200,11 @@ class TestFullContentPipeline:
         articles = await generate_tier_articles(llm, templates, context)
         summary = await generate_bic_summary(llm, articles, context.key_metrics)
 
-        # Each article row: [timestamp, tier, title, content, word_count, llm_used, time, nq05]
         for article in articles:
-            row = article.to_row()
-            assert len(row) == 8
-            assert row[1] in ("L1", "L2", "L3", "L4", "L5")
+            assert article.tier in ("L1", "L2", "L3", "L4", "L5")
+            assert article.content
+            assert article.word_count > 0
+            assert article.llm_used
 
-        summary_row = summary.to_row()
-        assert summary_row[1] == "SUMMARY"
+        assert summary.content
+        assert summary.word_count > 0

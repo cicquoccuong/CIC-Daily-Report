@@ -1,4 +1,4 @@
-"""Multi-LLM Adapter Pattern (QĐ2) — Groq → Gemini Flash → Gemini Flash Lite.
+"""Multi-LLM Adapter Pattern (QĐ2) — Gemini Flash → Gemini Flash Lite → Groq.
 
 Unified interface: all providers return the same response format.
 Automatic fallback when primary fails.
@@ -131,6 +131,13 @@ class LLMAdapter:
                         provider, prompt, max_tokens, temperature, system_prompt
                     )
 
+                # Safety net: validate response is non-empty (covers all providers)
+                if not response.text.strip():
+                    raise LLMError(
+                        f"{provider.name} returned empty response",
+                        source="llm_adapter",
+                    )
+
                 self._quota.track(provider.name)
                 self._last_provider = provider.name
                 logger.info(f"LLM response from {provider.name} ({response.tokens_used} tokens)")
@@ -182,6 +189,8 @@ async def _call_groq(
     data = resp.json()
     choice = data.get("choices", [{}])[0]
     text = choice.get("message", {}).get("content", "")
+    if not text.strip():
+        raise LLMError("Groq returned empty text", source="llm_adapter")
     usage = data.get("usage", {})
     tokens = usage.get("total_tokens", 0)
 

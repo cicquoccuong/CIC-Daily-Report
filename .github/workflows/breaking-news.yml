@@ -6,7 +6,7 @@ on:
   workflow_dispatch:      # manual trigger
 
 concurrency:
-  group: gh-pages-deploy
+  group: breaking-news
   cancel-in-progress: false
 
 jobs:

@@ -115,3 +115,12 @@ development_status:
   # Wave C: Per-tier Vietnamese instructions, TIER_MAX_TOKENS, tier_context
   # Wave D: NQ05 allocation pattern regex, audit logging
   # Wave E: gh-pages deploy fix, dashboard error timestamps, docstring fixes
+
+  # Post-Launch: Pipeline Reliability & Code Quality Hotfixes (v0.13.1, 2026-03-12)
+  post-launch-reliability-hotfix: done
+  # Wave B (5 fixes): C1-concurrency-group-cron-offset, C3-delivery-error-propagation,
+  #   C5-version-sync, H6-groq-empty-validation, M1-html-escape-telegram
+  # Wave D (8 fixes): D1-test-version, D2-LLMError, D3-dead-escape_markdown_v2,
+  #   D5-ssl-verify, D6-errorentry-mutation, D7-D8-dead-to_row
+  # Wave E (2 fixes): E1-remove-dead-rss-feeds, E2-sheets-clear_and_rewrite-refactor
+  # All 358 tests pass. Lint clean.

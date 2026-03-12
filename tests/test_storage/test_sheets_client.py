@@ -111,3 +111,53 @@ class TestSheetsClientOperations:
 
         # Should create 8 tabs (9 total - 1 existing)
         assert mock_ss.add_worksheet.call_count == 8
+
+
+class TestClearAndRewrite:
+    @pytest.fixture
+    def mock_client(self):
+        client = SheetsClient(spreadsheet_id="test_id", credentials_b64="dGVzdA==")
+        mock_ss = MagicMock()
+        client._spreadsheet = mock_ss
+        return client, mock_ss
+
+    def test_clears_existing_rows_and_appends(self, mock_client):
+        client, mock_ss = mock_client
+        mock_ws = MagicMock()
+        mock_ws.get_all_values.return_value = [["header"], ["row1"], ["row2"]]
+        mock_ss.worksheet.return_value = mock_ws
+
+        rows = [["new1"], ["new2"]]
+        client.clear_and_rewrite("BREAKING_LOG", rows)
+
+        mock_ws.delete_rows.assert_called_once_with(2, 3)
+        mock_ws.append_rows.assert_called_once_with(rows, value_input_option="RAW")
+
+    def test_no_delete_when_only_header_exists(self, mock_client):
+        client, mock_ss = mock_client
+        mock_ws = MagicMock()
+        mock_ws.get_all_values.return_value = [["header"]]
+        mock_ss.worksheet.return_value = mock_ws
+
+        client.clear_and_rewrite("BREAKING_LOG", [["new1"]])
+
+        mock_ws.delete_rows.assert_not_called()
+        mock_ws.append_rows.assert_called_once()
+
+    def test_no_append_when_rows_empty(self, mock_client):
+        client, mock_ss = mock_client
+        mock_ws = MagicMock()
+        mock_ws.get_all_values.return_value = [["header"], ["existing"]]
+        mock_ss.worksheet.return_value = mock_ws
+
+        client.clear_and_rewrite("BREAKING_LOG", [])
+
+        mock_ws.delete_rows.assert_called_once()
+        mock_ws.append_rows.assert_not_called()
+
+    def test_raises_storage_error_on_failure(self, mock_client):
+        client, mock_ss = mock_client
+        mock_ss.worksheet.side_effect = Exception("network error")
+
+        with pytest.raises(StorageError, match="clear_and_rewrite"):
+            client.clear_and_rewrite("BREAKING_LOG", [["data"]])

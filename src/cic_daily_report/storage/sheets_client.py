@@ -209,3 +209,23 @@ class SheetsClient:
             raise StorageError(
                 f"delete_rows failed for {tab_name}: {e}", source="sheets_client"
             ) from e
+
+    def clear_and_rewrite(self, sheet_name: str, rows: list[list[Any]]) -> None:
+        """Clear all data rows (row 2+) in sheet_name, then append rows.
+
+        Raises StorageError on any failure — caller is responsible for fallback.
+        """
+        ss = self._connect()
+        try:
+            ws = ss.worksheet(sheet_name)
+            all_vals = ws.get_all_values()
+            if len(all_vals) > 1:
+                ws.delete_rows(2, len(all_vals))
+                logger.info(f"Cleared {len(all_vals) - 1} data rows from {sheet_name}")
+            if rows:
+                ws.append_rows(rows, value_input_option="RAW")
+                logger.info(f"Wrote {len(rows)} rows to {sheet_name}")
+        except Exception as e:
+            raise StorageError(
+                f"clear_and_rewrite failed for {sheet_name}: {e}", source="sheets_client"
+            ) from e

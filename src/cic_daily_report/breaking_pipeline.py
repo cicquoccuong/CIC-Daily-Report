@@ -274,24 +274,17 @@ async def _persist_dedup_to_sheets(dedup_mgr: DedupManager) -> None:
         if not rows:
             return
 
-        # Try to clear existing data first
-        delete_ok = False
+        # Try to clear-and-rewrite atomically via public method
         try:
-            ss = await asyncio.to_thread(sheets._connect)
-            ws = await asyncio.to_thread(ss.worksheet, "BREAKING_LOG")
-            all_vals = await asyncio.to_thread(ws.get_all_values)
-            if len(all_vals) > 1:
-                await asyncio.to_thread(ws.delete_rows, 2, len(all_vals))
-            delete_ok = True
+            await asyncio.to_thread(sheets.clear_and_rewrite, "BREAKING_LOG", rows)
+            logger.info(f"Persisted {len(rows)} dedup entries to BREAKING_LOG (clean rewrite)")
+            return  # done — no append needed
         except Exception as e:
-            logger.warning(f"BREAKING_LOG delete failed, will append-only: {e}")
+            logger.warning(f"BREAKING_LOG clear_and_rewrite failed, will append-only: {e}")
 
-        # Append new data — this MUST succeed even if delete failed
+        # Fallback: append-only (prevents data loss but may create duplicates)
         await asyncio.to_thread(sheets.batch_append, "BREAKING_LOG", rows)
-        logger.info(
-            f"Persisted {len(rows)} dedup entries to BREAKING_LOG"
-            f" ({'clean rewrite' if delete_ok else 'append-only fallback'})"
-        )
+        logger.info(f"Persisted {len(rows)} dedup entries to BREAKING_LOG (append-only fallback)")
     except Exception as e:
         logger.warning(f"Failed to persist BREAKING_LOG: {e}")
 

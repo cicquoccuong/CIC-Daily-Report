@@ -11,7 +11,7 @@ Generates dashboard-data.json after every pipeline run with:
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 
 from cic_daily_report.core.logger import get_logger
@@ -151,8 +151,7 @@ def _trim_error_history(
 
     for error in errors:
         if not error.timestamp:
-            error.timestamp = now.isoformat()  # Set default timestamp
-            kept.append(error)
+            kept.append(replace(error, timestamp=now.isoformat()))
             continue
         try:
             ts = datetime.fromisoformat(error.timestamp)

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any
 
 from cic_daily_report.adapters.llm_adapter import LLMAdapter, LLMResponse
 from cic_daily_report.core.logger import get_logger
@@ -32,22 +31,6 @@ class GeneratedSummary:
     llm_used: str
     generation_time_sec: float
     nq05_status: str = "pending"
-
-    def to_row(self) -> list[Any]:
-        """Convert to row for NOI_DUNG_DA_TAO sheet."""
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        return [
-            now,
-            "SUMMARY",
-            self.title,
-            self.content,
-            self.word_count,
-            self.llm_used,
-            f"{self.generation_time_sec:.1f}s",
-            self.nq05_status,
-        ]
 
 
 async def generate_bic_summary(

@@ -35,22 +35,6 @@ def _metrics() -> dict[str, str | float]:
     return {"BTC Price": "$105,000", "Fear & Greed": "72"}
 
 
-class TestGeneratedSummary:
-    def test_to_row(self):
-        summary = GeneratedSummary(
-            title="[Summary] Test",
-            content="Summary content",
-            word_count=30,
-            llm_used="test-model",
-            generation_time_sec=2.0,
-            nq05_status="pass",
-        )
-        row = summary.to_row()
-        assert len(row) == 8
-        assert row[1] == "SUMMARY"
-        assert row[7] == "pass"
-
-
 class TestGenerateBicSummary:
     async def test_generates_summary(self):
         mock_llm = AsyncMock()
