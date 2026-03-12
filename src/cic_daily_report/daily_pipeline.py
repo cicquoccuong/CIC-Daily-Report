@@ -161,6 +161,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
                 "url": a.url,
                 "source_name": a.source_name,
                 "summary": a.summary,
+                "news_type": getattr(a, "news_type", "crypto"),
             }
         )
     for m in tg_messages:
@@ -175,15 +176,24 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     clean_result = clean_articles(all_news)
     cleaned_news = [a for a in clean_result.articles if not a.get("filtered", False)]
 
-    # Build text summaries for LLM context
-    news_items = []
+    # Split news into crypto vs macro categories for LLM context
+    crypto_items = []
+    macro_items = []
     for a in cleaned_news[:30]:
         line = f"- {a.get('title', '')} ({a.get('source_name', '')})"
         summary = a.get("summary", "")
         if summary:
             line += f"\n  Tóm tắt: {summary[:300]}"
-        news_items.append(line)
-    news_text = "\n".join(news_items)
+        if a.get("news_type") == "macro":
+            macro_items.append(line)
+        else:
+            crypto_items.append(line)
+
+    news_text = ""
+    if crypto_items:
+        news_text += "=== TIN CRYPTO ===\n" + "\n".join(crypto_items)
+    if macro_items:
+        news_text += "\n\n=== TIN VĨ MÔ ===\n" + "\n".join(macro_items)
     market_items = []
     for p in market_data[:20]:
         line = f"- {p.symbol}: ${p.price:,.2f} ({p.change_24h:+.1f}%)"

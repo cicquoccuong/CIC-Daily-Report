@@ -14,7 +14,7 @@ from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("cryptopanic")
 
-API_BASE = "https://cryptopanic.com/api/v1"
+API_BASE = "https://cryptopanic.com/api/developer/v2"
 MAX_URLS_PER_RUN = 50
 TRAFILATURA_TIMEOUT = 10  # seconds per URL
 
@@ -32,6 +32,8 @@ class CryptoPanicArticle:
     panic_score: float
     votes_bullish: int
     votes_bearish: int
+    currencies: list[str] | None = None  # coin codes from API (e.g. ["BTC","ETH"])
+    news_type: str = "crypto"  # "crypto" or "macro" — classified from currencies field
     language: str = "en"
 
     def to_row(self) -> list[str]:
@@ -89,7 +91,6 @@ async def _fetch_posts(api_key: str) -> list[CryptoPanicArticle]:
         "auth_token": api_key,
         "filter": "hot",
         "public": "true",
-        "currencies": "BTC,ETH,SOL,BNB,XRP,ADA,DOGE,AVAX,DOT,MATIC,LINK,UNI",
         "kind": "news",
     }
 
@@ -102,6 +103,10 @@ async def _fetch_posts(api_key: str) -> list[CryptoPanicArticle]:
 
     for post in data.get("results", [])[:30]:
         votes = post.get("votes", {})
+        # Extract currency codes from API response
+        coin_codes = [
+            c.get("code", "") for c in post.get("currencies", []) if c.get("code")
+        ]
         articles.append(
             CryptoPanicArticle(
                 title=post.get("title", ""),
@@ -113,10 +118,32 @@ async def _fetch_posts(api_key: str) -> list[CryptoPanicArticle]:
                 panic_score=_calc_panic_score(votes),
                 votes_bullish=votes.get("positive", 0),
                 votes_bearish=votes.get("negative", 0),
+                currencies=coin_codes or None,
+                news_type="crypto" if coin_codes else _classify_news(post.get("title", "")),
             )
         )
 
     return articles
+
+
+# Keywords indicating macro/geopolitical news
+_MACRO_KEYWORDS = (
+    "fed ", "federal reserve", "interest rate", "inflation", "gdp",
+    "tariff", "dxy", "gold", "oil", "crude", "treasury",
+    "geopolit", "war", "sanction", "election", "recession",
+    "cpi", "ppi", "fomc", "ecb", "boj", "pboc",
+    "stock market", "s&p", "nasdaq", "dow jones",
+    "usd", "eur", "jpy", "yuan",
+)
+
+
+def _classify_news(title: str) -> str:
+    """Classify news as 'crypto' or 'macro' based on title keywords."""
+    lower = title.lower()
+    for kw in _MACRO_KEYWORDS:
+        if kw in lower:
+            return "macro"
+    return "crypto"
 
 
 def _calc_panic_score(votes: dict[str, Any]) -> float:
