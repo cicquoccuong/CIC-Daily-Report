@@ -139,6 +139,12 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
 
     errors: list[Exception] = []
 
+    # Seed default CAU_HINH config rows on first run (idempotent, non-fatal)
+    try:
+        await asyncio.to_thread(SheetsClient().seed_default_config)
+    except Exception as e:
+        logger.warning(f"CAU_HINH seed skipped: {e}")
+
     # --- Stage 1: Data Collection (parallel, QĐ5) ---
     logger.info("Stage 1: Data Collection")
     results = await asyncio.gather(
