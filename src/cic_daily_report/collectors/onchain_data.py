@@ -41,7 +41,7 @@ async def collect_onchain() -> list[OnChainMetric]:
 
     tasks = [
         _collect_glassnode(),
-        _collect_coinglass(),
+        _collect_derivatives(),
         _collect_fred(),
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -49,7 +49,7 @@ async def collect_onchain() -> list[OnChainMetric]:
     all_metrics: list[OnChainMetric] = []
     for i, result in enumerate(results):
         if isinstance(result, Exception):
-            source_names = ["Glassnode", "Coinglass", "FRED"]
+            source_names = ["Glassnode", "Derivatives", "FRED"]
             logger.warning(f"{source_names[i]} failed: {result}")
         else:
             all_metrics.extend(result)
@@ -111,69 +111,217 @@ async def _collect_glassnode() -> list[OnChainMetric]:
     return metrics
 
 
-async def _collect_coinglass() -> list[OnChainMetric]:
-    """Collect derivatives data from Coinglass (FR5).
+async def _collect_derivatives() -> list[OnChainMetric]:
+    """Collect BTC derivatives — Binance Futures (primary) → Bybit → OKX fallback (FR5).
 
-    Funding rates, Open Interest, Liquidations.
-
-    DEPRECATION WARNING: Using Coinglass v2 public endpoints which are deprecated.
-    v2 may stop working at any time. When it does:
-    - Migrate to v4: https://open-api-v4.coinglass.com/api/futures/...
-    - v4 header: CG-API-KEY (not coinglassSecret)
-    - v4 free plan: 10,000 calls/month (sufficient for hourly pipeline)
-    - Liquidation history + Altcoin Season require Hobbyist plan ($29/mo)
-    See docs/API_RESEARCH.md for full details.
+    Metrics: BTC_Funding_Rate, BTC_Open_Interest, BTC_Long_Short_Ratio, BTC_Taker_Buy_Sell_Ratio
+    All public endpoints — no API key required.
+    GitHub Actions servers (US/EU) access Binance Futures freely.
     """
-    metrics: list[OnChainMetric] = []
-
-    # Coinglass public endpoints
-    endpoints = [
-        (
-            "https://open-api.coinglass.com/public/v2/funding",
-            "BTC_Funding_Rate",
-            lambda d: d.get("data", [{}])[0].get("rate", 0) if d.get("data") else 0,
-        ),
-        (
-            "https://open-api.coinglass.com/public/v2/open_interest",
-            "BTC_Open_Interest",
-            lambda d: d.get("data", [{}])[0].get("openInterest", 0) if d.get("data") else 0,
-        ),
+    providers = [
+        ("Binance", _derivatives_binance),
+        ("Bybit", _derivatives_bybit),
+        ("OKX", _derivatives_okx),
     ]
-
-    api_key = os.getenv("COINGLASS_API_KEY", "")
-
-    for url, name, extractor in endpoints:
+    for provider_name, collector in providers:
         try:
-            headers = {}
-            if api_key:
-                headers["coinglassSecret"] = api_key
-
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(url, params={"symbol": "BTC"}, headers=headers)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    value = extractor(data)
-                    if value == 0:
-                        logger.warning(
-                            f"Coinglass {name}: returned 0 — skipping to avoid "
-                            "misleading data. v2 public API is deprecated; "
-                            "migrate to v4 (open-api-v4.coinglass.com) with CG-API-KEY header"
-                        )
-                        continue
-                    metrics.append(
-                        OnChainMetric(
-                            metric_name=name,
-                            value=float(value),
-                            source="Coinglass",
-                        )
-                    )
-                else:
-                    logger.debug(f"Coinglass {name}: HTTP {resp.status_code}")
+            metrics = await collector()
+            if metrics:
+                logger.info(f"Derivatives: {len(metrics)} metrics from {provider_name}")
+                return metrics
         except Exception as e:
-            logger.debug(f"Coinglass {name} failed: {e}")
+            logger.warning(f"Derivatives {provider_name} failed: {e}")
 
-    if not metrics:
-        logger.warning("Coinglass: no data available")
+    logger.warning("Derivatives: all providers failed")
+    return []
+
+
+async def _derivatives_binance() -> list[OnChainMetric]:
+    """Binance Futures public endpoints — primary derivatives source."""
+    metrics: list[OnChainMetric] = []
+    base = "https://fapi.binance.com"
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        # Funding Rate (latest 8h rate)
+        try:
+            resp = await client.get(
+                f"{base}/fapi/v1/fundingRate",
+                params={"symbol": "BTCUSDT", "limit": "1"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data:
+                metrics.append(
+                    OnChainMetric(
+                        "BTC_Funding_Rate", float(data[0]["fundingRate"]), "Binance", "8h rate"
+                    )
+                )
+        except Exception as e:
+            logger.debug(f"Binance fundingRate: {e}")
+
+        # Open Interest
+        try:
+            resp = await client.get(f"{base}/fapi/v1/openInterest", params={"symbol": "BTCUSDT"})
+            resp.raise_for_status()
+            data = resp.json()
+            metrics.append(
+                OnChainMetric(
+                    "BTC_Open_Interest", float(data["openInterest"]), "Binance", "BTC contracts"
+                )
+            )
+        except Exception as e:
+            logger.debug(f"Binance openInterest: {e}")
+
+        # Long/Short Account Ratio
+        try:
+            resp = await client.get(
+                f"{base}/futures/data/globalLongShortAccountRatio",
+                params={"symbol": "BTCUSDT", "period": "5m", "limit": "1"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data:
+                metrics.append(
+                    OnChainMetric(
+                        "BTC_Long_Short_Ratio",
+                        float(data[0]["longShortRatio"]),
+                        "Binance",
+                        "global account ratio",
+                    )
+                )
+        except Exception as e:
+            logger.debug(f"Binance longShortRatio: {e}")
+
+        # Taker Buy/Sell Volume Ratio
+        try:
+            resp = await client.get(
+                f"{base}/futures/data/takerBuySellVol",
+                params={"symbol": "BTCUSDT", "period": "5m", "limit": "1"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data:
+                metrics.append(
+                    OnChainMetric(
+                        "BTC_Taker_Buy_Sell_Ratio",
+                        float(data[0]["buySellRatio"]),
+                        "Binance",
+                        "taker buy/sell volume ratio",
+                    )
+                )
+        except Exception as e:
+            logger.debug(f"Binance takerBuySellVol: {e}")
+
+    return metrics
+
+
+async def _derivatives_bybit() -> list[OnChainMetric]:
+    """Bybit v5 public API — first fallback derivatives source."""
+    metrics: list[OnChainMetric] = []
+    base = "https://api.bybit.com/v5/market"
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        # Funding Rate
+        try:
+            resp = await client.get(
+                f"{base}/funding/history",
+                params={"category": "linear", "symbol": "BTCUSDT", "limit": "1"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            entries = data.get("result", {}).get("list", [])
+            if entries:
+                metrics.append(
+                    OnChainMetric(
+                        "BTC_Funding_Rate", float(entries[0]["fundingRate"]), "Bybit", "8h rate"
+                    )
+                )
+        except Exception as e:
+            logger.debug(f"Bybit fundingRate: {e}")
+
+        # Open Interest
+        try:
+            resp = await client.get(
+                f"{base}/open-interest",
+                params={
+                    "category": "linear",
+                    "symbol": "BTCUSDT",
+                    "intervalTime": "1h",
+                    "limit": "1",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            entries = data.get("result", {}).get("list", [])
+            if entries:
+                oi = float(entries[0]["openInterest"])
+                metrics.append(OnChainMetric("BTC_Open_Interest", oi, "Bybit", "BTC contracts"))
+        except Exception as e:
+            logger.debug(f"Bybit openInterest: {e}")
+
+        # Long/Short Ratio (derived from buy/sell account ratio)
+        try:
+            resp = await client.get(
+                f"{base}/account-ratio",
+                params={"category": "linear", "symbol": "BTCUSDT", "period": "1h", "limit": "1"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            entries = data.get("result", {}).get("list", [])
+            if entries:
+                buy_ratio = float(entries[0]["buyRatio"])
+                sell_ratio = float(entries[0]["sellRatio"])
+                ls_ratio = round(buy_ratio / sell_ratio, 4) if sell_ratio > 0 else 1.0
+                metrics.append(
+                    OnChainMetric(
+                        "BTC_Long_Short_Ratio", ls_ratio, "Bybit", "buy/sell account ratio"
+                    )
+                )
+        except Exception as e:
+            logger.debug(f"Bybit accountRatio: {e}")
+
+    return metrics
+
+
+async def _derivatives_okx() -> list[OnChainMetric]:
+    """OKX v5 public API — second fallback derivatives source."""
+    metrics: list[OnChainMetric] = []
+    base = "https://www.okx.com/api/v5/public"
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        # Funding Rate
+        try:
+            resp = await client.get(f"{base}/funding-rate", params={"instId": "BTC-USDT-SWAP"})
+            resp.raise_for_status()
+            data = resp.json()
+            entries = data.get("data", [])
+            if entries:
+                metrics.append(
+                    OnChainMetric(
+                        "BTC_Funding_Rate", float(entries[0]["fundingRate"]), "OKX", "8h rate"
+                    )
+                )
+        except Exception as e:
+            logger.debug(f"OKX fundingRate: {e}")
+
+        # Open Interest
+        try:
+            resp = await client.get(
+                f"{base}/open-interest",
+                params={"instType": "SWAP", "instId": "BTC-USDT-SWAP"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            entries = data.get("data", [])
+            if entries:
+                metrics.append(
+                    OnChainMetric(
+                        "BTC_Open_Interest", float(entries[0]["oi"]), "OKX", "BTC contracts"
+                    )
+                )
+        except Exception as e:
+            logger.debug(f"OKX openInterest: {e}")
+
     return metrics
 
 

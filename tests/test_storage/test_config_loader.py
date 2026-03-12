@@ -70,6 +70,60 @@ class TestGetSettings:
         assert val == 42
 
 
+class TestGetEmailRecipients:
+    def test_reads_from_cau_hinh(self, loader, mock_sheets):
+        mock_sheets.read_all.return_value = [
+            {"Khóa": "email_recipients", "Giá trị": "a@b.com, c@d.com", "Mô tả": ""},
+        ]
+        result = loader.get_email_recipients()
+        assert result == ["a@b.com", "c@d.com"]
+
+    def test_falls_back_to_env_var(self, loader, mock_sheets, monkeypatch):
+        mock_sheets.read_all.return_value = []
+        monkeypatch.setenv("SMTP_RECIPIENTS", "x@y.com,z@w.com")
+        result = loader.get_email_recipients()
+        assert result == ["x@y.com", "z@w.com"]
+
+    def test_returns_empty_when_neither_set(self, loader, mock_sheets, monkeypatch):
+        mock_sheets.read_all.return_value = []
+        monkeypatch.delenv("SMTP_RECIPIENTS", raising=False)
+        result = loader.get_email_recipients()
+        assert result == []
+
+    def test_sheet_overrides_env_var(self, loader, mock_sheets, monkeypatch):
+        mock_sheets.read_all.return_value = [
+            {"Khóa": "email_recipients", "Giá trị": "sheet@b.com", "Mô tả": ""},
+        ]
+        monkeypatch.setenv("SMTP_RECIPIENTS", "env@b.com")
+        result = loader.get_email_recipients()
+        assert result == ["sheet@b.com"]
+
+
+class TestSetEmailRecipients:
+    def test_calls_upsert_setting(self, loader, mock_sheets):
+        loader.set_email_recipients(["a@b.com", "c@d.com"])
+        mock_sheets.upsert_setting.assert_called_once()
+        call_args = mock_sheets.upsert_setting.call_args[0]
+        assert call_args[0] == "email_recipients"
+        assert "a@b.com" in call_args[1]
+        assert "c@d.com" in call_args[1]
+
+    def test_invalidates_cache_after_set(self, loader, mock_sheets):
+        mock_sheets.read_all.return_value = [
+            {"Khóa": "email_recipients", "Giá trị": "old@b.com", "Mô tả": ""},
+        ]
+        loader.get_settings()  # populate cache
+        assert loader._config_cache is not None
+
+        loader.set_email_recipients(["new@b.com"])
+        assert loader._config_cache is None  # cache cleared
+
+    def test_empty_list_saves_empty_string(self, loader, mock_sheets):
+        loader.set_email_recipients([])
+        call_args = mock_sheets.upsert_setting.call_args[0]
+        assert call_args[1] == ""  # empty join
+
+
 class TestGetTemplates:
     def test_reads_mau_bai_viet(self, loader, mock_sheets):
         mock_sheets.read_all.return_value = [

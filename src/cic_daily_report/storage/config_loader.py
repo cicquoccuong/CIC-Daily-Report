@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from cic_daily_report.core.error_handler import ConfigError
@@ -84,6 +85,37 @@ class ConfigLoader:
             return int(value)
         except (ValueError, TypeError):
             return default
+
+    def get_email_recipients(self) -> list[str]:
+        """Read email_recipients from CAU_HINH. Falls back to SMTP_RECIPIENTS env var.
+
+        CAU_HINH row: Khóa = "email_recipients", Giá trị = "a@b.com, c@d.com"
+        This allows operators to update the recipient list via Google Sheets without
+        changing GitHub Secrets.
+        """
+        sheet_value = self.get_setting("email_recipients", "")
+        if sheet_value:
+            return [e.strip() for e in str(sheet_value).split(",") if e.strip()]
+        env_value = os.getenv("SMTP_RECIPIENTS", "")
+        return [e.strip() for e in env_value.split(",") if e.strip()]
+
+    def set_email_recipients(self, emails: list[str]) -> None:
+        """Write email_recipients to CAU_HINH tab (upsert) and clear cache.
+
+        Args:
+            emails: list of email addresses to save.
+
+        Raises:
+            StorageError: if write to Sheets fails.
+        """
+        value = ", ".join(emails)
+        description = (
+            "Danh sach email nhan bao cao hang ngay. "
+            "Cach nhau bang dau phay. Vi du: a@b.com, c@d.com"
+        )
+        self._sheets.upsert_setting("email_recipients", value, description)
+        self._config_cache = None  # invalidate cache so next read reflects new value
+        logger.info(f"Saved {len(emails)} email recipients to CAU_HINH")
 
     def get_templates(self) -> list[dict[str, Any]]:
         """Read MAU_BAI_VIET tab → list of template sections."""

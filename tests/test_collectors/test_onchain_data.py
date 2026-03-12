@@ -31,7 +31,7 @@ class TestCollectOnchain:
                 side_effect=Exception("API down"),
             ),
             patch(
-                "cic_daily_report.collectors.onchain_data._collect_coinglass",
+                "cic_daily_report.collectors.onchain_data._collect_derivatives",
                 side_effect=Exception("API down"),
             ),
             patch(
@@ -52,7 +52,7 @@ class TestCollectOnchain:
                 side_effect=Exception("fail"),
             ),
             patch(
-                "cic_daily_report.collectors.onchain_data._collect_coinglass",
+                "cic_daily_report.collectors.onchain_data._collect_derivatives",
                 side_effect=Exception("fail"),
             ),
             patch(

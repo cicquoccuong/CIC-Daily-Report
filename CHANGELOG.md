@@ -1,5 +1,80 @@
 # Changelog
 
+## [0.14.3] - 2026-03-12
+
+### Changed — F2: CAU_HINH Self-Documenting Email Config
+
+**Operator (no-code user) chỉ cần mở Google Sheet để quản lý email:**
+- Tab CAU_HINH được seed sẵn row `email_recipients` khi setup lần đầu
+- Cột "Mô tả" hướng dẫn đầy đủ tiếng Việt: THÊM / XÓA / Ví dụ format
+- Không cần terminal, không cần tool — edit trực tiếp cell trong Sheet
+- `seed_setting()`: append row nếu key chưa có, skip nếu đã có (không overwrite)
+- `seed_default_config()`: seed tất cả default rows, idempotent
+- `create_schema()` tự gọi `seed_default_config()` khi setup
+
+**Xóa `scripts/manage_email_recipients.py`** — CLI tool không phù hợp no-code user.
+
+**Thêm `scripts/setup_schema.py`** — one-time dev script khi tạo spreadsheet mới.
+
+---
+
+## [0.14.2] - 2026-03-12
+
+### Added — F2 (Tiếp): Email Recipients Management via CAU_HINH
+
+**SheetsClient.upsert_setting():**
+- Tìm key trong CAU_HINH → update nếu có, append nếu chưa có
+- Cột: `Khóa | Giá trị | Mô tả`
+
+**ConfigLoader.set_email_recipients():**
+- Ghi danh sách email vào CAU_HINH (upsert), tự động xóa cache sau khi lưu
+
+**scripts/manage_email_recipients.py:**
+- CLI tool để quản lý email backup từ terminal (không cần vào GitHub)
+- Commands: `list`, `add <email>`, `remove <email>`, `set <email1,email2,...>`
+
+---
+
+## [0.14.1] - 2026-03-12
+
+### Added — F2: Email Backup với Lý Do Telegram Thất Bại
+
+**Email body giờ bao gồm lý do Telegram fail:**
+- `send_daily_report()` nhận param mới `telegram_error: str | None`
+- Khi Telegram fail hoàn toàn hoặc partial → lý do + timestamp UTC append vào body
+- `delivery_manager.py` tự động capture error và truyền qua
+
+**Email recipients cấu hình được từ Google Sheets (CAU_HINH):**
+- `ConfigLoader.get_email_recipients()` đọc key `email_recipients` từ CAU_HINH
+- Format: `a@gmail.com, b@gmail.com` (comma-separated, có thể thêm nhiều người)
+- Fallback: `SMTP_RECIPIENTS` env var nếu chưa có trong sheet
+- `_deliver()` đọc từ sheet mỗi lần chạy — không cần redeploy khi đổi email
+
+---
+
+## [0.14.0] - 2026-03-12
+
+### Added — F1: Derivatives Data Migration (Binance Futures)
+
+**Thay thế Coinglass v2 (deprecated) bằng Binance Futures public API:**
+- Binance Futures làm primary source (GitHub Actions servers ở US/EU, không bị chặn)
+- Bybit v5 làm first fallback, OKX v5 làm second fallback
+- 4 metrics mới: `BTC_Funding_Rate`, `BTC_Open_Interest`, `BTC_Long_Short_Ratio`, `BTC_Taker_Buy_Sell_Ratio`
+- Không cần API key — tất cả public endpoints
+- Provider-level fallback: nếu Binance fail thì thử Bybit, rồi OKX
+
+### Added — F3: RSS Feed Expansion (+5 sources)
+
+**Thêm 5 nguồn tin mới (từ 12 lên 17 feeds):**
+- `BeInCrypto_VN` — vn.beincrypto.com (Vietnamese)
+- `CCN` — ccn.com (English crypto news)
+- `Blockworks` — blockworks.co (institutional crypto)
+- `DLNews` — dlnews.com (DL News)
+- `Reuters` — feeds.reuters.com/reuters/businessNews (financial news)
+- `Bankless` — banklesshq.substack.com (DeFi/Web3)
+
+---
+
 ## [0.13.1] - 2026-03-12
 
 ### Fixed — Hotfix Wave E (Cleanup)

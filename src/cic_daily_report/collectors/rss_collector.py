@@ -46,6 +46,7 @@ DEFAULT_FEEDS: list[FeedConfig] = [
     FeedConfig("https://cafef.vn/thi-truong.rss", "CafeF", "vi"),
     FeedConfig("https://coin68.com/feed/", "Coin68", "vi"),
     FeedConfig("https://tapchibitcoin.io/feed", "TapChiBitcoin", "vi"),
+    FeedConfig("https://vn.beincrypto.com/feed/", "BeInCrypto_VN", "vi"),
     # English
     FeedConfig("https://cointelegraph.com/rss", "CoinTelegraph", "en"),
     FeedConfig("https://coindesk.com/arc/outboundfeeds/rss/", "CoinDesk", "en"),
@@ -55,6 +56,11 @@ DEFAULT_FEEDS: list[FeedConfig] = [
     FeedConfig("https://u.today/rss", "UToday", "en"),
     FeedConfig("https://ambcrypto.com/feed/", "AMBCrypto", "en"),
     FeedConfig("https://newsbtc.com/feed/", "NewsBTC", "en"),
+    FeedConfig("https://www.ccn.com/feed/", "CCN", "en"),
+    FeedConfig("https://blockworks.co/feed/", "Blockworks", "en"),
+    FeedConfig("https://dlnews.com/feed/", "DLNews", "en"),
+    FeedConfig("https://feeds.reuters.com/reuters/businessNews", "Reuters", "en"),
+    FeedConfig("https://banklesshq.substack.com/feed/", "Bankless", "en"),
 ]
 
 

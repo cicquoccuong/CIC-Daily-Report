@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import smtplib
+from datetime import datetime, timezone
 from email.message import EmailMessage
 
 from cic_daily_report.core.error_handler import DeliveryError
@@ -106,11 +107,30 @@ class EmailBackup:
                 source="email_backup",
             ) from e
 
-    def send_daily_report(self, date_str: str, content: str, recipients: list[str] | None = None):
-        """Send daily report email with standard subject."""
+    def send_daily_report(
+        self,
+        date_str: str,
+        content: str,
+        recipients: list[str] | None = None,
+        telegram_error: str | None = None,
+    ) -> None:
+        """Send daily report email with standard subject.
+
+        If telegram_error is provided, appends failure reason + timestamp to body.
+        """
+        body = content
+        if telegram_error:
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            body += (
+                f"\n\n{'=' * 50}\n"
+                f"⚠️ EMAIL NÀY ĐƯỢC GỬI DO TELEGRAM THẤT BẠI\n"
+                f"Thời gian: {timestamp}\n"
+                f"Lý do: {telegram_error}\n"
+                f"{'=' * 50}"
+            )
         self.send(
             subject=f"[CIC Daily] {date_str} - Daily Report",
-            body=content,
+            body=body,
             recipients=recipients,
         )
 

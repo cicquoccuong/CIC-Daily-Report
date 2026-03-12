@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from cic_daily_report.core.error_handler import StorageError
-from cic_daily_report.storage.sheets_client import TABS, SheetsClient
+from cic_daily_report.storage.sheets_client import _DEFAULT_CONFIG_SEEDS, TABS, SheetsClient
 
 
 class TestSheetsClientInit:
@@ -111,6 +111,129 @@ class TestSheetsClientOperations:
 
         # Should create 8 tabs (9 total - 1 existing)
         assert mock_ss.add_worksheet.call_count == 8
+
+
+class TestSeedSetting:
+    @pytest.fixture
+    def mock_client(self):
+        client = SheetsClient(spreadsheet_id="test_id", credentials_b64="dGVzdA==")
+        mock_ss = MagicMock()
+        client._spreadsheet = mock_ss
+        return client, mock_ss
+
+    def test_skips_when_key_already_exists(self, mock_client):
+        client, mock_ss = mock_client
+        mock_ws = MagicMock()
+        mock_ws.get_all_values.return_value = [
+            ["Khóa", "Giá trị", "Mô tả"],
+            ["email_recipients", "user@b.com", "desc"],
+        ]
+        mock_ss.worksheet.return_value = mock_ws
+
+        client.seed_setting("email_recipients", "default@b.com", "desc")
+
+        mock_ws.append_rows.assert_not_called()
+
+    def test_appends_when_key_missing(self, mock_client):
+        client, mock_ss = mock_client
+        mock_ws = MagicMock()
+        mock_ws.get_all_values.return_value = [["Khóa", "Giá trị", "Mô tả"]]
+        mock_ss.worksheet.return_value = mock_ws
+
+        client.seed_setting("email_recipients", "", "hint")
+
+        mock_ws.append_rows.assert_called_once_with(
+            [["email_recipients", "", "hint"]], value_input_option="RAW"
+        )
+
+    def test_raises_storage_error_on_failure(self, mock_client):
+        client, mock_ss = mock_client
+        mock_ss.worksheet.side_effect = Exception("API error")
+
+        with pytest.raises(StorageError, match="seed_setting"):
+            client.seed_setting("key", "val", "desc")
+
+
+class TestSeedDefaultConfig:
+    def test_seeds_all_default_keys(self):
+        client = SheetsClient(spreadsheet_id="test_id", credentials_b64="dGVzdA==")
+        mock_ss = MagicMock()
+        client._spreadsheet = mock_ss
+        mock_ws = MagicMock()
+        mock_ws.get_all_values.return_value = [["Khóa", "Giá trị", "Mô tả"]]
+        mock_ss.worksheet.return_value = mock_ws
+
+        client.seed_default_config()
+
+        assert mock_ws.append_rows.call_count == len(_DEFAULT_CONFIG_SEEDS)
+
+    def test_email_recipients_in_default_seeds(self):
+        keys = [k for k, _, _ in _DEFAULT_CONFIG_SEEDS]
+        assert "email_recipients" in keys
+
+    def test_email_recipients_description_is_informative(self):
+        for key, _, desc in _DEFAULT_CONFIG_SEEDS:
+            if key == "email_recipients":
+                assert "THÊM" in desc or "Thêm" in desc or "thêm" in desc
+                assert "XÓA" in desc or "Xóa" in desc or "xóa" in desc
+                break
+
+
+class TestUpsertSetting:
+    @pytest.fixture
+    def mock_client(self):
+        client = SheetsClient(spreadsheet_id="test_id", credentials_b64="dGVzdA==")
+        mock_ss = MagicMock()
+        client._spreadsheet = mock_ss
+        return client, mock_ss
+
+    def test_updates_existing_key(self, mock_client):
+        client, mock_ss = mock_client
+        mock_ws = MagicMock()
+        mock_ws.get_all_values.return_value = [
+            ["Khóa", "Giá trị", "Mô tả"],
+            ["email_recipients", "old@b.com", "desc"],
+        ]
+        mock_ss.worksheet.return_value = mock_ws
+
+        client.upsert_setting("email_recipients", "new@b.com", "desc")
+
+        mock_ws.update.assert_called_once_with(
+            "A2:C2", [["email_recipients", "new@b.com", "desc"]], value_input_option="RAW"
+        )
+        mock_ws.append_rows.assert_not_called()
+
+    def test_appends_new_key(self, mock_client):
+        client, mock_ss = mock_client
+        mock_ws = MagicMock()
+        mock_ws.get_all_values.return_value = [
+            ["Khóa", "Giá trị", "Mô tả"],
+        ]
+        mock_ss.worksheet.return_value = mock_ws
+
+        client.upsert_setting("new_key", "val", "description")
+
+        mock_ws.append_rows.assert_called_once_with(
+            [["new_key", "val", "description"]], value_input_option="RAW"
+        )
+        mock_ws.update.assert_not_called()
+
+    def test_raises_storage_error_on_failure(self, mock_client):
+        client, mock_ss = mock_client
+        mock_ss.worksheet.side_effect = Exception("API error")
+
+        with pytest.raises(StorageError, match="upsert_setting"):
+            client.upsert_setting("key", "val")
+
+    def test_empty_description_default(self, mock_client):
+        client, mock_ss = mock_client
+        mock_ws = MagicMock()
+        mock_ws.get_all_values.return_value = [["Khóa", "Giá trị", "Mô tả"]]
+        mock_ss.worksheet.return_value = mock_ws
+
+        client.upsert_setting("k", "v")  # no description arg
+
+        mock_ws.append_rows.assert_called_once_with([["k", "v", ""]], value_input_option="RAW")
 
 
 class TestClearAndRewrite:

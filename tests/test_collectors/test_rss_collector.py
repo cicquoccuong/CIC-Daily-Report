@@ -15,13 +15,13 @@ FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 class TestFeedConfig:
     def test_default_feeds_count(self):
-        assert len(DEFAULT_FEEDS) >= 12
+        assert len(DEFAULT_FEEDS) >= 17
 
     def test_bilingual_feeds(self):
         vi_feeds = [f for f in DEFAULT_FEEDS if f.language == "vi"]
         en_feeds = [f for f in DEFAULT_FEEDS if f.language == "en"]
-        assert len(vi_feeds) >= 4
-        assert len(en_feeds) >= 8
+        assert len(vi_feeds) >= 5
+        assert len(en_feeds) >= 12
 
     def test_feed_has_required_fields(self):
         for feed in DEFAULT_FEEDS:

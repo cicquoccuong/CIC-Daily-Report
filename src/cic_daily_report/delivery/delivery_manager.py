@@ -91,6 +91,7 @@ class DeliveryManager:
 
         # Try Telegram delivery
         tg_success = False
+        tg_error_msg: str | None = None
         if self._tg and messages:
             try:
                 tg_results = await self._tg.deliver_all(messages)
@@ -107,6 +108,10 @@ class DeliveryManager:
                 # Send partial delivery status if not all sent
                 if result.partial:
                     result.method = "partial"
+                    tg_error_msg = (
+                        f"Gửi được {result.messages_sent}/{result.messages_total} tin — "
+                        f"{result.status_line()}"
+                    )
                     status_msg = f"⚠️ Partial delivery: {result.status_line()}"
                     try:
                         await self._tg.send_message(status_msg)
@@ -117,6 +122,7 @@ class DeliveryManager:
 
             except Exception as e:
                 logger.error(f"Telegram delivery failed completely: {e}")
+                tg_error_msg = str(e)
                 result.errors.append(str(e))
 
         # Send error notifications via Telegram
@@ -138,7 +144,9 @@ class DeliveryManager:
                     notification = build_notification(pipeline_errors)
                     body += f"\n\n--- ERRORS ---\n{notification.format_message()}"
 
-                await asyncio.to_thread(self._email.send_daily_report, date_str, body)
+                await asyncio.to_thread(
+                    self._email.send_daily_report, date_str, body, telegram_error=tg_error_msg
+                )
                 result.method = "email_backup"
                 result.messages_sent = 1
                 logger.info("Fallback to email backup successful")

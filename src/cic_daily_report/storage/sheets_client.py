@@ -15,6 +15,27 @@ from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("sheets_client")
 
+# Default rows seeded into CAU_HINH on first setup (key, default_value, description)
+# seed_setting() skips any key that already exists — never overwrites user data.
+_DEFAULT_CONFIG_SEEDS: list[tuple[str, str, str]] = [
+    (
+        "email_recipients",
+        "",
+        (
+            "Danh sách email nhận báo cáo hàng ngày. "
+            "THÊM email: gõ thêm địa chỉ vào cuối, cách nhau bằng dấu phẩy. "
+            "XÓA email: xóa địa chỉ đó khỏi ô Giá trị. "
+            "Để trống = hệ thống dùng GitHub Secrets (SMTP_RECIPIENTS). "
+            "Ví dụ: cuong@evol.vn, bao@evol.vn"
+        ),
+    ),
+    (
+        "email_backup_enabled",
+        "TRUE",
+        "Bật/tắt email backup khi Telegram thất bại. Giá trị: TRUE hoặc FALSE.",
+    ),
+]
+
 # 9-tab schema (QĐ1)
 TABS = {
     "TIN_TUC_THO": [
@@ -147,6 +168,43 @@ class SheetsClient:
             ws.update([headers], value_input_option="RAW")
             logger.info(f"Created tab '{tab_name}' with {len(headers)} columns")
 
+        # Seed default config rows (skips keys that already have values)
+        try:
+            self.seed_default_config()
+        except Exception as e:
+            logger.warning(f"Could not seed default config: {e}")
+
+    def seed_setting(self, key: str, default_value: str, description: str) -> None:
+        """Add key to CAU_HINH only if it does not already exist.
+
+        Unlike upsert_setting, this never overwrites existing values.
+        Safe to call repeatedly — idempotent.
+        """
+        ss = self._connect()
+        try:
+            ws = ss.worksheet("CAU_HINH")
+            all_values = ws.get_all_values()
+            for row in all_values[1:]:
+                if row and row[0] == key:
+                    logger.debug(f"CAU_HINH seed skipped (key exists): {key}")
+                    return
+            ws.append_rows([[key, default_value, description]], value_input_option="RAW")
+            logger.info(f"Seeded CAU_HINH setting: {key}")
+        except Exception as e:
+            raise StorageError(
+                f"seed_setting failed for {key}: {e}", source="sheets_client"
+            ) from e
+
+    def seed_default_config(self) -> None:
+        """Seed all default CAU_HINH rows that don't exist yet.
+
+        Safe to call repeatedly — never overwrites values the user has set.
+        Called automatically by create_schema().
+        """
+        for key, default_value, description in _DEFAULT_CONFIG_SEEDS:
+            self.seed_setting(key, default_value, description)
+        logger.info("Default CAU_HINH config seeded")
+
     def batch_append(self, tab_name: str, rows: list[list[Any]]) -> int:
         """Append rows using batch update. Returns number of rows written."""
         if not rows:
@@ -208,6 +266,30 @@ class SheetsClient:
         except Exception as e:
             raise StorageError(
                 f"delete_rows failed for {tab_name}: {e}", source="sheets_client"
+            ) from e
+
+    def upsert_setting(self, key: str, value: str, description: str = "") -> None:
+        """Find row by key in CAU_HINH and update it, or append if not found."""
+        ss = self._connect()
+        try:
+            ws = ss.worksheet("CAU_HINH")
+            all_values = ws.get_all_values()
+            row_idx = None
+            for i, row in enumerate(all_values[1:], start=2):
+                if row and row[0] == key:
+                    row_idx = i
+                    break
+            if row_idx is not None:
+                ws.update(
+                    f"A{row_idx}:C{row_idx}", [[key, value, description]], value_input_option="RAW"
+                )
+                logger.info(f"Updated CAU_HINH setting: {key}")
+            else:
+                ws.append_rows([[key, value, description]], value_input_option="RAW")
+                logger.info(f"Added CAU_HINH setting: {key}")
+        except Exception as e:
+            raise StorageError(
+                f"upsert_setting failed for {key}: {e}", source="sheets_client"
             ) from e
 
     def clear_and_rewrite(self, sheet_name: str, rows: list[list[Any]]) -> None:

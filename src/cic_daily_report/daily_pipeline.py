@@ -524,9 +524,20 @@ async def _deliver(
     from cic_daily_report.delivery.delivery_manager import DeliveryManager
     from cic_daily_report.delivery.email_backup import EmailBackup
     from cic_daily_report.delivery.telegram_bot import TelegramBot
+    from cic_daily_report.storage.config_loader import ConfigLoader
+    from cic_daily_report.storage.sheets_client import SheetsClient
+
+    # Read email recipients from CAU_HINH (editable in GSheet) — fallback to env var
+    email_recipients: list[str] | None = None
+    try:
+        cfg = ConfigLoader(SheetsClient())
+        recipients = await asyncio.to_thread(cfg.get_email_recipients)
+        email_recipients = recipients or None
+    except Exception as e:
+        logger.warning(f"Could not read email_recipients from CAU_HINH: {e}")
 
     tg = TelegramBot()
-    email = EmailBackup()
+    email = EmailBackup(recipients=email_recipients)
     manager = DeliveryManager(telegram_bot=tg, email_backup=email)
 
     pipeline_errors = errors if errors else None
