@@ -1,0 +1,17 @@
+name: optimized-team-flow
+description: "Quy trình phối hợp team tối ưu — phân loại task và chạy đúng track cho từng loại"
+config_source: "{project-root}/_bmad/bmm/config.yaml"
+installed_path: "{project-root}/_bmad/_config/custom/optimized-team-flow"
+instructions: "{installed_path}/instructions.md"
+validation: "{installed_path}/checklist.md"
+
+variables:
+  communication_language: "{config_source}:communication_language"
+  document_output_language: "{config_source}:document_output_language"
+  user_name: "{config_source}:user_name"
+  planning_artifacts: "{config_source}:planning_artifacts"
+  implementation_artifacts: "{config_source}:implementation_artifacts"
+
+output:
+  filename: "team-flow-{date}.md"
+  path: "{implementation_artifacts}"
