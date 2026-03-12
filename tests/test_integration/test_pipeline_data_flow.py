@@ -1,4 +1,5 @@
 """Tests for pipeline data flow — filtered news exclusion (Wave C)."""
+
 from __future__ import annotations
 
 

@@ -191,9 +191,7 @@ class SheetsClient:
             ws.append_rows([[key, default_value, description]], value_input_option="RAW")
             logger.info(f"Seeded CAU_HINH setting: {key}")
         except Exception as e:
-            raise StorageError(
-                f"seed_setting failed for {key}: {e}", source="sheets_client"
-            ) from e
+            raise StorageError(f"seed_setting failed for {key}: {e}", source="sheets_client") from e
 
     def seed_default_config(self) -> None:
         """Seed all default CAU_HINH rows that don't exist yet.

@@ -154,9 +154,7 @@ class TestCollectUsdtVnd:
         """When Binance P2P works, use its rate."""
         from cic_daily_report.collectors.market_data import MarketDataPoint
 
-        binance_rate = MarketDataPoint(
-            "USDT/VND", 27050, 0, 0, 0, "macro", "Binance P2P"
-        )
+        binance_rate = MarketDataPoint("USDT/VND", 27050, 0, 0, 0, "macro", "Binance P2P")
         with patch(
             "cic_daily_report.collectors.market_data._fetch_binance_p2p_vnd",
             return_value=binance_rate,

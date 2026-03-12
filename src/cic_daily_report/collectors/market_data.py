@@ -376,7 +376,7 @@ async def _fetch_htx_otc_vnd() -> MarketDataPoint | None:
     """Fetch USDT/VND from HTX (Huobi) OTC market."""
     url = "https://otc-api.trygofast.com/v1/data/trade-market"
     params = {
-        "coinId": 2,       # USDT
+        "coinId": 2,  # USDT
         "currencyId": 75,  # VND
         "tradeType": "buy",
         "blockType": "general",
@@ -531,9 +531,7 @@ async def _collect_altcoin_season() -> list[MarketDataPoint]:
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(url)
                 if resp.status_code != 200:
-                    logger.warning(
-                        f"Altcoin Season Index: HTTP {resp.status_code} from {url}"
-                    )
+                    logger.warning(f"Altcoin Season Index: HTTP {resp.status_code} from {url}")
                     continue
                 data = resp.json()
                 value = float(data.get("value", 50))

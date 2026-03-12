@@ -104,9 +104,7 @@ async def _fetch_posts(api_key: str) -> list[CryptoPanicArticle]:
     for post in data.get("results", [])[:30]:
         votes = post.get("votes", {})
         # Extract currency codes from API response
-        coin_codes = [
-            c.get("code", "") for c in post.get("currencies", []) if c.get("code")
-        ]
+        coin_codes = [c.get("code", "") for c in post.get("currencies", []) if c.get("code")]
         articles.append(
             CryptoPanicArticle(
                 title=post.get("title", ""),
@@ -128,12 +126,36 @@ async def _fetch_posts(api_key: str) -> list[CryptoPanicArticle]:
 
 # Keywords indicating macro/geopolitical news
 _MACRO_KEYWORDS = (
-    "fed ", "federal reserve", "interest rate", "inflation", "gdp",
-    "tariff", "dxy", "gold", "oil", "crude", "treasury",
-    "geopolit", "war", "sanction", "election", "recession",
-    "cpi", "ppi", "fomc", "ecb", "boj", "pboc",
-    "stock market", "s&p", "nasdaq", "dow jones",
-    "usd", "eur", "jpy", "yuan",
+    "fed ",
+    "federal reserve",
+    "interest rate",
+    "inflation",
+    "gdp",
+    "tariff",
+    "dxy",
+    "gold",
+    "oil",
+    "crude",
+    "treasury",
+    "geopolit",
+    "war",
+    "sanction",
+    "election",
+    "recession",
+    "cpi",
+    "ppi",
+    "fomc",
+    "ecb",
+    "boj",
+    "pboc",
+    "stock market",
+    "s&p",
+    "nasdaq",
+    "dow jones",
+    "usd",
+    "eur",
+    "jpy",
+    "yuan",
 )
 
 

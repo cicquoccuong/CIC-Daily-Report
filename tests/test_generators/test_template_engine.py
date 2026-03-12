@@ -147,8 +147,15 @@ class TestKeyMetricsLabels:
         assert "USDT/VND" in KEY_METRICS_LABELS
 
     def test_original_metrics_still_present(self):
-        for label in ["BTC Price", "BTC Dominance", "Total Market Cap",
-                       "Fear & Greed", "DXY", "Gold", "Funding Rate"]:
+        for label in [
+            "BTC Price",
+            "BTC Dominance",
+            "Total Market Cap",
+            "Fear & Greed",
+            "DXY",
+            "Gold",
+            "Funding Rate",
+        ]:
             assert label in KEY_METRICS_LABELS
 
     def test_new_metrics_in_rendered_table(self):

@@ -169,8 +169,7 @@ async def _generate_single_article(
     interp = variables.get("interpretation_notes", "")
     if interp:
         full_prompt += (
-            "DIỄN GIẢI QUAN TRỌNG (dùng để phân tích sâu, KHÔNG copy nguyên văn):\n"
-            f"{interp}\n\n"
+            f"DIỄN GIẢI QUAN TRỌNG (dùng để phân tích sâu, KHÔNG copy nguyên văn):\n{interp}\n\n"
         )
     full_prompt += (
         "BÀI VIẾT CẦN CÓ 2 LỚP (FR14 Dual-Layer):\n"

@@ -1,4 +1,5 @@
 """Shared test fixtures for CIC Daily Report."""
+
 from __future__ import annotations
 
 import pytest
@@ -9,9 +10,7 @@ def mock_llm_response():
     """Create a mock LLM response."""
     from cic_daily_report.adapters.llm_adapter import LLMResponse
 
-    return LLMResponse(
-        text="Test generated content", tokens_used=100, model="mock"
-    )
+    return LLMResponse(text="Test generated content", tokens_used=100, model="mock")
 
 
 @pytest.fixture
@@ -49,18 +48,30 @@ def sample_market_data():
 
     return [
         MarketDataPoint(
-            symbol="BTC", price=100000, change_24h=2.5,
-            volume_24h=50000000000, market_cap=1950000000000,
-            data_type="crypto", source="CoinGecko",
+            symbol="BTC",
+            price=100000,
+            change_24h=2.5,
+            volume_24h=50000000000,
+            market_cap=1950000000000,
+            data_type="crypto",
+            source="CoinGecko",
         ),
         MarketDataPoint(
-            symbol="ETH", price=3500, change_24h=-1.2,
-            volume_24h=20000000000, market_cap=420000000000,
-            data_type="crypto", source="CoinGecko",
+            symbol="ETH",
+            price=3500,
+            change_24h=-1.2,
+            volume_24h=20000000000,
+            market_cap=420000000000,
+            data_type="crypto",
+            source="CoinGecko",
         ),
         MarketDataPoint(
-            symbol="Fear_Greed", price=75, change_24h=0,
-            volume_24h=0, market_cap=0,
-            data_type="index", source="Alternative.me",
+            symbol="Fear_Greed",
+            price=75,
+            change_24h=0,
+            volume_24h=0,
+            market_cap=0,
+            data_type="index",
+            source="Alternative.me",
         ),
     ]

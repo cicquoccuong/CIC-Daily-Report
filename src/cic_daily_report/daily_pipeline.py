@@ -69,11 +69,12 @@ async def _run_pipeline() -> str:
         delivery_result = await _deliver(articles, errors)
         # C3 fix: detect full delivery failure (0 sent but had messages to send)
         if delivery_result.messages_total > 0 and delivery_result.messages_sent == 0:
-            logger.error("Delivery failed: 0 messages sent out of "
-                         f"{delivery_result.messages_total}")
-            errors.append(Exception(
-                f"Delivery failed: 0/{delivery_result.messages_total} messages sent"
-            ))
+            logger.error(
+                f"Delivery failed: 0 messages sent out of {delivery_result.messages_total}"
+            )
+            errors.append(
+                Exception(f"Delivery failed: 0/{delivery_result.messages_total} messages sent")
+            )
             run_log["status"] = "error"
     except Exception as e:
         logger.error(f"Delivery failed: {e}")
@@ -353,8 +354,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
             )
         elif alt_season <= 25:
             interpretation_notes.append(
-                f"Altcoin Season Index = {alt_season} — BTC season, "
-                "altcoin underperform so với BTC"
+                f"Altcoin Season Index = {alt_season} — BTC season, altcoin underperform so với BTC"
             )
     dxy_val = key_metrics.get("DXY")
     if isinstance(dxy_val, (int, float)):
