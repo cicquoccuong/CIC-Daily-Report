@@ -39,20 +39,12 @@ class LLMProvider:
 
 
 def _build_providers() -> list[LLMProvider]:
-    """Build provider list from env vars. Skip providers with missing keys."""
-    providers: list[LLMProvider] = []
+    """Build provider list from env vars. Skip providers with missing keys.
 
-    groq_key = os.getenv("GROQ_API_KEY", "")
-    if groq_key:
-        providers.append(
-            LLMProvider(
-                name="groq",
-                api_key=groq_key,
-                model="llama-3.3-70b-versatile",
-                endpoint="https://api.groq.com/openai/v1/chat/completions",
-                rate_limit_per_min=30,
-            )
-        )
+    Priority: Gemini Flash (best analysis) → Gemini Flash Lite → Groq (fallback).
+    Gemini produces better Vietnamese crypto analysis than Groq Llama.
+    """
+    providers: list[LLMProvider] = []
 
     gemini_key = os.getenv("GEMINI_API_KEY", "")
     if gemini_key:
@@ -72,6 +64,18 @@ def _build_providers() -> list[LLMProvider]:
                 model="gemini-2.0-flash-lite",
                 endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent",
                 rate_limit_per_min=15,
+            )
+        )
+
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    if groq_key:
+        providers.append(
+            LLMProvider(
+                name="groq",
+                api_key=groq_key,
+                model="llama-3.3-70b-versatile",
+                endpoint="https://api.groq.com/openai/v1/chat/completions",
+                rate_limit_per_min=6,
             )
         )
 

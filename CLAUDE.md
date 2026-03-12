@@ -14,7 +14,7 @@
 - **Testing**: pytest + pytest-asyncio + pytest-mock + pytest-cov (fail-under=60)
 - **CI/CD**: GitHub Actions (3 workflows: daily-pipeline, breaking-news, test)
 - **Storage**: Google Sheets (9 tabs, gspread + batch_update)
-- **AI**: Groq Llama 3.3 (primary) → Gemini Flash → Gemini Flash Lite (fallback chain)
+- **AI**: Gemini Flash (primary) → Gemini Flash Lite → Groq Llama 3.3 (fallback chain)
 - **Delivery**: Telegram Bot (python-telegram-bot) + SMTP email backup
 - **Dashboard**: GitHub Pages (static HTML + JSON, orphan branch gh-pages)
 
@@ -59,6 +59,12 @@ docs/               # planning docs, guides
 | Daily | 01:00 UTC (08:00 VN) | ≤40 min |
 | Breaking | Hourly (`0 * * * *`) | ≤20 min |
 
+## Quy Trình Làm Việc (MANDATORY)
+
+> ⚠️ Đọc và tuân thủ quy trình chuẩn tại:
+> `{project-root}/_bmad/_config/custom/optimized-team-flow/QUY-TRINH-LAM-VIEC-CHUAN.md` (v1.1)
+> Áp dụng cho TẤT CẢ agents, TẤT CẢ sessions. **KHÔNG có ngoại lệ.**
+
 ## Rules (MANDATORY)
 - **Absolute imports only**: `from cic_daily_report.collectors.rss_collector import ...`
 - **English snake_case** for code + JSON fields
@@ -76,7 +82,7 @@ docs/               # planning docs, guides
 | QĐ | Decision |
 |----|----------|
 | QĐ1 | Google Sheets 9-tab schema |
-| QĐ2 | Multi-LLM Adapter Pattern (Groq → Gemini Flash → Flash Lite) |
+| QĐ2 | Multi-LLM Adapter Pattern (Gemini Flash → Flash Lite → Groq) |
 | QĐ3 | Centralized Error Handler (CICError class) |
 | QĐ4 | NQ05 Dual-layer compliance (Prompt + Post-filter) |
 | QĐ5 | Async parallel data collection (asyncio + httpx) |
