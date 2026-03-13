@@ -124,3 +124,12 @@ development_status:
   #   D5-ssl-verify, D6-errorentry-mutation, D7-D8-dead-to_row
   # Wave E (2 fixes): E1-remove-dead-rss-feeds, E2-sheets-clear_and_rewrite-refactor
   # All 358 tests pass. Lint clean.
+
+  # Post-Launch: Derivatives Migration + RSS Expansion (v0.14.0, 2026-03-12)
+  post-launch-derivatives-rss: done
+  # F1: Coinglass v2 (deprecated) → Binance Futures public API (primary)
+  #   + Bybit v5 (first fallback) + OKX v5 (second fallback)
+  #   4 metrics: BTC_Funding_Rate, BTC_Open_Interest, BTC_Long_Short_Ratio, BTC_Taker_Buy_Sell_Ratio
+  #   No API key required — GitHub Actions servers (US/EU) access Binance freely
+  # F3: 5 new RSS feeds (12 → 17): BeInCrypto_VN(vi), CCN, Blockworks, DLNews, Reuters, Bankless
+  # All 358 tests pass. Lint clean.

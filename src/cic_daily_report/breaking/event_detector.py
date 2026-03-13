@@ -108,7 +108,7 @@ async def detect_breaking_events(
     # Try cache first — avoid redundant API calls between runs
     cached = get_cached(CACHE_KEY, max_age_seconds=CACHE_MAX_AGE)
     if cached is not None:
-        raw_items = cached[:cfg.max_results]
+        raw_items = cached[: cfg.max_results]
     else:
         await qm.wait_for_rate_limit("cryptopanic")
         try:

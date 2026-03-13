@@ -69,18 +69,27 @@ DEFAULT_FEEDS: list[FeedConfig] = [
     FeedConfig("https://banklesshq.substack.com/feed/", "Bankless", "en"),
     # Research feeds — deep analysis, typically weekly (source_type="research")
     FeedConfig(
-        "https://messari.io/rss", "Messari", "en", source_type="research",
-    ),
-    FeedConfig(
-        "https://insights.glassnode.com/rss/", "Glassnode_Insights", "en",
+        "https://messari.io/rss",
+        "Messari",
+        "en",
         source_type="research",
     ),
     FeedConfig(
-        "https://coinmetrics.substack.com/feed", "CoinMetrics", "en",
+        "https://insights.glassnode.com/rss/",
+        "Glassnode_Insights",
+        "en",
         source_type="research",
     ),
     FeedConfig(
-        "https://www.galaxy.com/insights/research/feed.xml", "Galaxy_Digital", "en",
+        "https://coinmetrics.substack.com/feed",
+        "CoinMetrics",
+        "en",
+        source_type="research",
+    ),
+    FeedConfig(
+        "https://www.galaxy.com/insights/research/feed.xml",
+        "Galaxy_Digital",
+        "en",
         source_type="research",
     ),
 ]
@@ -129,9 +138,7 @@ async def collect_rss(
     """
     feeds = feeds or [f for f in DEFAULT_FEEDS if f.enabled]
     research_count = sum(1 for f in feeds if f.source_type == "research")
-    logger.info(
-        f"Collecting from {len(feeds)} RSS feeds ({research_count} research)"
-    )
+    logger.info(f"Collecting from {len(feeds)} RSS feeds ({research_count} research)")
 
     tasks = [_fetch_feed(feed) for feed in feeds]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -238,9 +245,7 @@ async def _enrich_research_articles(articles: list[NewsArticle]) -> None:
                     resp = await client.get(article.url, follow_redirects=True)
 
             # Extract full text
-            text = await asyncio.to_thread(
-                trafilatura.extract, resp.text, include_comments=False
-            )
+            text = await asyncio.to_thread(trafilatura.extract, resp.text, include_comments=False)
             if text:
                 article.full_text = text[:2000]
                 if not article.summary or len(article.summary) < 50:
@@ -259,6 +264,5 @@ async def _enrich_research_articles(articles: list[NewsArticle]) -> None:
     enriched = sum(1 for a in articles if a.full_text)
     images = sum(1 for a in articles if a.og_image)
     logger.info(
-        f"Research enrichment: {enriched}/{len(articles)} text, "
-        f"{images}/{len(articles)} images"
+        f"Research enrichment: {enriched}/{len(articles)} text, {images}/{len(articles)} images"
     )

@@ -44,8 +44,7 @@ def detect_market_triggers(
         events.append(
             BreakingEvent(
                 title=(
-                    f"BTC giảm {btc.change_24h:.1f}% trong 24h"
-                    f" — giá hiện tại ${btc.price:,.0f}"
+                    f"BTC giảm {btc.change_24h:.1f}% trong 24h — giá hiện tại ${btc.price:,.0f}"
                 ),
                 source="market_data",
                 url="",
@@ -59,17 +58,13 @@ def detect_market_triggers(
                 },
             )
         )
-        logger.warning(
-            f"BTC crash trigger: {btc.change_24h:.1f}% "
-            f"(threshold: {btc_threshold}%)"
-        )
+        logger.warning(f"BTC crash trigger: {btc.change_24h:.1f}% (threshold: {btc_threshold}%)")
 
     if eth and eth.change_24h <= eth_threshold:
         events.append(
             BreakingEvent(
                 title=(
-                    f"ETH giảm {eth.change_24h:.1f}% trong 24h"
-                    f" — giá hiện tại ${eth.price:,.0f}"
+                    f"ETH giảm {eth.change_24h:.1f}% trong 24h — giá hiện tại ${eth.price:,.0f}"
                 ),
                 source="market_data",
                 url="",
@@ -83,10 +78,7 @@ def detect_market_triggers(
                 },
             )
         )
-        logger.warning(
-            f"ETH crash trigger: {eth.change_24h:.1f}% "
-            f"(threshold: {eth_threshold}%)"
-        )
+        logger.warning(f"ETH crash trigger: {eth.change_24h:.1f}% (threshold: {eth_threshold}%)")
 
     if fgi and fgi.price <= fear_greed_threshold:
         events.append(
@@ -104,8 +96,7 @@ def detect_market_triggers(
             )
         )
         logger.warning(
-            f"Extreme fear trigger: F&G={fgi.price:.0f} "
-            f"(threshold: {fear_greed_threshold})"
+            f"Extreme fear trigger: F&G={fgi.price:.0f} (threshold: {fear_greed_threshold})"
         )
 
     if events:

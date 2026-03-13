@@ -81,20 +81,20 @@ async def _run_pipeline() -> str:
         errors.append(e)
         run_log["status"] = "error"
 
-    # FR54: Send test mode confirmation
-    if is_test_mode():
-        try:
-            await _send_test_confirmation(run_log, articles, errors)
-        except Exception as e:
-            logger.warning(f"Test confirmation failed (non-critical): {e}")
-
-    # Log pipeline run
+    # Finalize run log BEFORE test confirmation (so status/duration are accurate)
     elapsed = time.monotonic() - start
     run_log["duration_sec"] = round(elapsed, 1)
     if run_log["status"] == "running":
         run_log["status"] = "success" if not errors else "partial"
     run_log["errors"] = [str(e) for e in errors]
     run_log["tiers_delivered"] = len(articles)
+
+    # FR54: Send test mode confirmation (after run_log finalized)
+    if is_test_mode():
+        try:
+            await _send_test_confirmation(run_log, articles, errors)
+        except Exception as e:
+            logger.warning(f"Test confirmation failed (non-critical): {e}")
 
     logger.info(
         f"Pipeline complete: {run_log['status']} in {elapsed:.0f}s, "
@@ -112,6 +112,19 @@ async def _run_pipeline() -> str:
         _write_dashboard_data(run_log, articles, errors)
     except Exception as e:
         logger.error(f"Dashboard data write failed (non-critical): {e}")
+
+    # FR43: Data retention cleanup (run after each daily pipeline)
+    try:
+        from cic_daily_report.storage.data_retention import run_cleanup
+        from cic_daily_report.storage.sheets_client import SheetsClient
+
+        sheets = SheetsClient()
+        cleanup = await asyncio.to_thread(run_cleanup, sheets)
+        total_removed = sum(cleanup.values())
+        if total_removed > 0:
+            logger.info(f"Data cleanup: removed {total_removed} old rows — {cleanup}")
+    except Exception as e:
+        logger.warning(f"Data cleanup failed (non-critical): {e}")
 
     return run_log["status"]
 
@@ -212,6 +225,8 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         summary = a.get("summary", "")
         if summary:
             line += f"\n  Tóm tắt: {summary[:300]}"
+        if a.get("conflict"):
+            line += "\n  ⚠️ [FR12] Nhiều nguồn đưa tin khác nhau — cần đối chiếu cẩn thận"
         if a.get("news_type") == "macro":
             macro_items.append(line)
         else:
@@ -311,6 +326,24 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     except Exception as e:
         logger.warning(f"Config load failed, using defaults: {e}")
         errors.append(e)
+
+    # Pre-flight validation: templates + coins (FR13, QĐ8)
+    expected_tiers = {"L1", "L2", "L3", "L4", "L5"}
+    loaded_tiers = set(templates.keys())
+    missing_tiers = expected_tiers - loaded_tiers
+    if missing_tiers:
+        msg = f"Templates missing for tiers: {sorted(missing_tiers)}"
+        logger.error(msg)
+        errors.append(Exception(msg))
+    if not templates:
+        msg = "No templates loaded — cannot generate articles"
+        logger.error(msg)
+        errors.append(Exception(msg))
+        return [], errors
+    for tier in sorted(loaded_tiers):
+        coins = coin_lists.get(tier, [])
+        if not coins:
+            logger.warning(f"No coins configured for tier {tier}")
 
     # Build interpretation notes for LLM context
     interpretation_notes: list[str] = []
@@ -426,6 +459,21 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         logger.error(f"Article generation failed: {e}")
         errors.append(e)
 
+    # Post-generation validation (FR13, FR14)
+    generated_tiers = {a.tier for a in generated}
+    missing_gen = expected_tiers - generated_tiers
+    if missing_gen:
+        msg = f"Articles not generated for tiers: {sorted(missing_gen)}"
+        logger.error(msg)
+        errors.append(Exception(msg))
+    for article in generated:
+        # FR14 dual-layer check: TL;DR marker should exist
+        content_lower = article.content.lower()
+        if "tl;dr" not in content_lower and "tl; dr" not in content_lower:
+            logger.warning(
+                f"[{article.tier}] Missing TL;DR section — FR14 dual-layer may be incomplete"
+            )
+
     # Generate BIC Chat summary (FR15)
     summary = None
     if generated:
@@ -450,30 +498,32 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         if og and a.get("source_type") == "research" and len(image_urls) < 3:
             image_urls.append(og)
 
-    source_urls = [
-        {"title": name, "url": url} for name, url in source_url_map.items()
-    ]
+    source_urls = [{"title": name, "url": url} for name, url in source_url_map.items()]
 
     articles_out: list[dict[str, str]] = []
     for article in generated:
         filtered = check_and_fix(article.content)
-        content = _inject_hyperlinks(filtered.content, source_url_map)
-        articles_out.append({
-            "tier": article.tier,
-            "content": content,
-            "source_urls": source_urls,
-            "image_urls": image_urls,
-        })
+        content = _append_source_references(filtered.content, source_url_map)
+        articles_out.append(
+            {
+                "tier": article.tier,
+                "content": content,
+                "source_urls": source_urls,
+                "image_urls": image_urls,
+            }
+        )
 
     if summary:
         filtered = check_and_fix(summary.content)
-        content = _inject_hyperlinks(filtered.content, source_url_map)
-        articles_out.append({
-            "tier": "Summary",
-            "content": content,
-            "source_urls": source_urls,
-            "image_urls": image_urls,
-        })
+        content = _append_source_references(filtered.content, source_url_map)
+        articles_out.append(
+            {
+                "tier": "Summary",
+                "content": content,
+                "source_urls": source_urls,
+                "image_urls": image_urls,
+            }
+        )
 
     # --- Write generated content to Sheets (A4) ---
     try:
@@ -718,28 +768,33 @@ async def _send_test_confirmation(
         logger.debug("Test confirmation skipped — TG not configured")
 
 
-def _inject_hyperlinks(content: str, source_url_map: dict[str, str]) -> str:
-    """Inject HTML hyperlinks for source names in article content.
+def _append_source_references(content: str, source_url_map: dict[str, str]) -> str:
+    """Append plain-text source reference footer (FR19 + FR30 copy-paste ready).
 
-    Called AFTER NQ05 filter. Finds source names and wraps first occurrence
-    in <a href> tags. Only matches sources that appear in the content.
+    Instead of injecting <a href> HTML (which breaks copy-paste to BIC Group),
+    appends a "Nguồn tham khảo" section with source names and URLs.
+    Only includes sources whose names actually appear in the content.
     """
     import re as _re
 
+    mentioned: list[tuple[str, str]] = []
     for source_name, url in source_url_map.items():
         if not source_name or not url:
             continue
-        # Word-boundary match to avoid partial matches (e.g. "SEC" in "SECTION")
         pattern = _re.compile(
             r"(?<![a-zA-Z0-9])" + _re.escape(source_name) + r"(?![a-zA-Z0-9])",
             _re.IGNORECASE,
         )
-        match = pattern.search(content)
-        if match:
-            linked = f'<a href="{url}">{match.group()}</a>'
-            # Replace only first occurrence
-            content = content[:match.start()] + linked + content[match.end():]
-    return content
+        if pattern.search(content):
+            mentioned.append((source_name, url))
+
+    if not mentioned:
+        return content
+
+    footer = "\n\n📎 Nguồn tham khảo:\n"
+    for name, url in mentioned[:5]:  # Limit to 5 sources to keep it concise
+        footer += f"• {name}: {url}\n"
+    return content + footer
 
 
 if __name__ == "__main__":

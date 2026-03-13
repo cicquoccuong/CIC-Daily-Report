@@ -74,9 +74,7 @@ async def score_rss_articles(
     for article in recent:
         matched = _match_keywords(article.title, keywords)
         if matched:
-            keyword_events.append(
-                _article_to_event(article, score=75, matched_keywords=matched)
-            )
+            keyword_events.append(_article_to_event(article, score=75, matched_keywords=matched))
         else:
             remaining.append(article)
 
@@ -137,8 +135,7 @@ async def _batch_score(
     Falls back to 0 for all articles if LLM fails.
     """
     articles_text = "\n".join(
-        f"[{i}] {a.title} ({a.source_name}): {a.summary[:200]}"
-        for i, a in enumerate(articles)
+        f"[{i}] {a.title} ({a.source_name}): {a.summary[:200]}" for i, a in enumerate(articles)
     )
 
     prompt = SCORING_PROMPT_TEMPLATE.format(articles_text=articles_text)

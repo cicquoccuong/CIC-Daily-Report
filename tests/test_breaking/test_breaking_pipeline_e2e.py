@@ -203,9 +203,7 @@ class TestFallbackChain:
             ),
         ]
         mock_llm = MagicMock()
-        mock_llm.generate = AsyncMock(
-            return_value=MagicMock(text='[{"index": 0, "score": 30}]')
-        )
+        mock_llm.generate = AsyncMock(return_value=MagicMock(text='[{"index": 0, "score": 30}]'))
 
         events = await score_rss_articles(articles, mock_llm)
         assert len(events) == 1
@@ -225,9 +223,7 @@ class TestFallbackChain:
             ),
         ]
         mock_llm = MagicMock()
-        mock_llm.generate = AsyncMock(
-            return_value=MagicMock(text='[{"index": 0, "score": 30}]')
-        )
+        mock_llm.generate = AsyncMock(return_value=MagicMock(text='[{"index": 0, "score": 30}]'))
 
         events = await score_rss_articles(articles, mock_llm)
         assert len(events) == 1
@@ -239,9 +235,7 @@ class TestFallbackChain:
 
         # Generate content
         gen_llm = _mock_llm()
-        content = await generate_breaking_content(
-            events[0], gen_llm, severity=classified.severity
-        )
+        content = await generate_breaking_content(events[0], gen_llm, severity=classified.severity)
         assert content.ai_generated
         assert content.word_count > 0
 

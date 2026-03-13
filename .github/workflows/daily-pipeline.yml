@@ -65,6 +65,7 @@ jobs:
         run: uv run cic-daily
 
       - name: Retry pipeline on failure
+        id: retry
         if: steps.pipeline.outcome == 'failure'
         env:
           GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
@@ -110,3 +111,24 @@ jobs:
             echo "Push attempt $i failed, retrying in 5s..."
             sleep 5
           done
+
+      - name: Notify failure via Telegram
+        if: steps.pipeline.outcome == 'failure' && (steps.retry.outcome == 'failure' || steps.retry.outcome == 'skipped')
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          python3 -c "
+          import json, urllib.request
+          msg = '\u26a0\ufe0f [CIC Daily Report] Pipeline TH\u1ea4T B\u1ea0I\n\nTh\u1eddi gian: ${TIMESTAMP}\nC\u1ea3 2 l\u1ea7n ch\u1ea1y \u0111\u1ec1u l\u1ed7i.\n\nKi\u1ec3m tra log: ${RUN_URL}'
+          data = json.dumps({'chat_id': '${TELEGRAM_CHAT_ID}', 'text': msg}).encode()
+          req = urllib.request.Request(
+              'https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage',
+              data=data, headers={'Content-Type': 'application/json'})
+          try:
+              urllib.request.urlopen(req, timeout=10)
+          except Exception as e:
+              print(f'TG notification failed (non-critical): {e}')
+          "

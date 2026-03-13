@@ -8,9 +8,7 @@ from cic_daily_report.breaking.market_trigger import (
 from cic_daily_report.collectors.market_data import MarketDataPoint
 
 
-def _make_dp(
-    symbol="BTC", price=50000.0, change_24h=2.0, **kwargs
-) -> MarketDataPoint:
+def _make_dp(symbol="BTC", price=50000.0, change_24h=2.0, **kwargs) -> MarketDataPoint:
     return MarketDataPoint(
         symbol=symbol,
         price=price,

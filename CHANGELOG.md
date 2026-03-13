@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.17.0] - 2026-03-14
+
+### PRD Remediation — 24 findings across 5 clusters (R1→R3→R2→R4→R5)
+
+**R1 — Config & Templates:**
+- Improved all 8 template prompts in AutoSetup.gs: dual-layer (TL;DR + detail), source attribution
+- Added 2 new sections: L4 "Tín hiệu cảnh báo" + L5 "Phân tích liên thị trường" (8→10 total)
+- Fixed L4 NQ05 violation: removed "Nêu tỷ trọng phân bổ %" → replaced with risk analysis
+- Added `resetTemplates()` GAS function + menu item for Anh Cường to apply updates
+- Updated GAS version to 0.17.0
+
+**R3 — Crash Notification & Stability:**
+- Added TG failure notification step to both GitHub Actions workflows (daily + breaking)
+- Fixed test mode timing bug: `_send_test_confirmation` now runs AFTER run_log finalized
+- Pipeline operator gets Telegram alert when both pipeline attempts fail
+
+**R2 — Validation Layer:**
+- Pre-flight validation: checks templates exist for all 5 tiers before generating
+- Pre-flight validation: warns when coin lists are empty for a tier
+- Early exit when NO templates loaded (prevents silent empty report)
+- Post-generation validation: checks all 5 tiers were generated, logs missing tiers
+- Post-generation validation: checks FR14 dual-layer (TL;DR marker)
+
+**R4 — Format & Delivery:**
+- FR30 copy-paste fix: replaced `<a href>` HTML injection with plain-text source footer
+- New `_append_source_references()`: appends "Nguồn tham khảo" section with up to 5 sources
+- Content now copy-paste ready for BIC Group (Beincom) — no raw HTML tags
+- FR28 deferred event reprocessing: breaking pipeline reprocesses `deferred_to_morning` events
+
+**R5 — Bug Fixes & Sync:**
+- CJK character sanitization in NQ05 filter: strips Chinese/Japanese/Korean chars from LLM output
+- FR12 conflict detection: passes conflict flag to LLM context with warning marker
+- FR43 data retention: `run_cleanup()` now called at end of daily pipeline (was orphaned)
+- Version sync: config.py, pyproject.toml, GAS Menu.gs all at 0.17.0
+
+**Tests:** 426 passed, 0 regressions
+
+---
+
 ## [0.16.0] - 2026-03-13
 
 ### Added — CryptoPanic Fallback: RSS + LLM Scoring + Market Triggers

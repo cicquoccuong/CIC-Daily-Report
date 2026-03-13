@@ -204,9 +204,7 @@ class TelegramBot:
         """
         return await retry_async(self._send_photo_raw, photo_url, caption)
 
-    async def _send_photo_raw(
-        self, photo_url: str, caption: str = ""
-    ) -> dict[str, Any]:
+    async def _send_photo_raw(self, photo_url: str, caption: str = "") -> dict[str, Any]:
         """Raw sendPhoto — called by retry wrapper."""
         url = f"https://api.telegram.org/bot{self._token}/sendPhoto"
         payload: dict[str, Any] = {

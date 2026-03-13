@@ -25,6 +25,7 @@ function createDailyReportMenu() {
       ui.createMenu("⚙️ Thiết Lập")
         .addItem("🚀 Thiết Lập Tự Động (tạo 9 tab)", "menuRunAutoSetup")
         .addSeparator()
+        .addItem("📝 Cập Nhật Template Bài Viết", "menuResetTemplates")
         .addItem("🔄 Đồng Bộ Cột Thiếu", "menuSyncColumns")
         .addItem("🎨 Định Dạng Lại Toàn Bộ", "menuReformatAll")
     )
@@ -115,6 +116,49 @@ function menuRunAutoSetup() {
     ui.alert("❌ Lỗi", "Thiết lập thất bại:\n" + e.message, ui.ButtonSet.OK);
   } finally {
     ss.toast("", "", 1);
+  }
+}
+
+/**
+ * 📝 Cập Nhật Template — ghi đè template bài viết mới nhất.
+ */
+function menuResetTemplates() {
+  var ui = SpreadsheetApp.getUi();
+  var response = ui.alert(
+    "📝 Cập Nhật Template Bài Viết",
+    "Sẽ thay thế TOÀN BỘ template trong tab MAU_BAI_VIET bằng phiên bản mới nhất.\n\n" +
+    "Template mới bao gồm:\n" +
+    "• L1: Tổng quan thị trường + Tin nổi bật (2 phần)\n" +
+    "• L2: Phân tích kỹ thuật + Altcoin đáng chú ý (2 phần)\n" +
+    "• L3: Phân tích on-chain + Phân tích vĩ mô (2 phần)\n" +
+    "• L4: Phân tích rủi ro theo sector + Tín hiệu cảnh báo (2 phần)\n" +
+    "• L5: Báo cáo tổng hợp + Phân tích liên thị trường (2 phần)\n\n" +
+    "⚠️ Template cũ sẽ bị XÓA. Tiếp tục?",
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response !== ui.Button.YES) return;
+
+  try {
+    var result = resetTemplates();
+
+    if (result.success) {
+      ui.alert(
+        "✅ Cập Nhật Hoàn Tất",
+        "Đã xóa " + result.rowsCleared + " template cũ.\n" +
+        "Đã ghi " + result.rowsWritten + " template mới (10 phần cho 5 tier).\n\n" +
+        "Cải tiến chính:\n" +
+        "• Mỗi phần có TL;DR + Phân tích chi tiết\n" +
+        "• Yêu cầu ghi nguồn dữ liệu\n" +
+        "• L4 sửa lại: phân tích rủi ro (không gợi ý phân bổ %)\n" +
+        "• L4 + L5 thêm phần mới",
+        ui.ButtonSet.OK
+      );
+    } else {
+      ui.alert("❌ Lỗi", result.error, ui.ButtonSet.OK);
+    }
+  } catch (e) {
+    ui.alert("❌ Lỗi", e.message, ui.ButtonSet.OK);
   }
 }
 
@@ -370,7 +414,7 @@ function menuShowAbout() {
   var ui = SpreadsheetApp.getUi();
   ui.alert(
     "ℹ️ CIC Daily Report",
-    "Phiên bản: 0.12.0\n" +
+    "Phiên bản: 0.17.0\n" +
     "Nền tảng: Google Sheets + GitHub Actions\n" +
     "AI: Groq Llama 3.3 → Gemini Flash → Flash Lite\n" +
     "Giao hàng: Telegram Bot + Email backup\n\n" +

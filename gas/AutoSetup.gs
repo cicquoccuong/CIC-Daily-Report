@@ -93,22 +93,31 @@ var SHEET_CONFIGS = [
       "Số từ tối đa": "#,##0"
     },
     defaultData: [
+      // L1: Beginner — BTC/ETH only, simple language
       ["L1", "Tổng quan thị trường", "BẬT", "1",
-       "Viết tổng quan ngắn gọn thị trường crypto hôm nay dựa trên dữ liệu bên dưới. Tập trung vào BTC và ETH. Nêu xu hướng chính, mức giá quan trọng, và tâm lý thị trường (Fear & Greed). Viết bằng tiếng Việt, khách quan, không khuyến nghị mua/bán. Ghi rõ: Đây là thông tin tham khảo, không phải lời khuyên đầu tư.", "300"],
+       "Viết tổng quan thị trường tài sản mã hóa hôm nay. Tập trung BTC và ETH: giá hiện tại, biến động 24h, vốn hóa, và chỉ số Fear & Greed. Bắt đầu bằng TL;DR 2-3 câu ngắn gọn cho người mới. Sau đó phân tích chi tiết với số liệu cụ thể. Trích nguồn: 'Theo CoinGecko...', 'Dữ liệu CoinLore...'. Viết bằng tiếng Việt, khách quan, không khuyến nghị mua/bán.", "300"],
       ["L1", "Tin nổi bật", "BẬT", "2",
-       "Tóm tắt 3-5 tin tức crypto nổi bật nhất hôm nay từ danh sách tin bên dưới. Mỗi tin 1-2 câu. Ưu tiên tin ảnh hưởng lớn đến thị trường. Viết bằng tiếng Việt.", "200"],
+       "Tóm tắt 3-5 tin tức tài sản mã hóa nổi bật nhất hôm nay. Mỗi tin 1-2 câu. Ghi rõ nguồn mỗi tin (CoinDesk, CryptoPanic, v.v.). Ưu tiên tin ảnh hưởng trực tiếp đến giá BTC/ETH. Viết bằng tiếng Việt, dễ hiểu.", "200"],
+      // L2: Intermediate — TA focus, altcoin coverage
       ["L2", "Phân tích kỹ thuật", "BẬT", "1",
-       "Phân tích kỹ thuật các coin trong danh sách dựa trên dữ liệu giá và khối lượng. Nêu mức hỗ trợ/kháng cự quan trọng, xu hướng ngắn hạn. Viết bằng tiếng Việt, khách quan. Không khuyến nghị mua/bán.", "400"],
+       "Phân tích kỹ thuật các coin chính dựa trên dữ liệu giá và khối lượng. Bắt đầu bằng TL;DR tóm tắt xu hướng chung. Sau đó phân tích chi tiết: mức hỗ trợ/kháng cự quan trọng, xu hướng volume, tín hiệu ngắn hạn. Trích nguồn dữ liệu. Viết bằng tiếng Việt, khách quan, không khuyến nghị mua/bán.", "400"],
       ["L2", "Altcoin đáng chú ý", "BẬT", "2",
-       "Liệt kê các altcoin có biến động giá lớn (>5%) trong 24h qua. Giải thích ngắn gọn nguyên nhân nếu có tin liên quan. Viết bằng tiếng Việt.", "300"],
+       "Liệt kê altcoin có biến động giá lớn (>5%) trong 24h qua. Bắt đầu bằng TL;DR nêu altcoin nổi bật nhất. Sau đó mỗi coin nêu: % biến động, volume thay đổi, nguyên nhân nếu có tin liên quan. Ghi rõ nguồn. Viết bằng tiếng Việt.", "300"],
+      // L3: Advanced — on-chain + macro correlation
       ["L3", "Phân tích on-chain", "BẬT", "1",
-       "Phân tích dữ liệu on-chain: Funding Rate, dòng tiền vào/ra sàn, và các chỉ số blockchain quan trọng. Giải thích ý nghĩa từng chỉ số cho người đọc. Viết bằng tiếng Việt.", "400"],
+       "Phân tích dữ liệu on-chain: Funding Rate, dòng tiền vào/ra sàn, MVRV, và các chỉ số blockchain. Bắt đầu bằng TL;DR tóm tắt tín hiệu on-chain chính (tích cực/tiêu cực/trung tính). Sau đó giải thích ý nghĩa từng chỉ số, so sánh với trung bình lịch sử. Trích nguồn: 'Dữ liệu Glassnode...', 'Theo CryptoQuant...'. Viết bằng tiếng Việt.", "400"],
       ["L3", "Phân tích vĩ mô", "BẬT", "2",
-       "Phân tích tác động của yếu tố vĩ mô lên thị trường crypto: chỉ số DXY, giá vàng, chính sách Fed, CPI. Liên hệ với diễn biến crypto. Viết bằng tiếng Việt.", "300"],
-      ["L4", "Chiến lược phân bổ", "BẬT", "1",
-       "Phân tích cơ cấu danh mục gợi ý dựa trên tình hình thị trường hiện tại. Nêu tỷ trọng BTC/ETH/Altcoin/Stablecoin phù hợp. GHI RÕ: Đây chỉ là phân tích tham khảo theo Nghị định 05, không phải lời khuyên đầu tư. Mọi quyết định đầu tư là trách nhiệm của người đọc.", "500"],
-      ["L5", "Báo cáo chuyên sâu", "BẬT", "1",
-       "Viết báo cáo chuyên sâu toàn diện bao gồm: phân tích kỹ thuật chi tiết, on-chain, vĩ mô, sentiment, và đánh giá rủi ro. Đây là báo cáo cao cấp nhất. GHI RÕ disclaimer NQ05: Thông tin chỉ mang tính tham khảo.", "800"]
+       "Phân tích tác động yếu tố vĩ mô lên thị trường tài sản mã hóa: chỉ số DXY, giá vàng, chính sách Fed, CPI, lãi suất trái phiếu. Bắt đầu bằng TL;DR tóm tắt tín hiệu macro. Sau đó phân tích chi tiết: tương quan DXY-BTC, Gold-BTC, ảnh hưởng Fed lên dòng tiền. Trích nguồn: 'Dữ liệu FRED cho thấy...'. Viết bằng tiếng Việt.", "300"],
+      // L4: Expert — risk analysis by sector (NQ05 compliant, NO allocation %)
+      ["L4", "Phân tích rủi ro theo sector", "BẬT", "1",
+       "Phân tích rủi ro thị trường theo sector: Layer 1, DeFi, Layer 2, AI tokens, Meme. Bắt đầu bằng TL;DR đánh giá mức rủi ro chung. Sau đó so sánh hiệu suất giữa các sector, xác định sector outperform/underperform, đánh giá rủi ro tập trung. CHỈ PHÂN TÍCH rủi ro — TUYỆT ĐỐI KHÔNG đưa tỷ lệ phân bổ (%) hoặc khuyến nghị mua/bán. Trích nguồn dữ liệu. Viết bằng tiếng Việt.", "400"],
+      ["L4", "Tín hiệu cảnh báo", "BẬT", "2",
+       "Tổng hợp tín hiệu cảnh báo đáng chú ý: funding rate bất thường, Fear & Greed cực đoan, volume đột biến, liquidation lớn. Bắt đầu bằng TL;DR: có hay không tín hiệu cảnh báo nghiêm trọng. Sau đó phân tích chi tiết từng tín hiệu, giải thích ý nghĩa lịch sử. Chỉ nêu THÔNG TIN, không khuyến nghị hành động. Trích nguồn. Viết bằng tiếng Việt.", "300"],
+      // L5: Master — comprehensive cross-market analysis
+      ["L5", "Báo cáo tổng hợp chuyên sâu", "BẬT", "1",
+       "Viết báo cáo tổng hợp chuyên sâu: kỹ thuật BTC/ETH, on-chain metrics, macro correlation, derivatives insight. Bắt đầu bằng Executive Summary (TL;DR) 3-5 câu. Sau đó phân tích đa chiều, liên kết data points giữa kỹ thuật-on-chain-macro. Trích rõ nguồn cho mỗi data point. Viết chuyên sâu, thuật ngữ chính xác. Đây là thông tin tham khảo, không phải lời khuyên đầu tư.", "500"],
+      ["L5", "Phân tích liên thị trường", "BẬT", "2",
+       "Phân tích mối tương quan giữa crypto và thị trường tài chính: BTC vs DXY, BTC vs Gold, crypto vs equity markets. Phân tích sector rotation: dòng tiền đang dịch chuyển giữa các sector nào. Bắt đầu bằng TL;DR tóm tắt correlation chính. Sau đó phân tích chi tiết cross-market, derivatives insights (funding, OI). Trích nguồn dữ liệu. Viết chuyên sâu bằng tiếng Việt.", "400"]
     ]
   },
   {
@@ -414,6 +423,57 @@ function applyColumnWidths_(sheet, config) {
     }
   }
 }
+
+/**
+ * Cập nhật lại toàn bộ template trong MAU_BAI_VIET.
+ * Xóa dữ liệu cũ (giữ header) và ghi lại template mới từ defaultData.
+ *
+ * Dùng khi cần áp dụng template cải tiến mà không cần xóa/tạo lại sheet.
+ * @returns {Object} {success, rowsCleared, rowsWritten}
+ */
+function resetTemplates() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("MAU_BAI_VIET");
+
+  if (!sheet) {
+    return {success: false, error: "Tab MAU_BAI_VIET chưa tồn tại. Chạy Thiết Lập Tự Động trước."};
+  }
+
+  // Find the MAU_BAI_VIET config to get defaultData
+  var templateConfig = null;
+  for (var i = 0; i < SHEET_CONFIGS.length; i++) {
+    if (SHEET_CONFIGS[i].name === "MAU_BAI_VIET") {
+      templateConfig = SHEET_CONFIGS[i];
+      break;
+    }
+  }
+
+  if (!templateConfig || !templateConfig.defaultData) {
+    return {success: false, error: "Không tìm thấy defaultData cho MAU_BAI_VIET."};
+  }
+
+  // Clear existing data (keep header row 1)
+  var lastRow = sheet.getLastRow();
+  var rowsCleared = 0;
+  if (lastRow > 1) {
+    rowsCleared = lastRow - 1;
+    sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).clearContent();
+  }
+
+  // Write new template data
+  var data = templateConfig.defaultData;
+  sheet.getRange(2, 1, data.length, data[0].length).setValues(data);
+
+  // Re-format
+  formatHeader_(sheet, templateConfig.headers.length);
+
+  return {
+    success: true,
+    rowsCleared: rowsCleared,
+    rowsWritten: data.length
+  };
+}
+
 
 /**
  * Xóa sheet mặc định "Sheet1" nếu có (và không phải sheet duy nhất).

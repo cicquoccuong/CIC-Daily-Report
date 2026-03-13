@@ -165,7 +165,6 @@ class DeliveryManager:
 
         return result
 
-
     async def _send_images(self, articles: list[dict[str, str]]) -> None:
         """Send research images via Telegram sendPhoto (max 3/run)."""
         image_urls: list[tuple[str, str]] = []  # (url, caption)

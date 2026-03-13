@@ -113,6 +113,15 @@ def check_and_fix(
                 f"Allocation pattern removed: '{pattern_str}' ({len(matches)}x)"
             )
 
+    # Step 1c: Sanitize non-Vietnamese characters (Chinese/Japanese/Korean)
+    # LLMs sometimes output CJK chars in Vietnamese content
+    cjk_pattern = re.compile(r"[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]+")
+    cjk_matches = cjk_pattern.findall(result.content)
+    if cjk_matches:
+        result.content = cjk_pattern.sub("", result.content)
+        result.auto_fixed += len(cjk_matches)
+        logger.warning(f"Removed {len(cjk_matches)} CJK character sequences from content")
+
     # Step 2: Fix terminology
     for wrong, correct in TERMINOLOGY_FIXES.items():
         pattern = re.compile(re.escape(wrong), re.IGNORECASE)

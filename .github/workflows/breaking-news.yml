@@ -47,6 +47,7 @@ jobs:
         run: uv sync
 
       - name: Run breaking news check
+        id: breaking
         env:
           GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
           GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
@@ -83,3 +84,24 @@ jobs:
             echo "Push attempt $i failed, retrying in 5s..."
             sleep 5
           done
+
+      - name: Notify failure via Telegram
+        if: failure() && steps.breaking.outcome == 'failure'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          python3 -c "
+          import json, urllib.request
+          msg = '\u26a0\ufe0f [Breaking News] Pipeline TH\u1ea4T B\u1ea0I\n\nTh\u1eddi gian: ${TIMESTAMP}\n\nKi\u1ec3m tra log: ${RUN_URL}'
+          data = json.dumps({'chat_id': '${TELEGRAM_CHAT_ID}', 'text': msg}).encode()
+          req = urllib.request.Request(
+              'https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage',
+              data=data, headers={'Content-Type': 'application/json'})
+          try:
+              urllib.request.urlopen(req, timeout=10)
+          except Exception as e:
+              print(f'TG notification failed (non-critical): {e}')
+          "

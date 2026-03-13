@@ -144,6 +144,9 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     """
     result = BreakingPipelineResult(run_log=run_log)
 
+    # Stage 0: Reprocess deferred events from previous night (FR28)
+    await _reprocess_deferred_events(run_log, result)
+
     # Stage 1: Detect via CryptoPanic (primary)
     events: list = []
     use_rss_fallback = False
@@ -319,9 +322,7 @@ async def _rss_fallback_detection(run_log: BreakingRunLog) -> list:
 
         rss_articles = await asyncio.wait_for(collect_rss(), timeout=60)
         llm = LLMAdapter()
-        events = await asyncio.wait_for(
-            score_rss_articles(rss_articles, llm), timeout=60
-        )
+        events = await asyncio.wait_for(score_rss_articles(rss_articles, llm), timeout=60)
         logger.info(f"RSS fallback: {len(events)} breaking events from RSS+LLM")
         return events
     except Exception as e:
@@ -345,6 +346,54 @@ async def _market_trigger_detection(run_log: BreakingRunLog) -> list:
         logger.warning(f"Market trigger check failed (non-critical): {e}")
         run_log.errors.append(f"Market trigger: {e}")
         return []
+
+
+async def _reprocess_deferred_events(
+    run_log: BreakingRunLog, result: BreakingPipelineResult
+) -> None:
+    """FR28: Reprocess deferred events when we're past the night window.
+
+    Checks BREAKING_LOG for deferred_to_morning events. If current time is
+    daytime (07:00-23:00 VN), delivers them as a bundled morning alert.
+    deferred_to_daily events are left for the daily pipeline to handle.
+    """
+    from cic_daily_report.breaking.severity_classifier import _is_night_mode
+
+    now = datetime.now(timezone.utc)
+    if _is_night_mode(now):
+        return  # Still night — don't reprocess yet
+
+    try:
+        dedup_mgr = await _load_dedup_from_sheets()
+        morning_events = dedup_mgr.get_deferred_events("deferred_to_morning")
+
+        if not morning_events:
+            return
+
+        logger.info(f"FR28: Found {len(morning_events)} deferred morning events to reprocess")
+
+        # Deliver bundled morning alert via Telegram
+        from cic_daily_report.delivery.telegram_bot import TelegramBot
+
+        bot = TelegramBot()
+        lines = [f"🟠 TIN ĐÃ HOÃN TỪ ĐÊM QUA ({len(morning_events)} tin)\n"]
+        for entry in morning_events:
+            lines.append(f"• {entry.title} ({entry.source})")
+
+        message = "\n".join(lines)
+        await bot.send_message(message)
+
+        # Update status to sent
+        for entry in morning_events:
+            dedup_mgr.update_entry_status(entry.hash, "sent", delivered_at=now.isoformat())
+
+        await _persist_dedup_to_sheets(dedup_mgr)
+
+        run_log.events_sent += len(morning_events)
+        logger.info(f"FR28: Delivered {len(morning_events)} deferred morning events")
+    except Exception as e:
+        logger.warning(f"Deferred event reprocessing failed (non-critical): {e}")
+        run_log.errors.append(f"Deferred reprocessing: {e}")
 
 
 async def _deliver_breaking(result: BreakingPipelineResult) -> None:
