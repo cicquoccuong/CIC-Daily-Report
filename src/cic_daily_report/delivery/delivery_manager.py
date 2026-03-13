@@ -69,7 +69,11 @@ class DeliveryManager:
         """Deliver content via Telegram, fallback to email.
 
         Args:
-            articles: list of {"tier": "L1"/"Summary", "content": "..."}
+            articles: list of dicts with keys:
+                - tier (str): "L1"/"L2"/..."L5"/"Summary"
+                - content (str): Article text
+                - source_urls (list[dict], optional): [{"title":..., "url":...}]
+                - image_urls (list[str], optional): URLs of research images
             pipeline_errors: any errors from earlier pipeline stages.
 
         Returns:
@@ -125,6 +129,10 @@ class DeliveryManager:
                 tg_error_msg = str(e)
                 result.errors.append(str(e))
 
+        # Send research images (max 3 per run)
+        if tg_success and self._tg:
+            await self._send_images(articles)
+
         # Send error notifications via Telegram
         if pipeline_errors and self._tg:
             try:
@@ -156,6 +164,28 @@ class DeliveryManager:
                 result.errors.append(f"Email: {e}")
 
         return result
+
+
+    async def _send_images(self, articles: list[dict[str, str]]) -> None:
+        """Send research images via Telegram sendPhoto (max 3/run)."""
+        image_urls: list[tuple[str, str]] = []  # (url, caption)
+        for article in articles:
+            for img_url in article.get("image_urls", []):
+                if img_url and len(image_urls) < 3:
+                    caption = article.get("tier", "")
+                    image_urls.append((img_url, caption))
+
+        if not image_urls:
+            return
+
+        for url, caption in image_urls:
+            try:
+                await self._tg.send_photo(url, caption=caption)
+                await asyncio.sleep(1.0)
+            except Exception as e:
+                logger.debug(f"Image send failed (non-critical): {e}")
+
+        logger.info(f"Sent {len(image_urls)} research images")
 
 
 def _combine_content(articles: list[dict[str, str]]) -> str:

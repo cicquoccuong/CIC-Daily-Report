@@ -12,12 +12,16 @@ from datetime import datetime, timezone
 
 import httpx
 
+from cic_daily_report.core.cache import get_cached, set_cached
 from cic_daily_report.core.error_handler import CollectorError, ConfigError
 from cic_daily_report.core.logger import get_logger
+from cic_daily_report.core.quota_manager import QuotaManager
 
 logger = get_logger("event_detector")
 
 CRYPTOPANIC_API_URL = "https://cryptopanic.com/api/v1/posts/"
+CACHE_KEY = "cryptopanic_breaking"
+CACHE_MAX_AGE = 7200  # 2 hours — breaking runs every 3h, so cache protects overlaps/retries
 
 # Default keyword triggers — operator can add more via CAU_HINH
 DEFAULT_KEYWORD_TRIGGERS = [
@@ -71,12 +75,14 @@ class DetectionConfig:
 async def detect_breaking_events(
     config: DetectionConfig | None = None,
     api_key: str | None = None,
+    quota_manager: QuotaManager | None = None,
 ) -> list[BreakingEvent]:
     """Detect breaking events from CryptoPanic API.
 
     Args:
         config: Detection config (thresholds, keywords). Defaults to sensible defaults.
         api_key: CryptoPanic API key. Falls back to env var.
+        quota_manager: Shared quota tracker for rate limiting.
 
     Returns:
         List of detected breaking events.
@@ -93,14 +99,27 @@ async def detect_breaking_events(
         )
 
     cfg = config or DetectionConfig()
+    qm = quota_manager or QuotaManager()
 
-    try:
-        raw_items = await _fetch_cryptopanic(key, cfg.max_results)
-    except Exception as e:
-        raise CollectorError(
-            f"CryptoPanic API error: {e}",
-            source="event_detector",
-        ) from e
+    if not qm.can_call("cryptopanic"):
+        logger.warning("CryptoPanic daily quota reached — skipping breaking detection")
+        return []
+
+    # Try cache first — avoid redundant API calls between runs
+    cached = get_cached(CACHE_KEY, max_age_seconds=CACHE_MAX_AGE)
+    if cached is not None:
+        raw_items = cached[:cfg.max_results]
+    else:
+        await qm.wait_for_rate_limit("cryptopanic")
+        try:
+            raw_items = await _fetch_cryptopanic(key, cfg.max_results)
+            qm.track("cryptopanic")
+            set_cached(CACHE_KEY, raw_items)
+        except Exception as e:
+            raise CollectorError(
+                f"CryptoPanic API error: {e}",
+                source="event_detector",
+            ) from e
 
     events = _evaluate_items(raw_items, cfg)
     logger.info(f"Detected {len(events)} breaking events from {len(raw_items)} items")

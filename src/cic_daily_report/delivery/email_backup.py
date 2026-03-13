@@ -93,6 +93,9 @@ class EmailBackup:
         msg["From"] = self._email
         msg["To"] = ", ".join(to_addrs)
         msg.set_content(body)
+        # Add HTML alternative if body contains hyperlinks or bold tags
+        if "<a " in body or "<b>" in body:
+            msg.add_alternative(body, subtype="html")
 
         try:
             with smtplib.SMTP(self._server, self._port, timeout=30) as server:

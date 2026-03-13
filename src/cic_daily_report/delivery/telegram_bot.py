@@ -24,6 +24,38 @@ logger = get_logger("telegram_bot")
 TG_MAX_LENGTH = 4000  # Telegram limit is 4096 but use 4000 for UTF-8 safety margin
 SEND_DELAY = 1.5  # seconds between messages to avoid rate limiting
 
+# Regex to match safe <a href="...">...</a> tags (no javascript:/data: URIs)
+_SAFE_LINK_RE = re.compile(
+    r'<a\s+href="(https?://[^"]+)">(.*?)</a>',
+    re.IGNORECASE,
+)
+
+
+def selective_html_escape(text: str) -> str:
+    """Escape HTML but preserve safe <a href> hyperlinks.
+
+    Strategy: extract safe <a> tags → escape everything → re-insert tags.
+    Blocks javascript: and data: URIs to prevent XSS.
+    """
+    # Extract safe links and replace with placeholders
+    links: list[str] = []
+
+    def _replace_link(match: re.Match) -> str:
+        full_tag = match.group(0)
+        links.append(full_tag)
+        return f"\x00LINK{len(links) - 1}\x00"
+
+    text_with_placeholders = _SAFE_LINK_RE.sub(_replace_link, text)
+
+    # Escape everything else
+    escaped = html_lib.escape(text_with_placeholders)
+
+    # Re-insert safe link tags
+    for i, link in enumerate(links):
+        escaped = escaped.replace(f"\x00LINK{i}\x00", link)
+
+    return escaped
+
 
 @dataclass
 class TelegramMessage:
@@ -136,12 +168,11 @@ class TelegramBot:
     async def _send_raw(self, text: str, parse_mode: str = "HTML") -> dict[str, Any]:
         """Raw send — called by retry wrapper.
 
-        Note: All text is HTML-escaped at this level to prevent parsing errors.
-        If HTML formatting tags are needed in future, move escaping to caller level.
+        Uses selective HTML escape: preserves safe <a href> tags while escaping
+        everything else to prevent Telegram parsing errors.
         """
         url = f"https://api.telegram.org/bot{self._token}/sendMessage"
-        # Escape HTML entities to prevent TG parsing errors (M1 fix)
-        text = html_lib.escape(text)
+        text = selective_html_escape(text)
         payload = {
             "chat_id": self._chat_id,
             "text": text,
@@ -156,6 +187,44 @@ class TelegramBot:
         if not data.get("ok"):
             raise DeliveryError(
                 f"Telegram API error: {data.get('description', 'unknown')}",
+                source="telegram_bot",
+            )
+        return data
+
+    async def send_photo(
+        self,
+        photo_url: str,
+        caption: str = "",
+    ) -> dict[str, Any]:
+        """Send a photo via Telegram Bot API sendPhoto.
+
+        Args:
+            photo_url: Public URL to the image.
+            caption: Optional caption (max 1024 chars).
+        """
+        return await retry_async(self._send_photo_raw, photo_url, caption)
+
+    async def _send_photo_raw(
+        self, photo_url: str, caption: str = ""
+    ) -> dict[str, Any]:
+        """Raw sendPhoto — called by retry wrapper."""
+        url = f"https://api.telegram.org/bot{self._token}/sendPhoto"
+        payload: dict[str, Any] = {
+            "chat_id": self._chat_id,
+            "photo": photo_url,
+        }
+        if caption:
+            payload["caption"] = selective_html_escape(caption)[:1024]
+            payload["parse_mode"] = "HTML"
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+
+        data = resp.json()
+        if not data.get("ok"):
+            raise DeliveryError(
+                f"Telegram sendPhoto error: {data.get('description', 'unknown')}",
                 source="telegram_bot",
             )
         return data

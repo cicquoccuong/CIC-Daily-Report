@@ -181,3 +181,9 @@ def _merge_source_list(existing: dict[str, Any], dup: dict[str, Any]) -> None:
     dup_source = dup.get("source_name", "")
     if dup_source and dup_source not in sources:
         sources.append(dup_source)
+    # Preserve og_image — prefer non-None
+    if not existing.get("og_image") and dup.get("og_image"):
+        existing["og_image"] = dup["og_image"]
+    # Preserve source_type — "research" takes priority over "news"
+    if dup.get("source_type") == "research":
+        existing["source_type"] = "research"

@@ -1,5 +1,64 @@
 # Changelog
 
+## [0.16.0] - 2026-03-13
+
+### Added — CryptoPanic Fallback: RSS + LLM Scoring + Market Triggers
+
+**LLM Scorer (`breaking/llm_scorer.py`) — NEW:**
+- RSS-based breaking event scoring when CryptoPanic unavailable
+- Batch LLM prompt: scores up to 20 articles in 1 call (efficiency)
+- Keyword pre-filter: matching articles bypass LLM (faster, no quota)
+- Time filter: only scores articles published within last 6 hours
+- Graceful degradation: LLM failure returns keyword-only matches
+
+**Market Trigger (`breaking/market_trigger.py`) — NEW:**
+- Always-on price crash detection (not a fallback, runs every time)
+- BTC drop > 7% in 24h → automatic breaking event
+- ETH drop > 10% in 24h → automatic breaking event
+- Fear & Greed Index < 10 → Extreme Fear breaking event
+- Uses existing market data collector (no new API calls)
+
+**Breaking Pipeline Fallback Chain:**
+- 3-layer detection: CryptoPanic (primary) → RSS+LLM (fallback) → Market triggers (always-on)
+- CryptoPanic failure (quota/error/timeout) triggers automatic RSS fallback
+- Market triggers run alongside primary detection (additive, not exclusive)
+- All sources merge before dedup — no duplicate alerts
+- 50 new tests, 426 total, 0 regression
+
+---
+
+## [0.15.0] - 2026-03-13
+
+### Added — Research Integration + Telegram Formatting + CryptoPanic Quota Fix
+
+**Research Feed Integration (Cụm 1):**
+- 4 research feeds: Messari, Glassnode Insights, CoinMetrics, Galaxy Digital
+- `source_type` field ("news" vs "research") on FeedConfig + NewsArticle
+- `og_image` extraction via trafilatura for research articles
+- `full_text` enrichment for research articles (up to 2000 chars)
+- `asyncio.Semaphore(25)` limits concurrent HTTP requests
+- Data cleaner preserves `og_image` and `source_type` through dedup
+
+**CryptoPanic API Quota Fix (GP1-4):**
+- Breaking pipeline: hourly → every 3h, skip UTC 0-5 (750→180 calls/month)
+- QuotaManager integrated into both CryptoPanic collectors
+- File-based cache (2h TTL) prevents redundant API calls
+- New `core/cache.py` module for simple file-based caching
+
+**Delivery Layer Enhancements (Cụm 2):**
+- Selective HTML escape: preserves safe `<a href>` hyperlinks
+- `send_photo()` method for sending research chart images via Telegram
+- Image delivery: up to 3 research images per daily report
+- Email backup supports HTML alternative (for hyperlinks)
+- Sheets truncation increased from 5000 to 8000 chars
+
+**Hyperlink Injection (Cụm 3):**
+- Source URLs collected and injected AFTER NQ05 filter (security-safe)
+- First occurrence of each source name wrapped in clickable `<a href>` tag
+- `source_urls` and `image_urls` passed through article dict to delivery
+
+---
+
 ## [0.14.3] - 2026-03-12
 
 ### Changed — F2: CAU_HINH Self-Documenting Email Config

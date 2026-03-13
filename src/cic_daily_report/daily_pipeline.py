@@ -177,6 +177,8 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
                 "url": a.url,
                 "source_name": a.source_name,
                 "summary": a.summary,
+                "source_type": getattr(a, "source_type", "news"),
+                "og_image": getattr(a, "og_image", None),
             }
         )
     for a in crypto_articles:
@@ -187,6 +189,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
                 "source_name": a.source_name,
                 "summary": a.summary,
                 "news_type": getattr(a, "news_type", "crypto"),
+                "og_image": getattr(a, "og_image", None),
             }
         )
     for m in tg_messages:
@@ -434,14 +437,43 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
 
     # --- Stage 3: NQ05 Post-filter (QĐ4 Layer 2) ---
     logger.info("Stage 3: NQ05 Post-filter")
+
+    # Build source URL mapping and image list from cleaned news
+    source_url_map: dict[str, str] = {}
+    image_urls: list[str] = []
+    for a in cleaned_news[:30]:
+        name = a.get("source_name", "")
+        url = a.get("url", "")
+        if name and url:
+            source_url_map[name] = url
+        og = a.get("og_image")
+        if og and a.get("source_type") == "research" and len(image_urls) < 3:
+            image_urls.append(og)
+
+    source_urls = [
+        {"title": name, "url": url} for name, url in source_url_map.items()
+    ]
+
     articles_out: list[dict[str, str]] = []
     for article in generated:
         filtered = check_and_fix(article.content)
-        articles_out.append({"tier": article.tier, "content": filtered.content})
+        content = _inject_hyperlinks(filtered.content, source_url_map)
+        articles_out.append({
+            "tier": article.tier,
+            "content": content,
+            "source_urls": source_urls,
+            "image_urls": image_urls,
+        })
 
     if summary:
         filtered = check_and_fix(summary.content)
-        articles_out.append({"tier": "Summary", "content": filtered.content})
+        content = _inject_hyperlinks(filtered.content, source_url_map)
+        articles_out.append({
+            "tier": "Summary",
+            "content": content,
+            "source_urls": source_urls,
+            "image_urls": image_urls,
+        })
 
     # --- Write generated content to Sheets (A4) ---
     try:
@@ -509,7 +541,7 @@ async def _write_generated_content(
                 now,
                 "daily_report",
                 article.get("tier", ""),
-                article.get("content", "")[:5000],  # truncate for Sheets cell limit
+                article.get("content", "")[:8000],  # truncate for Sheets cell limit
                 "",  # LLM sử dụng
                 "pending",
                 "",  # Ghi chú
@@ -684,6 +716,30 @@ async def _send_test_confirmation(
         await bot.send_message(msg)
     except Exception:
         logger.debug("Test confirmation skipped — TG not configured")
+
+
+def _inject_hyperlinks(content: str, source_url_map: dict[str, str]) -> str:
+    """Inject HTML hyperlinks for source names in article content.
+
+    Called AFTER NQ05 filter. Finds source names and wraps first occurrence
+    in <a href> tags. Only matches sources that appear in the content.
+    """
+    import re as _re
+
+    for source_name, url in source_url_map.items():
+        if not source_name or not url:
+            continue
+        # Word-boundary match to avoid partial matches (e.g. "SEC" in "SECTION")
+        pattern = _re.compile(
+            r"(?<![a-zA-Z0-9])" + _re.escape(source_name) + r"(?![a-zA-Z0-9])",
+            _re.IGNORECASE,
+        )
+        match = pattern.search(content)
+        if match:
+            linked = f'<a href="{url}">{match.group()}</a>'
+            # Replace only first occurrence
+            content = content[:match.start()] + linked + content[match.end():]
+    return content
 
 
 if __name__ == "__main__":

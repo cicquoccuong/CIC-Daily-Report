@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from cic_daily_report.core.logger import get_logger
+from cic_daily_report.core.quota_manager import QuotaManager
 
 logger = get_logger("cryptopanic")
 
@@ -35,6 +36,7 @@ class CryptoPanicArticle:
     currencies: list[str] | None = None  # coin codes from API (e.g. ["BTC","ETH"])
     news_type: str = "crypto"  # "crypto" or "macro" — classified from currencies field
     language: str = "en"
+    og_image: str | None = None  # Open Graph image URL
 
     def to_row(self) -> list[str]:
         """Convert to Sheets row for TIN_TUC_THO tab."""
@@ -58,6 +60,7 @@ class CryptoPanicArticle:
 async def collect_cryptopanic(
     api_key: str | None = None,
     extract_fulltext: bool = True,
+    quota_manager: QuotaManager | None = None,
 ) -> list[CryptoPanicArticle]:
     """Collect news + sentiment from CryptoPanic API.
 
@@ -68,10 +71,17 @@ async def collect_cryptopanic(
         logger.error("CRYPTOPANIC_API_KEY not set — skipping CryptoPanic collection")
         return []
 
+    qm = quota_manager or QuotaManager()
+    if not qm.can_call("cryptopanic"):
+        logger.warning("CryptoPanic daily quota reached — skipping collection")
+        return []
+
     logger.info("Collecting from CryptoPanic API")
+    await qm.wait_for_rate_limit("cryptopanic")
 
     try:
         articles = await _fetch_posts(api_key)
+        qm.track("cryptopanic")
         logger.info(f"CryptoPanic: {len(articles)} articles fetched")
 
         if extract_fulltext and articles:
@@ -202,6 +212,10 @@ async def _extract_fulltext(articles: list[CryptoPanicArticle]) -> None:
                 article.full_text = text[:2000]
                 if not article.summary:
                     article.summary = text[:500]
+            # Extract og:image metadata
+            metadata = await asyncio.to_thread(trafilatura.extract_metadata, resp.text)
+            if metadata and metadata.image:
+                article.og_image = metadata.image
         except Exception as e:
             logger.debug(f"Full-text extraction failed for {article.url}: {e}")
 

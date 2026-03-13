@@ -1,16 +1,19 @@
 """End-to-end integration tests for breaking news pipeline (Story 5.5).
 
 Verifies full flow: detect → dedup → generate → classify → deliver.
+Includes fallback chain tests: CryptoPanic → RSS+LLM → Market triggers.
 All external APIs mocked.
 """
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from cic_daily_report.adapters.llm_adapter import LLMResponse
 from cic_daily_report.breaking.content_generator import generate_breaking_content
 from cic_daily_report.breaking.dedup_manager import DedupEntry, DedupManager, compute_hash
 from cic_daily_report.breaking.event_detector import BreakingEvent
+from cic_daily_report.breaking.llm_scorer import score_rss_articles
+from cic_daily_report.breaking.market_trigger import detect_market_triggers
 from cic_daily_report.breaking.severity_classifier import (
     CRITICAL,
     IMPORTANT,
@@ -19,6 +22,8 @@ from cic_daily_report.breaking.severity_classifier import (
     classify_batch,
     classify_event,
 )
+from cic_daily_report.collectors.market_data import MarketDataPoint
+from cic_daily_report.collectors.rss_collector import NewsArticle
 from cic_daily_report.generators.article_generator import DISCLAIMER
 
 
@@ -172,3 +177,157 @@ class TestFullBreakingFlow:
         deferred = mgr.get_deferred_events("deferred_to_morning")
         assert len(deferred) == 1
         assert deferred[0].title == "SEC news"
+
+
+class TestFallbackChain:
+    """Tests for CryptoPanic → RSS+LLM → Market trigger fallback chain."""
+
+    async def test_rss_fallback_detects_keyword_events(self):
+        """RSS fallback catches breaking events via keyword matching."""
+        articles = [
+            NewsArticle(
+                title="Major exchange hack discovered",
+                url="https://example.com/hack",
+                source_name="CoinDesk",
+                published_date="",
+                summary="A major hack was detected.",
+                language="en",
+            ),
+            NewsArticle(
+                title="Normal market update",
+                url="https://example.com/normal",
+                source_name="Reuters",
+                published_date="",
+                summary="Markets are stable.",
+                language="en",
+            ),
+        ]
+        mock_llm = MagicMock()
+        mock_llm.generate = AsyncMock(
+            return_value=MagicMock(text='[{"index": 0, "score": 30}]')
+        )
+
+        events = await score_rss_articles(articles, mock_llm)
+        assert len(events) == 1
+        assert "hack" in events[0].matched_keywords
+        assert events[0].raw_data["source_type"] == "rss_fallback"
+
+    async def test_rss_fallback_then_classify_and_generate(self):
+        """Full chain: RSS fallback → classify → generate content."""
+        articles = [
+            NewsArticle(
+                title="Crypto exchange collapse reported",
+                url="https://example.com/collapse",
+                source_name="Reuters",
+                published_date="",
+                summary="Major exchange has collapsed.",
+                language="en",
+            ),
+        ]
+        mock_llm = MagicMock()
+        mock_llm.generate = AsyncMock(
+            return_value=MagicMock(text='[{"index": 0, "score": 30}]')
+        )
+
+        events = await score_rss_articles(articles, mock_llm)
+        assert len(events) == 1
+
+        # Classify
+        classified = classify_event(events[0], now=_vn_time(12))
+        assert classified.severity == CRITICAL  # "collapse" keyword
+        assert classified.delivery_action == "send_now"
+
+        # Generate content
+        gen_llm = _mock_llm()
+        content = await generate_breaking_content(
+            events[0], gen_llm, severity=classified.severity
+        )
+        assert content.ai_generated
+        assert content.word_count > 0
+
+    async def test_market_trigger_btc_crash(self):
+        """Market trigger detects BTC crash and creates event."""
+        market_data = [
+            MarketDataPoint(
+                symbol="BTC",
+                price=42000,
+                change_24h=-9.5,
+                volume_24h=1e10,
+                market_cap=8e11,
+                data_type="crypto",
+                source="CoinLore",
+            ),
+        ]
+
+        events = detect_market_triggers(market_data)
+        assert len(events) == 1
+        assert "BTC" in events[0].title
+        assert events[0].raw_data["source_type"] == "market_trigger"
+
+        # "crash" is an important keyword (not critical)
+        classified = classify_event(events[0], now=_vn_time(14))
+        assert classified.severity == IMPORTANT
+
+    async def test_market_trigger_no_crash(self):
+        """Normal market conditions produce no events."""
+        market_data = [
+            MarketDataPoint(
+                symbol="BTC",
+                price=50000,
+                change_24h=-2.0,
+                volume_24h=1e10,
+                market_cap=1e12,
+                data_type="crypto",
+                source="CoinLore",
+            ),
+        ]
+        events = detect_market_triggers(market_data)
+        assert len(events) == 0
+
+    async def test_combined_sources_dedup(self):
+        """Events from multiple sources are deduped correctly."""
+        # Simulate: RSS fallback + market trigger both fire
+        rss_event = _event("BTC crash alert", "CoinDesk", 80)
+        market_event = BreakingEvent(
+            title="BTC giảm -8.0% trong 24h — giá hiện tại $46,000",
+            source="market_data",
+            url="",
+            panic_score=72,
+            matched_keywords=["crash"],
+            raw_data={"source_type": "market_trigger"},
+        )
+
+        all_events = [rss_event, market_event]
+
+        # Dedup should keep both (different titles/hashes)
+        mgr = DedupManager()
+        dedup_result = mgr.check_and_filter(all_events)
+        assert len(dedup_result.new_events) == 2
+
+    async def test_rss_llm_failure_graceful(self):
+        """When LLM scoring fails, only keyword matches survive."""
+        articles = [
+            NewsArticle(
+                title="SEC bans crypto trading",
+                url="https://example.com/sec",
+                source_name="Reuters",
+                published_date="",
+                summary="SEC imposes new ban.",
+                language="en",
+            ),
+            NewsArticle(
+                title="Normal market update",
+                url="https://example.com/normal",
+                source_name="CNN",
+                published_date="",
+                summary="Nothing happened.",
+                language="en",
+            ),
+        ]
+        mock_llm = MagicMock()
+        mock_llm.generate = AsyncMock(side_effect=Exception("LLM timeout"))
+
+        events = await score_rss_articles(articles, mock_llm)
+        # Only "SEC" and "ban" keyword matches survive
+        assert len(events) == 1
+        assert "SEC" in events[0].matched_keywords or "ban" in events[0].matched_keywords

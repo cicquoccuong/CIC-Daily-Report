@@ -117,13 +117,19 @@ class TestEvaluateItems:
 
 
 class TestDetectBreakingEvents:
+    """Tests that call detect_breaking_events() must bypass file cache."""
+
+    _cache_patch = patch(
+        "cic_daily_report.breaking.event_detector.get_cached", return_value=None
+    )
+
     async def test_missing_api_key(self):
         with patch.dict("os.environ", {}, clear=True):
             with pytest.raises(ConfigError, match="CRYPTOPANIC_API_KEY"):
                 await detect_breaking_events(api_key="")
 
     async def test_api_error_raises_collector_error(self):
-        with patch(
+        with self._cache_patch, patch(
             "cic_daily_report.breaking.event_detector._fetch_cryptopanic",
             new_callable=AsyncMock,
             side_effect=Exception("timeout"),
@@ -136,7 +142,7 @@ class TestDetectBreakingEvents:
             _make_item("Major hack on exchange", {"negative": 50, "toxic": 30}),
             _make_item("Normal update", {"positive": 10}),
         ]
-        with patch(
+        with self._cache_patch, patch(
             "cic_daily_report.breaking.event_detector._fetch_cryptopanic",
             new_callable=AsyncMock,
             return_value=mock_items,
@@ -146,7 +152,7 @@ class TestDetectBreakingEvents:
             assert events[0].title == "Major hack on exchange"
 
     async def test_empty_results(self):
-        with patch(
+        with self._cache_patch, patch(
             "cic_daily_report.breaking.event_detector._fetch_cryptopanic",
             new_callable=AsyncMock,
             return_value=[],
@@ -157,7 +163,7 @@ class TestDetectBreakingEvents:
     async def test_custom_config(self):
         mock_items = [_make_item("Alert", {"negative": 5, "positive": 5})]
         cfg = DetectionConfig(panic_threshold=10, keyword_triggers=["alert"])
-        with patch(
+        with self._cache_patch, patch(
             "cic_daily_report.breaking.event_detector._fetch_cryptopanic",
             new_callable=AsyncMock,
             return_value=mock_items,

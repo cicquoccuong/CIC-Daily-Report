@@ -1,6 +1,7 @@
-"""Breaking news pipeline entry point — hourly event detection and alerting.
+"""Breaking news pipeline entry point — event detection and alerting.
 
 Orchestrates: Detect (5.1) → Dedup (5.4) → Generate (5.2) → Classify (5.3) → Deliver
+Fallback chain: CryptoPanic → RSS + LLM scoring → Market triggers (always-on).
 Total time target: ≤20 minutes from pipeline start.
 """
 
@@ -143,20 +144,28 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     """
     result = BreakingPipelineResult(run_log=run_log)
 
-    # Stage 1: Detect (inner timeout 60s)
+    # Stage 1: Detect via CryptoPanic (primary)
+    events: list = []
+    use_rss_fallback = False
     try:
         events = await asyncio.wait_for(detect_breaking_events(), timeout=60)
-        run_log.events_detected = len(events)
     except asyncio.TimeoutError:
-        logger.error("Detection timed out after 60s")
-        run_log.errors.append("Detection: timeout 60s")
-        run_log.status = "error"
-        return result
+        logger.warning("CryptoPanic detection timed out — will try RSS fallback")
+        use_rss_fallback = True
     except Exception as e:
-        logger.error(f"Detection failed: {e}")
-        run_log.errors.append(f"Detection: {e}")
-        run_log.status = "error"
-        return result
+        logger.warning(f"CryptoPanic detection failed: {e} — will try RSS fallback")
+        use_rss_fallback = True
+
+    # Stage 1b: RSS + LLM fallback (when CryptoPanic unavailable)
+    if use_rss_fallback:
+        rss_events = await _rss_fallback_detection(run_log)
+        events.extend(rss_events)
+
+    # Stage 1c: Market triggers (always-on, additive)
+    market_events = await _market_trigger_detection(run_log)
+    events.extend(market_events)
+
+    run_log.events_detected = len(events)
 
     if not events:
         run_log.status = "no_events"
@@ -299,6 +308,43 @@ async def _write_breaking_run_log(run_log: BreakingRunLog) -> None:
         logger.info("Breaking run log written to NHAT_KY_PIPELINE")
     except Exception as e:
         logger.warning(f"Breaking run log write failed: {e}")
+
+
+async def _rss_fallback_detection(run_log: BreakingRunLog) -> list:
+    """Fallback: collect RSS feeds and score via LLM for breaking events."""
+    try:
+        from cic_daily_report.adapters.llm_adapter import LLMAdapter
+        from cic_daily_report.breaking.llm_scorer import score_rss_articles
+        from cic_daily_report.collectors.rss_collector import collect_rss
+
+        rss_articles = await asyncio.wait_for(collect_rss(), timeout=60)
+        llm = LLMAdapter()
+        events = await asyncio.wait_for(
+            score_rss_articles(rss_articles, llm), timeout=60
+        )
+        logger.info(f"RSS fallback: {len(events)} breaking events from RSS+LLM")
+        return events
+    except Exception as e:
+        logger.warning(f"RSS fallback also failed: {e}")
+        run_log.errors.append(f"RSS fallback: {e}")
+        return []
+
+
+async def _market_trigger_detection(run_log: BreakingRunLog) -> list:
+    """Always-on: check market data for extreme conditions."""
+    try:
+        from cic_daily_report.breaking.market_trigger import detect_market_triggers
+        from cic_daily_report.collectors.market_data import collect_market_data
+
+        market_data = await asyncio.wait_for(collect_market_data(), timeout=60)
+        events = detect_market_triggers(market_data)
+        if events:
+            logger.info(f"Market triggers: {len(events)} events detected")
+        return events
+    except Exception as e:
+        logger.warning(f"Market trigger check failed (non-critical): {e}")
+        run_log.errors.append(f"Market trigger: {e}")
+        return []
 
 
 async def _deliver_breaking(result: BreakingPipelineResult) -> None:
