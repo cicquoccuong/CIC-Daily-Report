@@ -48,8 +48,8 @@ class TestDedupEntry:
             delivered_at="2026-01-01T00:05:00+00:00",
         )
         row = e.to_row()
-        # Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi
-        assert len(row) == 7
+        # Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi, URL
+        assert len(row) == 8
         assert row[0] == ""  # ID (auto)
         assert row[1] == "2026-01-01T00:00:00+00:00"  # detected_at
         assert row[2] == "Test"  # title
@@ -57,12 +57,13 @@ class TestDedupEntry:
         assert row[6] == "sent"  # status
 
     def test_from_row(self):
-        # Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi
-        row = ["1", "2026-01-01", "Title", "abc", "Src", "critical", "sent"]
+        # Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi, URL
+        row = ["1", "2026-01-01", "Title", "abc", "Src", "critical", "sent", "https://x.com"]
         e = DedupEntry.from_row(row)
         assert e.hash == "abc"
         assert e.title == "Title"
         assert e.status == "sent"
+        assert e.url == "https://x.com"
 
     def test_from_row_short(self):
         e = DedupEntry.from_row(["1", "2026-01-01", "Title", "abc"])
@@ -121,6 +122,11 @@ class TestDedupManager:
         assert len(result.entries_written) == 1
         assert result.entries_written[0].status == "pending"
 
+    def test_url_stored_in_entry(self):
+        mgr = DedupManager()
+        result = mgr.check_and_filter([_event()])
+        assert result.entries_written[0].url == "https://x.com"
+
 
 class TestDedupManagerCleanup:
     def test_removes_old_entries(self):
@@ -174,4 +180,4 @@ class TestDedupManagerStatus:
         mgr.check_and_filter([_event()])
         rows = mgr.all_rows()
         assert len(rows) == 1
-        assert len(rows[0]) == 7
+        assert len(rows[0]) == 8

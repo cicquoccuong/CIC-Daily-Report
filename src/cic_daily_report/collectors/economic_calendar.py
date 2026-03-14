@@ -110,10 +110,10 @@ class CalendarResult:
 
         if self.recent_events and not self.today_events and not self.upcoming_events:
             # Show recent events when there are no today/upcoming events
-            lines.append("SỰ KIỆN KINH TẾ ĐÃ DIỄN RA TRONG TUẦN:")
+            lines.append("SỰ KIỆN KINH TẾ ĐÃ DIỄN RA (kết quả thực tế — KHÔNG viết là 'sắp tới'):")
             for ev in self.recent_events:
                 date_str = _format_event_date(ev.date)
-                line = f"  - [{date_str}] {ev.title} ({ev.impact})"
+                line = f"  - [{date_str} — ĐÃ QUA] {ev.title} ({ev.impact})"
                 if ev.forecast:
                     line += f" — Dự báo: {ev.forecast}"
                 if ev.previous:

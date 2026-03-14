@@ -66,14 +66,14 @@ class TestGenerateBreakingContent:
         await generate_breaking_content(_event(), llm, severity="critical")
         call_kwargs = llm.generate.call_args
         prompt = call_kwargs.kwargs.get("prompt", "") or call_kwargs.args[0]
-        assert "400-500" in prompt
+        assert "200-250" in prompt
 
     async def test_notable_uses_shorter_target(self):
         llm = _mock_llm()
         await generate_breaking_content(_event(), llm, severity="notable")
         call_kwargs = llm.generate.call_args
         prompt = call_kwargs.kwargs.get("prompt", "") or call_kwargs.args[0]
-        assert "300-400" in prompt
+        assert "100-150" in prompt
 
     async def test_llm_failure_returns_raw_fallback(self):
         llm = AsyncMock()

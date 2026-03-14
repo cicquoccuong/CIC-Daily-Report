@@ -16,27 +16,23 @@ from cic_daily_report.generators.nq05_filter import check_and_fix
 logger = get_logger("breaking_content")
 
 BREAKING_PROMPT_TEMPLATE = """\
-Bạn là chuyên gia phân tích tài sản mã hóa cho CIC (Crypto Inner Circle).
+Viết bản tin BREAKING NEWS ngắn gọn bằng tiếng Việt.
 
-Viết bản tin BREAKING NEWS bằng tiếng Việt dựa trên sự kiện sau:
-
-**Tiêu đề:** {title}
+**Sự kiện:** {title}
 **Nguồn:** {source}
-**URL:** {url}
 
-Yêu cầu:
-- Viết {word_target} từ
-- Bao gồm: tóm tắt sự kiện, bối cảnh thị trường, tác động tiềm năng
-- Ghi nguồn tin (attribution)
-- Định dạng tối ưu cho đọc trên Telegram mobile
+Yêu cầu TUYỆT ĐỐI:
+- Viết {word_target} từ — NGẮN GỌN, đi thẳng vào vấn đề
+- KHÔNG viết nước đôi ("có thể tăng hoặc giảm", "tuy nhiên cũng có thể...")
+- KHÔNG bịa thêm dữ liệu, nguồn, hoặc con số không có ở trên
 - KHÔNG đưa ra khuyến nghị mua/bán
+- Dùng 'tài sản mã hóa' thay vì 'tiền điện tử'
 
-Cấu trúc:
-1. Tiêu đề ngắn gọn (1 dòng)
-2. Tóm tắt sự kiện (2-3 câu)
-3. Bối cảnh & Phân tích (2-3 đoạn)
-4. Tác động tiềm năng (1-2 đoạn)
-5. Nguồn: {source}"""
+Cấu trúc BẮT BUỘC:
+1. **Tiêu đề** (1 dòng tiếng Việt, ngắn gọn)
+2. **Chuyện gì xảy ra:** (2-3 câu — SỰ KIỆN cụ thể, không lan man)
+3. **Tại sao quan trọng:** (2-3 câu — tác động trực tiếp đến thị trường)
+4. Nguồn: {source}"""
 
 RAW_DATA_TEMPLATE = """⚠️ AI không khả dụng — dữ liệu thô
 
@@ -81,12 +77,11 @@ async def generate_breaking_content(
     Returns:
         BreakingContent with AI-generated or raw-data content.
     """
-    word_target = "400-500" if severity == "critical" else "300-400"
+    word_target = "200-250" if severity == "critical" else "100-150"
 
     prompt = BREAKING_PROMPT_TEMPLATE.format(
         title=event.title,
         source=event.source,
-        url=event.url,
         word_target=word_target,
     )
 
@@ -106,10 +101,12 @@ async def generate_breaking_content(
 
         logger.info(f"Breaking content generated: {word_count} words via {model_used}")
 
+        content_with_disclaimer = filtered.content + DISCLAIMER
+
         return BreakingContent(
             event=event,
-            content=filtered.content,
-            word_count=word_count,
+            content=content_with_disclaimer,
+            word_count=len(content_with_disclaimer.split()),
             ai_generated=True,
             model_used=model_used,
             image_url=event.image_url,

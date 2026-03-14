@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.19.0] - 2026-03-15
+
+### Anti-Hallucination & Output Quality
+
+**Fix 1 — Anti-Hallucination (article_generator.py):**
+- Removed "Theo CoinLore/Glassnode" example from NQ05_SYSTEM_PROMPT that was INSTRUCTING LLM to cite fabricated sources
+- Added "CHỐNG BỊA DỮ LIỆU" rule: LLM can only cite sources from provided data
+- Added "QUY TẮC DỮ LIỆU TUYỆT ĐỐI" block in article prompt with source whitelist/blocklist
+- Added "KIỂM TRA CUỐI CÙNG" guardrail: whitelist of allowed sources at end of prompt
+- Glassnode + Messari moved to ALLOWED list (they ARE real data sources in onchain_data.py + rss_collector.py)
+- On-chain source label updated: "Glassnode, Binance Futures, Bybit, OKX, FRED"
+- L2 tier_context: removed "support/resistance" instruction that invited LLM to fabricate price levels
+
+**Fix 2 — Data Cleaning Before LLM (daily_pipeline.py, economic_calendar.py):**
+- New `_format_onchain_value()`: Funding Rate → percentage format (e.g. -0.0056% instead of -5.55e-05), large numbers → B/M suffixes, ratios → 4 decimal places
+- Key metrics Funding Rate now shows percentage format
+- Economic events `recent_events`: label changed to "ĐÃ DIỄN RA" with "ĐÃ QUA" tag — prevents LLM from writing past events as "sắp tới"
+- Added Funding Rate + OI correlation hints in interpretation notes (OI uses `_format_onchain_value()` instead of hardcoded "B USD")
+- Economic events prompt instruction: explicit "KHÔNG viết sự kiện đã qua như 'sắp tới'"
+
+**Fix 3 — Severity Classifier (severity_classifier.py):**
+- Added 16 new important keywords: drops, falls, plunges, surges, soars, selloff, rally, war, attack, missile, sanctions, Iran, escalation, invasion, liquidated, sell-off
+- Added price-movement percentage detection: X% in title where X≥3 → important, X≥10 → critical
+- Word-boundary matching (`\b`) for ALL keywords — fixes "ban" matching inside "Binance" (false CRITICAL)
+
+**Fix 4 — Breaking News Format (breaking_pipeline.py, content_generator.py, dedup_manager.py):**
+- Breaking prompt rewritten: 300-400 → 100-150 words (critical: 200-250), no hedge language, structured as "Chuyện gì xảy ra" + "Tại sao quan trọng"
+- AI-generated breaking content now includes NQ05 DISCLAIMER (was only on raw fallback)
+- DedupEntry: added `url` field (8-column schema) — deferred events now retain URL
+- BREAKING_LOG schema in sheets_client.py: 7 → 8 columns (added URL header)
+- `_load_dedup_from_sheets()`: now reads URL column from sheet
+- Fixed double dedup load: single `dedup_mgr` shared across pipeline stages (was loading twice, second overwriting first)
+- Removed dead `url=` kwarg from content_generator `.format()` call
+- Deferred morning alert: sorted by severity, includes severity emoji + URL link
+
+**Fix 5 — Crypto Relevance Filter (data_cleaner.py):**
+- New `_filter_non_crypto()` step in cleaning pipeline
+- 70+ keywords: 50 crypto + 18 macro/finance (SEC, ETF, Fed, FOMC, CPI, inflation, tariff, DXY, etc.)
+- Word-boundary matching for short keywords (≤3 chars) — prevents "sol" matching "solution", "eth" matching "method"
+- Crypto-only sources (Coin68, TapChiBitcoin, BeInCrypto) bypass keyword check
+
+**Fix 6 — Breaking → Daily Context Sharing (daily_pipeline.py, article_generator.py):**
+- New `_load_recent_breaking_context()`: reads BREAKING_LOG for events within 24h
+- New `recent_breaking` field in GenerationContext
+- Injected into article prompt: "SỰ KIỆN BREAKING GẦN ĐÂY (24h qua — PHẢI nhắc đến trong bài)"
+- Daily report now references breaking news from previous night
+
+**Tests:** 471 passed (+21 new), 0 regressions
+- Severity classifier: keyword tests, percentage detection, word-boundary tests (ban vs Binance)
+- Data cleaner: non-crypto filter, crypto bypass, macro terms, substring false positive tests
+- Article generator: anti-hallucination guardrails, Glassnode in allowed list
+- Content generator: AI path DISCLAIMER, word targets
+- Daily pipeline: `_format_onchain_value()` for funding rate, ratio, large/small numbers
+- Dedup manager: URL field, 8-column row
+
 ## [0.18.0] - 2026-03-14
 
 ### FR60 — Economic Calendar Integration + Template Upgrade

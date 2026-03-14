@@ -144,8 +144,11 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     """
     result = BreakingPipelineResult(run_log=run_log)
 
+    # Load dedup state ONCE for the entire pipeline run
+    dedup_mgr = await _load_dedup_from_sheets()
+
     # Stage 0: Reprocess deferred events from previous night (FR28)
-    await _reprocess_deferred_events(run_log, result)
+    await _reprocess_deferred_events(run_log, result, dedup_mgr)
 
     # Stage 1: Detect via CryptoPanic (primary)
     events: list = []
@@ -174,8 +177,7 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
         run_log.status = "no_events"
         return result
 
-    # Stage 2: Dedup — load existing entries from BREAKING_LOG (A5)
-    dedup_mgr = await _load_dedup_from_sheets()
+    # Stage 2: Dedup — using pre-loaded dedup_mgr from BREAKING_LOG (A5)
     dedup_result = dedup_mgr.check_and_filter(events)
     run_log.events_new = len(dedup_result.new_events)
     result.dedup_entries = dedup_result.entries_written
@@ -262,6 +264,7 @@ async def _load_dedup_from_sheets() -> DedupManager:
                 severity=str(row.get("Mức độ", "")),
                 detected_at=str(row.get("Thời gian", "")),
                 status=str(row.get("Trạng thái gửi", "")),
+                url=str(row.get("URL", "")),
             )
             if entry.hash:
                 entries.append(entry)
@@ -349,13 +352,13 @@ async def _market_trigger_detection(run_log: BreakingRunLog) -> list:
 
 
 async def _reprocess_deferred_events(
-    run_log: BreakingRunLog, result: BreakingPipelineResult
+    run_log: BreakingRunLog, result: BreakingPipelineResult, dedup_mgr: DedupManager
 ) -> None:
     """FR28: Reprocess deferred events when we're past the night window.
 
-    Checks BREAKING_LOG for deferred_to_morning events. If current time is
-    daytime (07:00-23:00 VN), delivers them as a bundled morning alert.
-    deferred_to_daily events are left for the daily pipeline to handle.
+    Uses the shared dedup_mgr instance (loaded once per pipeline run).
+    If current time is daytime (07:00-23:00 VN), delivers deferred_to_morning
+    events as a bundled morning alert.
     """
     from cic_daily_report.breaking.severity_classifier import _is_night_mode
 
@@ -364,7 +367,6 @@ async def _reprocess_deferred_events(
         return  # Still night — don't reprocess yet
 
     try:
-        dedup_mgr = await _load_dedup_from_sheets()
         morning_events = dedup_mgr.get_deferred_events("deferred_to_morning")
 
         if not morning_events:
@@ -376,18 +378,27 @@ async def _reprocess_deferred_events(
         from cic_daily_report.delivery.telegram_bot import TelegramBot
 
         bot = TelegramBot()
-        lines = [f"🟠 TIN ĐÃ HOÃN TỪ ĐÊM QUA ({len(morning_events)} tin)\n"]
+
+        # Sort by severity (important first) for priority ordering
+        severity_order = {"critical": 0, "important": 1, "notable": 2, "": 3}
+        morning_events.sort(key=lambda e: severity_order.get(e.severity, 3))
+
+        lines = [f"\U0001f7e0 TIN ĐÃ HOÃN TỪ ĐÊM QUA ({len(morning_events)} tin)\n"]
         for entry in morning_events:
-            lines.append(f"• {entry.title} ({entry.source})")
+            severity_icon = {"critical": "\U0001f534", "important": "\U0001f7e0"}.get(
+                entry.severity, "\U0001f7e1"
+            )
+            line = f"{severity_icon} {entry.title} ({entry.source})"
+            if entry.url:
+                line += f"\n   \U0001f517 {entry.url}"
+            lines.append(line)
 
         message = "\n".join(lines)
         await bot.send_message(message)
 
-        # Update status to sent
+        # Update status to sent (persisted by main pipeline at end of run)
         for entry in morning_events:
             dedup_mgr.update_entry_status(entry.hash, "sent", delivered_at=now.isoformat())
-
-        await _persist_dedup_to_sheets(dedup_mgr)
 
         run_log.events_sent += len(morning_events)
         logger.info(f"FR28: Delivered {len(morning_events)} deferred morning events")

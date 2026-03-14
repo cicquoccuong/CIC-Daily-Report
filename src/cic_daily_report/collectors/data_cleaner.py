@@ -27,6 +27,86 @@ DEFAULT_SPAM_KEYWORDS = [
 
 SIMILARITY_THRESHOLD = 0.75  # title similarity for dedup
 
+# v0.19.0: Crypto relevance keywords — articles must contain at least one
+CRYPTO_RELEVANCE_KEYWORDS = [
+    "bitcoin",
+    "btc",
+    "ethereum",
+    "eth",
+    "crypto",
+    "blockchain",
+    "token",
+    "defi",
+    "nft",
+    "exchange",
+    "wallet",
+    "mining",
+    "stablecoin",
+    "usdt",
+    "usdc",
+    "binance",
+    "coinbase",
+    "solana",
+    "sol",
+    "xrp",
+    "ripple",
+    "cardano",
+    "ada",
+    "polkadot",
+    "dot",
+    "avalanche",
+    "avax",
+    "polygon",
+    "matic",
+    "altcoin",
+    "memecoin",
+    "doge",
+    "shib",
+    "web3",
+    "dao",
+    "airdrop",
+    "staking",
+    "yield",
+    "liquidity",
+    "dex",
+    "cex",
+    "ledger",
+    "trezor",
+    "metamask",
+    "uniswap",
+    "sushiswap",
+    "pancakeswap",
+    "decentralized",
+    "on-chain",
+    "onchain",
+    "smart contract",
+    "tiền mã hóa",
+    "tài sản mã hóa",
+    "tiền ảo",
+    "tiền điện tử",
+    # Macro/finance terms relevant to crypto markets
+    "sec",
+    "etf",
+    "fed",
+    "fomc",
+    "cpi",
+    "inflation",
+    "interest rate",
+    "dollar",
+    "dxy",
+    "tariff",
+    "regulation",
+    "treasury",
+    "bonds",
+    "monetary policy",
+    "rate cut",
+    "rate hike",
+    "quantitative",
+    "digital asset",
+    "cbdc",
+    "stablecoin bill",
+]
+
 
 @dataclass
 class CleanResult:
@@ -60,16 +140,20 @@ def clean_articles(
     # Step 3: Filter spam
     cleaned, spam_count = _filter_spam(deduped, keywords_lower)
 
+    # Step 4: Filter non-crypto articles (v0.19.0)
+    cleaned, non_crypto_count = _filter_non_crypto(cleaned)
+
     result = CleanResult(
         articles=cleaned,
         duplicates_merged=dup_count,
         conflicts_flagged=conflict_count,
-        spam_filtered=spam_count,
+        spam_filtered=spam_count + non_crypto_count,
     )
 
     logger.info(
         f"Data cleaning: {dup_count} duplicates merged, "
-        f"{conflict_count} conflicts flagged, {spam_count} spam filtered. "
+        f"{conflict_count} conflicts flagged, {spam_count} spam filtered, "
+        f"{non_crypto_count} non-crypto filtered. "
         f"{len(cleaned)} articles remaining."
     )
 
@@ -187,3 +271,56 @@ def _merge_source_list(existing: dict[str, Any], dup: dict[str, Any]) -> None:
     # Preserve source_type — "research" takes priority over "news"
     if dup.get("source_type") == "research":
         existing["source_type"] = "research"
+
+
+def _text_has_crypto_keyword(text: str, keywords: list[str]) -> bool:
+    """Check if text contains any crypto keyword, using word boundaries for short keywords."""
+    for kw in keywords:
+        if len(kw) <= 3:
+            # Short keywords need word-boundary matching to avoid false positives
+            # e.g. "eth" inside "method", "sol" inside "solution"
+            if re.search(r"\b" + re.escape(kw) + r"\b", text):
+                return True
+        else:
+            if kw in text:
+                return True
+    return False
+
+
+def _filter_non_crypto(
+    articles: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Filter articles that are not crypto-relevant (v0.19.0).
+
+    Checks title + summary for crypto keywords. Articles without any
+    crypto keyword are marked as filtered.
+    """
+    result = []
+    filtered_count = 0
+    keywords_lower = [kw.lower() for kw in CRYPTO_RELEVANCE_KEYWORDS]
+
+    for article in articles:
+        if article.get("filtered"):
+            result.append(article)
+            continue
+
+        title = article.get("title", "").lower()
+        summary = article.get("summary", "").lower()
+        source = article.get("source_name", "").lower()
+        text = f"{title} {summary}"
+
+        # Skip check for known crypto-only sources
+        crypto_sources = {"coin68", "tapchibitcoin", "beincrypto", "cryptopanic"}
+        if any(cs in source for cs in crypto_sources):
+            result.append(article)
+            continue
+
+        is_relevant = _text_has_crypto_keyword(text, keywords_lower)
+        if not is_relevant:
+            article["filtered"] = True
+            filtered_count += 1
+            logger.debug(f"Non-crypto filtered: {article.get('title', '')[:60]}")
+
+        result.append(article)
+
+    return result, filtered_count

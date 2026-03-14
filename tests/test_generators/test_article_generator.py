@@ -223,3 +223,32 @@ class TestGenerateTierArticles:
         sys_prompt = call_args.kwargs.get("system_prompt", "")
         assert "NQ05" in sys_prompt
         assert "KHÔNG BAO GIỜ" in sys_prompt
+
+
+class TestAntiHallucinationGuardrails:
+    """v0.19.0: NQ05_SYSTEM_PROMPT anti-hallucination changes."""
+
+    def test_nq05_prompt_no_glassnode_example(self):
+        """NQ05_SYSTEM_PROMPT should NOT contain old 'Theo CoinLore' example."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "Theo CoinLore" not in NQ05_SYSTEM_PROMPT
+
+    def test_prompt_has_anti_hallucination_guardrail(self):
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "CHỐNG BỊA" in NQ05_SYSTEM_PROMPT
+
+    async def test_guardrail_allows_glassnode(self):
+        """Glassnode is a real data source (onchain_data.py) — must be in allowed list."""
+        templates = _make_templates("L1")
+        context = _make_context()
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=10, model="m")
+        )
+        await generate_tier_articles(mock_llm, templates, context)
+        call_args = mock_llm.generate.call_args
+        prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
+        # Glassnode must be in allowed sources, NOT in banned list
+        assert "Glassnode" in prompt.split("PHẢI nằm trong")[1].split("KHÔNG ĐƯỢC")[0]

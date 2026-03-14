@@ -118,6 +118,7 @@ TABS = {
         "Nguồn",
         "Mức độ",
         "Trạng thái gửi",
+        "URL",
     ],
 }
 

@@ -129,6 +129,29 @@ async def _run_pipeline() -> str:
     return run_log["status"]
 
 
+def _format_onchain_value(metric_name: str, value: float) -> str:
+    """Format on-chain metric values for human readability.
+
+    Funding Rate: convert to percentage (e.g. -0.0056%).
+    Large numbers: use K/M/B suffixes.
+    Small floats: avoid scientific notation.
+    """
+    name_lower = metric_name.lower()
+    if "funding" in name_lower:
+        return f"{value * 100:.4f}%"
+    if "ratio" in name_lower:
+        return f"{value:.4f}"
+    if abs(value) >= 1e9:
+        return f"{value / 1e9:,.2f}B"
+    if abs(value) >= 1e6:
+        return f"{value / 1e6:,.2f}M"
+    if abs(value) >= 1e3:
+        return f"{value:,.2f}"
+    if abs(value) < 0.01 and value != 0:
+        return f"{value:.6f}"
+    return f"{value:.4f}"
+
+
 async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     """Run all pipeline stages: collect → generate → NQ05 filter.
 
@@ -251,7 +274,10 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
             line += f" | MCap: ${p.market_cap / 1e9:,.1f}B"
         market_items.append(line)
     market_text = "\n".join(market_items)
-    onchain_text = "\n".join(f"- {m.metric_name}: {m.value} ({m.source})" for m in onchain_data)
+    onchain_text = "\n".join(
+        f"- {m.metric_name}: {_format_onchain_value(m.metric_name, m.value)} ({m.source})"
+        for m in onchain_data
+    )
 
     # Build key metrics dict (FR20)
     key_metrics: dict[str, str | float] = {}
@@ -278,7 +304,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
             key_metrics["Altcoin Season"] = int(p.price)
     for m in onchain_data:
         if m.metric_name == "BTC_Funding_Rate":
-            key_metrics["Funding Rate"] = f"{m.value:.4f}"
+            key_metrics["Funding Rate"] = f"{m.value * 100:.4f}%"
 
     # Anomaly detection flags for LLM context
     fg_value = key_metrics.get("Fear & Greed")
@@ -408,6 +434,30 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
                 f"DXY = {dxy_val} (thấp) — USD yếu thường hỗ trợ crypto tăng giá"
             )
 
+    # Funding Rate + derivatives correlation hints
+    funding_rate_val = None
+    oi_val = None
+    for m in onchain_data:
+        if m.metric_name == "BTC_Funding_Rate":
+            funding_rate_val = m.value
+        elif m.metric_name == "BTC_Open_Interest":
+            oi_val = m.value
+    if funding_rate_val is not None:
+        fr_pct = funding_rate_val * 100
+        if fr_pct < -0.01:
+            note = (
+                f"Funding Rate = {fr_pct:.4f}% (âm) — short đang trả phí cho long, "
+                "thường báo hiệu thị trường đang bị bán quá mức"
+            )
+            if oi_val and oi_val > 0:
+                note += f". Open Interest = {_format_onchain_value('BTC_Open_Interest', oi_val)}"
+            interpretation_notes.append(note)
+        elif fr_pct > 0.05:
+            interpretation_notes.append(
+                f"Funding Rate = {fr_pct:.4f}% (cao bất thường) — long đang trả phí cao, "
+                "rủi ro squeeze tăng nếu giá giảm đột ngột"
+            )
+
     # Build per-tier analysis context (different tiers get different focus)
     tier_context: dict[str, str] = {}
     tier_context["L1"] = (
@@ -416,10 +466,11 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         "Giải thích đơn giản, không thuật ngữ phức tạp."
     )
     tier_context["L2"] = (
-        "Tier L2: Phân tích kỹ thuật cho 19 coins. "
-        "Tập trung: support/resistance dựa trên giá hiện tại, volume analysis, "
+        "Tier L2: Phân tích cho 19 coins. "
+        "Tập trung: giá hiện tại và biến động 24h, volume so sánh, "
         "altcoin nổi bật (biến động >3%). "
-        "Nêu rõ mức hỗ trợ/kháng cự cụ thể nếu có data."
+        "CHỈ dùng giá và % từ dữ liệu được cung cấp. "
+        "KHÔNG tự tính hoặc bịa vùng support/resistance."
     )
     tier_context["L3"] = (
         "Tier L3: Phân tích on-chain + macro chuyên sâu. "
@@ -450,6 +501,9 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     # Format economic calendar events for LLM context (FR60)
     economic_events_text = econ_calendar.format_for_llm()
 
+    # v0.19.0: Load recent breaking news context for pipeline integration
+    recent_breaking_text = await _load_recent_breaking_context()
+
     context = GenerationContext(
         coin_lists=coin_lists,
         market_data=market_text,
@@ -459,6 +513,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         tier_context=tier_context,
         interpretation_notes=interpretation_text,
         economic_events=economic_events_text,
+        recent_breaking=recent_breaking_text,
     )
 
     generated = []
@@ -544,6 +599,49 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
 
     logger.info(f"Pipeline stages complete: {len(articles_out)} articles ready")
     return articles_out, errors
+
+
+async def _load_recent_breaking_context() -> str:
+    """v0.19.0: Load recent breaking events (24h) from BREAKING_LOG for daily context.
+
+    Returns formatted text for LLM prompt, or empty string if no events.
+    """
+    try:
+        from cic_daily_report.storage.sheets_client import SheetsClient
+
+        sheets = SheetsClient()
+        rows = await asyncio.to_thread(sheets.read_all, "BREAKING_LOG")
+        if not rows:
+            return ""
+
+        now = datetime.now(timezone.utc)
+        recent_lines = []
+        for row in rows:
+            detected_at = str(row.get("Thời gian", ""))
+            title = str(row.get("Tiêu đề", ""))
+            source = str(row.get("Nguồn", ""))
+            severity = str(row.get("Mức độ", ""))
+            if not detected_at or not title:
+                continue
+            try:
+                dt = datetime.fromisoformat(detected_at)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                age = now - dt
+                if age.total_seconds() <= 86400:  # 24 hours
+                    recent_lines.append(f"- [{severity}] {title} ({source})")
+            except (ValueError, TypeError):
+                continue
+
+        if not recent_lines:
+            return ""
+
+        logger.info(f"Loaded {len(recent_lines)} recent breaking events for daily context")
+        return "\n".join(recent_lines)
+
+    except Exception as e:
+        logger.warning(f"Breaking context load failed (non-critical): {e}")
+        return ""
 
 
 async def _write_raw_data(

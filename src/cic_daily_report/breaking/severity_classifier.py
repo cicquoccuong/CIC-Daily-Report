@@ -6,6 +6,7 @@ Night Mode (23:00-07:00 VN UTC+7): only 🔴 sent immediately.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -44,10 +45,26 @@ DEFAULT_CRITICAL_KEYWORDS = [
 DEFAULT_IMPORTANT_KEYWORDS = [
     "partnership",
     "liquidation",
+    "liquidated",
     "regulatory",
     "SEC",
     "lawsuit",
     "acquisition",
+    "drops",
+    "falls",
+    "plunges",
+    "surges",
+    "soars",
+    "selloff",
+    "sell-off",
+    "rally",
+    "war",
+    "attack",
+    "missile",
+    "sanctions",
+    "Iran",
+    "escalation",
+    "invasion",
 ]
 
 
@@ -124,21 +141,30 @@ def classify_batch(
 
 
 def _determine_severity(event: BreakingEvent, config: ClassificationConfig) -> str:
-    """Determine severity based on panic_score and keyword matching."""
+    """Determine severity based on panic_score, keywords, and price movement."""
     title_lower = event.title.lower()
 
-    # Check critical keywords
+    # Check critical keywords (word-boundary matching to avoid false positives)
     for kw in config.critical_keywords:
-        if kw.lower() in title_lower:
+        if re.search(r"\b" + re.escape(kw.lower()) + r"\b", title_lower):
             return CRITICAL
 
     # Check panic score for critical
     if event.panic_score >= config.critical_panic_threshold:
         return CRITICAL
 
-    # Check important keywords
+    # Check price-movement percentage in title (e.g. "drops 3.5%", "surges 10%")
+    pct_match = re.search(r"(\d+(?:\.\d+)?)\s*%", event.title)
+    if pct_match:
+        pct_value = float(pct_match.group(1))
+        if pct_value >= 10:
+            return CRITICAL
+        if pct_value >= 3:
+            return IMPORTANT
+
+    # Check important keywords (word-boundary matching)
     for kw in config.important_keywords:
-        if kw.lower() in title_lower:
+        if re.search(r"\b" + re.escape(kw.lower()) + r"\b", title_lower):
             return IMPORTANT
 
     # Check panic score for important

@@ -110,3 +110,89 @@ class TestSpamFilter:
         assert result.duplicates_merged == 0
         assert result.spam_filtered == 0
         assert result.articles == []
+
+
+class TestNonCryptoFilter:
+    """v0.19.0: _filter_non_crypto removes articles without crypto keywords."""
+
+    def test_non_crypto_article_filtered(self):
+        articles = [
+            {
+                "title": "Apple releases new iPhone model",
+                "url": "https://tech.com/1",
+                "source_name": "TechNews",
+                "summary": "The new phone has better camera",
+            },
+        ]
+        result = clean_articles(articles)
+        filtered = [a for a in result.articles if a.get("filtered")]
+        assert len(filtered) == 1
+
+    def test_crypto_article_passes(self):
+        articles = [
+            {
+                "title": "Bitcoin ETF sees record inflows",
+                "url": "https://crypto.com/1",
+                "source_name": "CryptoNews",
+                "summary": "BTC ETF trading volume surges",
+            },
+        ]
+        result = clean_articles(articles)
+        filtered = [a for a in result.articles if a.get("filtered")]
+        assert len(filtered) == 0
+
+    def test_crypto_source_bypass_check(self):
+        """Known crypto sources bypass the keyword check."""
+        articles = [
+            {
+                "title": "New regulations announced today",
+                "url": "https://coin68.com/1",
+                "source_name": "Coin68",
+                "summary": "Government updates policy framework",
+            },
+        ]
+        result = clean_articles(articles)
+        filtered = [a for a in result.articles if a.get("filtered")]
+        assert len(filtered) == 0
+
+    def test_macro_terms_pass_filter(self):
+        """Macro/finance terms like SEC, ETF, Fed should pass crypto filter."""
+        articles = [
+            {
+                "title": "SEC approves new ETF filing",
+                "url": "https://news.com/1",
+                "source_name": "Reuters",
+                "summary": "The SEC has approved a new filing",
+            },
+        ]
+        result = clean_articles(articles)
+        filtered = [a for a in result.articles if a.get("filtered")]
+        assert len(filtered) == 0
+
+    def test_short_keyword_no_false_positive(self):
+        """Short keywords like 'sol' should not match inside 'solution'."""
+        articles = [
+            {
+                "title": "New solution for cloud computing",
+                "url": "https://tech.com/1",
+                "source_name": "TechNews",
+                "summary": "A method to solve ethical problems",
+            },
+        ]
+        result = clean_articles(articles)
+        filtered = [a for a in result.articles if a.get("filtered")]
+        assert len(filtered) == 1  # should be filtered (no crypto relevance)
+
+    def test_short_keyword_matches_standalone(self):
+        """Short keywords like 'ETH' should match as standalone words."""
+        articles = [
+            {
+                "title": "ETH price surges today",
+                "url": "https://crypto.com/1",
+                "source_name": "CryptoNews",
+                "summary": "ETH reaches new highs",
+            },
+        ]
+        result = clean_articles(articles)
+        filtered = [a for a in result.articles if a.get("filtered")]
+        assert len(filtered) == 0

@@ -132,6 +132,57 @@ class TestClassifyEvent:
         assert "Hack alert" in result.header
 
 
+class TestNewKeywordsAndPriceMovement:
+    """v0.19.0: New important keywords and price-movement detection."""
+
+    def test_drops_keyword_is_important(self):
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("BTC drops below 60K"), cfg)
+        assert result == IMPORTANT
+
+    def test_iran_keyword_is_important(self):
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("Iran tensions rise"), cfg)
+        assert result == IMPORTANT
+
+    def test_percentage_3_or_more_is_important(self):
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("ETH drops 3.5% today"), cfg)
+        assert result == IMPORTANT
+
+    def test_percentage_10_or_more_is_critical(self):
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("SOL surges 12% overnight"), cfg)
+        assert result == CRITICAL
+
+    def test_percentage_below_3_stays_notable(self):
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("BTC moves 2.1%", 30), cfg)
+        assert result == NOTABLE
+
+
+class TestWordBoundaryMatching:
+    """v0.19.0 fix: keyword matching uses word boundaries."""
+
+    def test_ban_does_not_match_binance(self):
+        """'ban' keyword should NOT match inside 'Binance'."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("Binance launches new feature"), cfg)
+        assert result != CRITICAL
+
+    def test_ban_matches_standalone(self):
+        """'ban' keyword should match standalone 'ban'."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("Country to ban crypto trading"), cfg)
+        assert result == CRITICAL
+
+    def test_ban_matches_word_boundary(self):
+        """'ban' should match at word boundaries like 'crypto ban'."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("New crypto ban announced"), cfg)
+        assert result == CRITICAL
+
+
 class TestClassifyBatch:
     def test_classifies_all(self):
         events = [_event("Hack", 90), _event("Update", 30)]

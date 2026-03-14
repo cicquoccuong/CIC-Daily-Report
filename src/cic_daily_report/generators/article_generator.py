@@ -45,7 +45,11 @@ NQ05_SYSTEM_PROMPT = (
     "'chắc chắn tăng/giảm'\n"
     "- Dùng 'tài sản mã hóa' thay vì 'tiền điện tử' hoặc 'tiền ảo'\n"
     "- Chỉ PHÂN TÍCH và THÔNG TIN, để người đọc tự quyết định\n"
-    "- Trích nguồn rõ ràng: 'Theo CoinLore...', 'Dữ liệu Glassnode cho thấy...'\n"
+    "- CHỐNG BỊA DỮ LIỆU: CHỈ trích dẫn nguồn khi dữ liệu THỰC SỰ có trong phần "
+    "DỮ LIỆU được cung cấp. KHÔNG BAO GIỜ tự thêm nguồn, con số, vùng giá, "
+    "hoặc thông tin không có trong dữ liệu đầu vào.\n"
+    "- Nếu không có dữ liệu cho một khía cạnh, viết 'Chưa có dữ liệu cập nhật' "
+    "thay vì bịa số liệu.\n"
     "Viết bằng tiếng Việt tự nhiên, thuật ngữ tài chính chính xác."
 )
 
@@ -85,6 +89,7 @@ class GenerationContext:
     tier_context: dict[str, str] = field(default_factory=dict)
     interpretation_notes: str = ""
     economic_events: str = ""
+    recent_breaking: str = ""  # v0.19.0: breaking news context from last 24h
 
 
 async def generate_tier_articles(
@@ -125,6 +130,7 @@ async def generate_tier_articles(
             "tier_context": context.tier_context.get(tier, ""),
             "interpretation_notes": context.interpretation_notes,
             "economic_events": context.economic_events,
+            "recent_breaking": context.recent_breaking,
         }
 
         # Try generation with 1 retry on 429 rate limit errors
@@ -178,23 +184,37 @@ async def _generate_single_article(
         f"HƯỚNG DẪN PHÂN TÍCH CHO TIER NÀY:\n"
         f"{variables.get('tier_context', '')}\n\n"
         f"Danh sách coin: {variables.get('coin_list', 'N/A')}\n\n"
-        f"DỮ LIỆU THỊ TRƯỜNG (dùng số liệu này, KHÔNG tự bịa):\n"
+        f"⚠️ QUY TẮC DỮ LIỆU TUYỆT ĐỐI:\n"
+        f"Bạn CHỈ được sử dụng dữ liệu bên dưới. KHÔNG ĐƯỢC:\n"
+        f"- Tự thêm nguồn (Glassnode, Bloomberg, CryptoQuant, TradingView...)\n"
+        f"- Tự bịa vùng giá support/resistance\n"
+        f"- Tự tạo con số % tăng/giảm không có trong dữ liệu\n"
+        f"- Viết 'theo [nguồn X]' nếu nguồn X không nằm trong dữ liệu dưới đây\n"
+        f"Nếu thiếu dữ liệu → viết 'Chưa có dữ liệu cập nhật', KHÔNG bịa.\n\n"
+        f"DỮ LIỆU THỊ TRƯỜNG (nguồn: CoinLore, CoinGecko, yfinance):\n"
         f"{variables.get('market_data') or 'Không có dữ liệu'}\n\n"
-        f"TIN TỨC MỚI NHẤT (chỉ phân tích tin dưới đây, KHÔNG bịa tin):\n"
+        f"TIN TỨC (nguồn: CoinDesk, CoinTelegraph, Decrypt, RSS feeds):\n"
         f"{variables.get('news_summary') or 'Không có tin tức'}\n\n"
-        f"DỮ LIỆU ON-CHAIN:\n"
+        f"DỮ LIỆU ON-CHAIN & DERIVATIVES (nguồn: Glassnode, Binance Futures, Bybit, OKX, FRED):\n"
         f"{variables.get('onchain_data') or 'Không có dữ liệu'}\n\n"
-        f"BẢNG CHỈ SỐ CHÍNH:\n"
+        f"BẢNG CHỈ SỐ CHÍNH (nguồn: tổng hợp từ các API trên):\n"
         f"{variables.get('key_metrics_table', 'N/A')}\n\n"
     )
     # Add economic calendar events if available (FR60)
     econ_events = variables.get("economic_events", "")
     if econ_events:
         full_prompt += (
-            f"LỊCH SỰ KIỆN KINH TẾ VĨ MÔ (BẮT BUỘC sử dụng trong bài viết):\n{econ_events}\n"
-            "→ Khi viết phần kết luận hoặc sự kiện sắp tới, PHẢI trích dẫn CỤ THỂ: "
-            "tên sự kiện, ngày giờ, số liệu forecast/previous từ dữ liệu trên. "
-            "KHÔNG viết chung chung 'có sự kiện kinh tế quan trọng'.\n\n"
+            f"LỊCH SỰ KIỆN KINH TẾ VĨ MÔ (nguồn: FairEconomy):\n{econ_events}\n"
+            "→ Trích dẫn CỤ THỂ: tên sự kiện, ngày giờ, số liệu forecast/previous.\n"
+            "→ Chú ý phân biệt: sự kiện 'ĐÃ DIỄN RA' (kết quả thực tế) vs "
+            "'SẮP TỚI' (cần theo dõi). KHÔNG viết sự kiện đã qua như 'sắp tới'.\n\n"
+        )
+    # Add recent breaking news context (v0.19.0 — pipeline context sharing)
+    breaking_ctx = variables.get("recent_breaking", "")
+    if breaking_ctx:
+        full_prompt += (
+            f"SỰ KIỆN BREAKING GẦN ĐÂY (24h qua — PHẢI nhắc đến trong bài):\n{breaking_ctx}\n"
+            "→ Bài viết sáng nay PHẢI cập nhật tình hình sau các sự kiện trên.\n\n"
         )
     # Add interpretation notes if available
     interp = variables.get("interpretation_notes", "")
@@ -237,6 +257,13 @@ async def _generate_single_article(
         "- KHÔNG dùng 'TL;DR' — dùng '**Tóm lược:**' thay thế\n"
         "- CHỈ sử dụng dữ liệu được cung cấp ở trên. KHÔNG tự tạo tin/số liệu.\n"
         "- Nếu không có dữ liệu cho phần nào, ghi 'Chưa có dữ liệu cập nhật'.\n\n"
+        "⛔ KIỂM TRA CUỐI CÙNG (bắt buộc trước khi trả lời):\n"
+        "- Mọi nguồn bạn cite PHẢI nằm trong: CoinLore, CoinGecko, yfinance, "
+        "Glassnode, Binance Futures, Bybit, OKX, FRED, alternative.me, FairEconomy, "
+        "Messari, và các nguồn tin RSS được liệt kê ở trên.\n"
+        "- KHÔNG ĐƯỢC cite: Bloomberg, CryptoQuant, TradingView, "
+        "Santiment, IntoTheBlock, Chainalysis (trừ khi có trong TIN TỨC ở trên).\n"
+        "- Mọi con số trong bài PHẢI truy nguyên được về dữ liệu ở trên.\n\n"
         "CÁC PHẦN BÀI VIẾT:\n\n" + "\n\n".join(section_prompts)
     )
 
