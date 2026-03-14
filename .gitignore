@@ -42,3 +42,4 @@ credentials.json
 token.json
 *.key
 *.pem
+gen-lang-client-*.json

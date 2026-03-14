@@ -12,12 +12,13 @@ from cic_daily_report.breaking.event_detector import BreakingEvent
 from cic_daily_report.generators.article_generator import DISCLAIMER
 
 
-def _event() -> BreakingEvent:
+def _event(image_url: str | None = None) -> BreakingEvent:
     return BreakingEvent(
         title="Major exchange hack",
         source="CoinDesk",
         url="https://coindesk.com/hack",
         panic_score=85,
+        image_url=image_url,
     )
 
 
@@ -107,3 +108,23 @@ class TestRawDataFallback:
     def test_not_ai_generated(self):
         result = _raw_data_fallback(_event())
         assert not result.ai_generated
+
+
+class TestFR25ImageUrl:
+    """FR25: image_url propagation from event to content."""
+
+    async def test_image_url_passed_to_content(self):
+        llm = _mock_llm()
+        event = _event(image_url="https://example.com/img.jpg")
+        result = await generate_breaking_content(event, llm)
+        assert result.image_url == "https://example.com/img.jpg"
+
+    async def test_no_image_url_is_none(self):
+        llm = _mock_llm()
+        result = await generate_breaking_content(_event(), llm)
+        assert result.image_url is None
+
+    def test_raw_fallback_preserves_image_url(self):
+        event = _event(image_url="https://example.com/fallback.jpg")
+        result = _raw_data_fallback(event)
+        assert result.image_url == "https://example.com/fallback.jpg"

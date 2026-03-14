@@ -56,6 +56,7 @@ class BreakingContent:
     word_count: int
     ai_generated: bool
     model_used: str = ""
+    image_url: str | None = None  # FR25: illustration image URL
 
     @property
     def formatted(self) -> str:
@@ -111,6 +112,7 @@ async def generate_breaking_content(
             word_count=word_count,
             ai_generated=True,
             model_used=model_used,
+            image_url=event.image_url,
         )
 
     except Exception as e:
@@ -133,4 +135,5 @@ def _raw_data_fallback(event: BreakingEvent) -> BreakingContent:
         word_count=len(content.split()),
         ai_generated=False,
         model_used="raw_data",
+        image_url=event.image_url,
     )

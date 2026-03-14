@@ -51,6 +51,7 @@ class BreakingEvent:
     detected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     matched_keywords: list[str] = field(default_factory=list)
     raw_data: dict = field(default_factory=dict)
+    image_url: str | None = None  # FR25: og:image from source article
 
     @property
     def trigger_reason(self) -> str:
@@ -166,6 +167,10 @@ def _evaluate_items(
         matched = _match_keywords(title, config.keyword_triggers)
 
         if score_triggered or matched:
+            # FR25: extract image URL from CryptoPanic metadata
+            metadata = item.get("metadata", {}) or {}
+            image_url = metadata.get("image") or None
+
             events.append(
                 BreakingEvent(
                     title=title,
@@ -174,6 +179,7 @@ def _evaluate_items(
                     panic_score=panic_score,
                     matched_keywords=matched,
                     raw_data=item,
+                    image_url=image_url,
                 )
             )
 

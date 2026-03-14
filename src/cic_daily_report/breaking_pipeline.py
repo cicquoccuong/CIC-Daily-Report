@@ -397,7 +397,11 @@ async def _reprocess_deferred_events(
 
 
 async def _deliver_breaking(result: BreakingPipelineResult) -> None:
-    """Deliver breaking news content via Telegram Bot."""
+    """Deliver breaking news content via Telegram Bot.
+
+    FR25: If image_url is available, send photo first with short caption,
+    then send full text. Falls back to text-only if photo fails.
+    """
     from cic_daily_report.delivery.telegram_bot import TelegramBot
 
     severity_map = {"critical": "\U0001f534", "important": "\U0001f7e0", "notable": "\U0001f7e1"}
@@ -409,6 +413,15 @@ async def _deliver_breaking(result: BreakingPipelineResult) -> None:
                 if evt.event.title == content.event.title:
                     emoji = severity_map.get(evt.severity, "\U0001f7e1")
                     break
+
+            # FR25: Send illustration image if available (text-only fallback)
+            if content.image_url:
+                try:
+                    caption = f"{emoji} BREAKING: {content.event.title[:200]}"
+                    await bot.send_photo(content.image_url, caption=caption)
+                    await asyncio.sleep(1.0)
+                except Exception as img_err:
+                    logger.warning(f"FR25 image failed (text-only fallback): {img_err}")
 
             message = f"{emoji} BREAKING NEWS\n\n{content.formatted}"
             await bot.send_message(message)

@@ -15,15 +15,18 @@ from cic_daily_report.breaking.event_detector import (
 from cic_daily_report.core.error_handler import CollectorError, ConfigError
 
 
-def _make_item(title="BTC news", panic_votes=None, source_title="CoinDesk"):
+def _make_item(title="BTC news", panic_votes=None, source_title="CoinDesk", image_url=None):
     """Helper to create a CryptoPanic-style item."""
     votes = panic_votes or {}
-    return {
+    item = {
         "title": title,
         "source": {"title": source_title},
         "url": f"https://example.com/{title.replace(' ', '-')}",
         "votes": votes,
     }
+    if image_url:
+        item["metadata"] = {"image": image_url}
+    return item
 
 
 class TestBreakingEvent:
@@ -114,6 +117,25 @@ class TestEvaluateItems:
         cfg = DetectionConfig()
         events = _evaluate_items(items, cfg)
         assert events[0].source == "Reuters"
+
+    def test_image_url_extracted_from_metadata(self):
+        """FR25: image_url extracted from CryptoPanic metadata."""
+        items = [_make_item(
+            "Exchange hack",
+            image_url="https://example.com/image.jpg",
+        )]
+        cfg = DetectionConfig()
+        events = _evaluate_items(items, cfg)
+        assert len(events) == 1
+        assert events[0].image_url == "https://example.com/image.jpg"
+
+    def test_image_url_none_when_no_metadata(self):
+        """FR25: image_url is None when no metadata present."""
+        items = [_make_item("Exchange hack")]
+        cfg = DetectionConfig()
+        events = _evaluate_items(items, cfg)
+        assert len(events) == 1
+        assert events[0].image_url is None
 
 
 class TestDetectBreakingEvents:
