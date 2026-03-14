@@ -3,6 +3,25 @@
 > Thời gian: 30-45 phút. **Không cần biết lập trình.**
 > Hướng dẫn này viết cho người **chưa biết kỹ thuật** — mọi thuật ngữ đều được giải thích bằng tiếng Việt dễ hiểu.
 
+### Hướng Dẫn Chụp Screenshot (FR51)
+
+Tài liệu có **8 vị trí** đánh dấu `[SCREENSHOT X]` — đây là nơi cần chèn ảnh chụp màn hình.
+
+**Cách chụp (Windows):** Nhấn `Windows + Shift + S` → kéo chọn vùng cần chụp → ảnh tự copy → paste vào file Word/Google Docs.
+
+**Cách chèn:** Sau khi chụp xong 8 ảnh, đặt tên file `screenshot-1.png` đến `screenshot-8.png`, lưu vào thư mục `docs/screenshots/`, rồi thay `[SCREENSHOT X]` bằng `![Mô tả](screenshots/screenshot-X.png)`.
+
+| # | Bước | Chụp gì | Che gì |
+|---|------|---------|--------|
+| 1 | Fork repo | Trang repo sau Fork | Không |
+| 2 | Bật API | Google Sheets API Enabled | Không |
+| 3 | Service Account | Email robot trong Credentials | Che email cá nhân |
+| 4 | Share Sheets | Hộp thoại Share với robot | Che email cá nhân |
+| 5 | GAS Menu | 9 tab + menu CIC Daily Report | Không |
+| 6 | BotFather | Tin nhắn tạo bot | **CHE Bot Token** |
+| 7 | GitHub Secrets | Danh sách 6 secrets | Không (tự ẩn) |
+| 8 | Chạy thử | Actions ✅ + Telegram nhận tin | Không |
+
 ---
 
 ## Hệ Thống Này Làm Gì?
@@ -35,6 +54,9 @@ Bạn chỉ cần **cài đặt 1 lần**, sau đó hệ thống tự chạy mã
 3. Nhấn nút **"Fork"** (góc trên bên phải, biểu tượng nhánh cây)
 4. Chờ vài giây → GitHub tạo bản sao trên tài khoản của bạn
 5. Bạn sẽ thấy trang mới có địa chỉ: `github.com/tên-bạn/CIC-Daily-Report`
+
+> [SCREENSHOT 1] **Chụp gì:** Trang repo sau khi Fork xong — thấy tên bạn/CIC-Daily-Report ở góc trên trái.
+> **Cách chụp:** Nhấn Windows+Shift+S → kéo chọn vùng → paste vào đây.
 
 > Sau bước này, bạn có **bản sao riêng** của dự án trên tài khoản GitHub.
 
@@ -69,6 +91,9 @@ Bạn chỉ cần **cài đặt 1 lần**, sau đó hệ thống tự chạy mã
 5. Nhấn nút **"Enable"** (Bật)
 6. Nếu thấy dòng **"API Enabled" ✅** thì đã bật thành công
 
+> [SCREENSHOT 2] **Chụp gì:** Trang Google Sheets API đã bật — thấy nút "Manage" (thay vì "Enable") và dòng "API Enabled".
+> **Lưu ý khi chụp:** Kiểm tra tên dự án đúng trên thanh trên cùng.
+
 ### 2c. Tạo Tài Khoản Robot (Service Account)
 
 1. Nhấn **☰** → **"APIs & Services"** → **"Credentials"** (Thông tin xác thực)
@@ -81,6 +106,9 @@ Bạn chỉ cần **cài đặt 1 lần**, sau đó hệ thống tự chạy mã
 > Sau bước này bạn đã có tài khoản robot. Email của nó có dạng:
 > `cic-daily-report@tên-dự-án.iam.gserviceaccount.com`
 > **Ghi lại email này** — sẽ dùng ở Bước 3.
+
+> [SCREENSHOT 3] **Chụp gì:** Trang Credentials — thấy email robot trong phần "Service Accounts".
+> **Lưu ý khi chụp:** **CHE** phần đầu email nếu đăng lên đâu đó (giữ lại @...iam.gserviceaccount.com để thấy dạng đúng).
 
 ### 2d. Tạo "Chìa Khóa" Cho Robot (Key JSON)
 
@@ -161,6 +189,9 @@ ewogICJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsC...rất dài...Cn0K
 - Tên bạn — Owner
 - Email robot — **Editor** ✅
 
+> [SCREENSHOT 4] **Chụp gì:** Hộp thoại Share — thấy email robot có quyền "Editor".
+> **Lưu ý khi chụp:** **CHE** email cá nhân, chỉ để lộ email robot.
+
 ### 3c. Lấy Mã Định Danh Bảng Tính (Spreadsheet ID)
 
 **Spreadsheet ID là gì?** Mã số riêng của bảng tính, giống như số CMND. Hệ thống dùng mã này để tìm đúng bảng tính của bạn.
@@ -195,6 +226,8 @@ https://docs.google.com/spreadsheets/d/ABC123XYZ/edit?gid=0
 13. Lần đầu Google sẽ hỏi cấp quyền → nhấn **"Continue"** → chọn tài khoản → **"Allow"**
 14. Hệ thống tự tạo **9 tab** với tiêu đề và định dạng sẵn
 
+> [SCREENSHOT 5] **Chụp gì:** Google Sheets sau khi chạy Thiết Lập Tự Động — thấy 9 tab ở dưới cùng + menu 📊 CIC Daily Report trên thanh menu.
+
 **9 tab được tạo:**
 
 | Tab | Lưu gì? |
@@ -224,6 +257,9 @@ https://docs.google.com/spreadsheets/d/ABC123XYZ/edit?gid=0
 5. BotFather gửi lại **Bot Token** — đây là "mật khẩu" của bot
    - Dạng: `7123456789:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
    - **Lưu lại chuỗi này!**
+
+> [SCREENSHOT 6] **Chụp gì:** Cuộc trò chuyện với BotFather — thấy tin nhắn chứa Bot Token.
+> **Lưu ý khi chụp:** **CHE** toàn bộ Bot Token (vì ai có token có thể điều khiển bot).
 
 > 💡 **Đặt tên dễ phân biệt:** Nếu bạn có nhiều bot (ví dụ CIC Sentinel cũng có bot riêng):
 > - Bot báo cáo hàng ngày: `CIC_DailyReport_bot`
@@ -308,6 +344,9 @@ https://docs.google.com/spreadsheets/d/ABC123XYZ/edit?gid=0
 7. Nhấn **"Add secret"**
 8. Lặp lại cho **6 secrets bắt buộc**
 
+> [SCREENSHOT 7] **Chụp gì:** Trang GitHub Secrets sau khi thêm đủ 6 secrets — thấy danh sách 6 tên (giá trị bị ẩn là đúng).
+> **Không cần che gì** — GitHub tự ẩn giá trị, chỉ hiện tên.
+
 **Thêm 6 secrets theo thứ tự:**
 
 | Lần | Name (gõ chính xác) | Value (paste gì vào) |
@@ -356,6 +395,9 @@ https://docs.google.com/spreadsheets/d/ABC123XYZ/edit?gid=0
 Trạng thái: running
 Lỗi: 0
 ```
+
+> [SCREENSHOT 8] **Chụp gì:** 2 ảnh: (a) GitHub Actions thấy dấu ✅ xanh, (b) Telegram nhận tin nhắn từ bot.
+> **Không cần che gì** trên ảnh GitHub Actions. Trên Telegram chỉ cần thấy tin nhắn thành công.
 
 **Xong! Hệ thống đã sẵn sàng.** Từ mai 8h sáng bạn sẽ nhận báo cáo đầu tiên.
 
