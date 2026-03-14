@@ -119,6 +119,7 @@ TABS = {
         "Mức độ",
         "Trạng thái gửi",
         "URL",
+        "Thời gian gửi",
     ],
 }
 

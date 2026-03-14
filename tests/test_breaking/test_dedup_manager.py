@@ -48,22 +48,34 @@ class TestDedupEntry:
             delivered_at="2026-01-01T00:05:00+00:00",
         )
         row = e.to_row()
-        # Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi, URL
-        assert len(row) == 8
+        # Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi, URL, Thời gian gửi
+        assert len(row) == 9
         assert row[0] == ""  # ID (auto)
         assert row[1] == "2026-01-01T00:00:00+00:00"  # detected_at
         assert row[2] == "Test"  # title
         assert row[3] == "abc123"  # hash
         assert row[6] == "sent"  # status
+        assert row[8] == "2026-01-01T00:05:00+00:00"  # delivered_at
 
     def test_from_row(self):
-        # Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi, URL
-        row = ["1", "2026-01-01", "Title", "abc", "Src", "critical", "sent", "https://x.com"]
+        # Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi, URL, Thời gian gửi
+        row = [
+            "1",
+            "2026-01-01",
+            "Title",
+            "abc",
+            "Src",
+            "critical",
+            "sent",
+            "https://x.com",
+            "2026-01-01T00:05:00",
+        ]
         e = DedupEntry.from_row(row)
         assert e.hash == "abc"
         assert e.title == "Title"
         assert e.status == "sent"
         assert e.url == "https://x.com"
+        assert e.delivered_at == "2026-01-01T00:05:00"
 
     def test_from_row_short(self):
         e = DedupEntry.from_row(["1", "2026-01-01", "Title", "abc"])
@@ -180,4 +192,4 @@ class TestDedupManagerStatus:
         mgr.check_and_filter([_event()])
         rows = mgr.all_rows()
         assert len(rows) == 1
-        assert len(rows[0]) == 8
+        assert len(rows[0]) == 9

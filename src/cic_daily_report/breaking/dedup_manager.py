@@ -35,7 +35,7 @@ class DedupEntry:
     def to_row(self) -> list[str]:
         """Convert to sheet row.
 
-        Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi, URL
+        Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi, URL, Thời gian gửi
         """
         return [
             "",  # ID
@@ -46,13 +46,14 @@ class DedupEntry:
             self.severity,
             self.status,
             self.url,
+            self.delivered_at,
         ]
 
     @staticmethod
     def from_row(row: list[str]) -> DedupEntry:
         """Create from sheet row.
 
-        Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi, URL
+        Schema: ID, Thời gian, Tiêu đề, Hash, Nguồn, Mức độ, Trạng thái gửi, URL, Thời gian gửi
         """
         return DedupEntry(
             hash=row[3] if len(row) > 3 else "",
@@ -62,6 +63,7 @@ class DedupEntry:
             detected_at=row[1] if len(row) > 1 else "",
             status=row[6] if len(row) > 6 else "",
             url=row[7] if len(row) > 7 else "",
+            delivered_at=row[8] if len(row) > 8 else "",
         )
 
 

@@ -265,6 +265,7 @@ async def _load_dedup_from_sheets() -> DedupManager:
                 detected_at=str(row.get("Thời gian", "")),
                 status=str(row.get("Trạng thái gửi", "")),
                 url=str(row.get("URL", "")),
+                delivered_at=str(row.get("Thời gian gửi", "")),
             )
             if entry.hash:
                 entries.append(entry)

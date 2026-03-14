@@ -450,7 +450,8 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
                 "thường báo hiệu thị trường đang bị bán quá mức"
             )
             if oi_val and oi_val > 0:
-                note += f". Open Interest = {_format_onchain_value('BTC_Open_Interest', oi_val)}"
+                oi_fmt = _format_onchain_value("BTC_Open_Interest", oi_val)
+                note += f". Open Interest = {oi_fmt} BTC contracts"
             interpretation_notes.append(note)
         elif fr_pct > 0.05:
             interpretation_notes.append(
