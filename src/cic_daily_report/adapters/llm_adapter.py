@@ -48,13 +48,15 @@ def _build_providers() -> list[LLMProvider]:
 
     gemini_key = os.getenv("GEMINI_API_KEY", "")
     if gemini_key:
+        # Both Gemini models share the SAME API key rate limit (15 RPM total).
+        # Use rate_limit_per_min=10 each to leave headroom for shared quota.
         providers.append(
             LLMProvider(
                 name="gemini_flash",
                 api_key=gemini_key,
                 model="gemini-2.0-flash",
                 endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-                rate_limit_per_min=15,
+                rate_limit_per_min=10,
             )
         )
         providers.append(
@@ -63,7 +65,7 @@ def _build_providers() -> list[LLMProvider]:
                 api_key=gemini_key,
                 model="gemini-2.0-flash-lite",
                 endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent",
-                rate_limit_per_min=15,
+                rate_limit_per_min=10,
             )
         )
 

@@ -6,6 +6,8 @@ Each article has TL;DR (simple) + Full Analysis (technical).
 
 from __future__ import annotations
 
+import asyncio
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -19,6 +21,10 @@ from cic_daily_report.generators.template_engine import (
 )
 
 logger = get_logger("article_generator")
+
+# Inter-tier cooldown (seconds) to avoid free-tier LLM rate limits (429).
+# Set to 0 in tests via env var or when IS_PRODUCTION is False.
+_TIER_COOLDOWN = 15 if os.getenv("GITHUB_ACTIONS") == "true" else 0
 
 # FR17: NQ05-compliant disclaimer (Vietnamese)
 DISCLAIMER = (
@@ -127,6 +133,11 @@ async def generate_tier_articles(
                 f"Generated {tier}: {article.word_count} words "
                 f"via {article.llm_used} in {article.generation_time_sec:.1f}s"
             )
+            # Rate limit cooldown: free-tier Gemini/Groq share RPM+TPM limits.
+            # Without pause, L3-L5 hit 429 after L1-L2 exhaust the window.
+            if _TIER_COOLDOWN and tier != TIERS[-1]:
+                logger.info(f"Rate limit cooldown: waiting {_TIER_COOLDOWN}s before next tier")
+                await asyncio.sleep(_TIER_COOLDOWN)
         except Exception as e:
             logger.error(f"Failed to generate {tier}: {e}")
             continue
@@ -171,7 +182,10 @@ async def _generate_single_article(
     econ_events = variables.get("economic_events", "")
     if econ_events:
         full_prompt += (
-            f"LỊCH SỰ KIỆN KINH TẾ VĨ MÔ (phân tích tác động lên crypto):\n{econ_events}\n\n"
+            f"LỊCH SỰ KIỆN KINH TẾ VĨ MÔ (BẮT BUỘC sử dụng trong bài viết):\n{econ_events}\n"
+            "→ Khi viết phần kết luận hoặc sự kiện sắp tới, PHẢI trích dẫn CỤ THỂ: "
+            "tên sự kiện, ngày giờ, số liệu forecast/previous từ dữ liệu trên. "
+            "KHÔNG viết chung chung 'có sự kiện kinh tế quan trọng'.\n\n"
         )
     # Add interpretation notes if available
     interp = variables.get("interpretation_notes", "")
@@ -180,6 +194,12 @@ async def _generate_single_article(
             f"DIỄN GIẢI QUAN TRỌNG (dùng để phân tích sâu, KHÔNG copy nguyên văn):\n{interp}\n\n"
         )
     full_prompt += (
+        "ĐỊNH DẠNG BÀI VIẾT:\n"
+        "- Dùng ## cho tiêu đề mỗi section\n"
+        "- Dùng **bold** cho từ khóa quan trọng và số liệu nổi bật\n"
+        "- Dùng - cho bullet points khi liệt kê\n"
+        "- Dùng *italic* cho nguồn trích dẫn\n"
+        "- Mỗi section bắt đầu bằng TL;DR in đậm: **TL;DR:** ...\n\n"
         "BÀI VIẾT CẦN CÓ 2 LỚP (FR14 Dual-Layer):\n"
         "1. **TL;DR** — Ngôn ngữ đơn giản, không thuật ngữ, 2-3 dòng per section\n"
         "2. **Phân tích chi tiết** — Chuyên sâu, có số liệu, thuật ngữ chính xác\n\n"

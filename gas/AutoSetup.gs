@@ -97,9 +97,9 @@ var SHEET_CONFIGS = [
       ["L1", "Tổng quan thị trường", "BẬT", "1",
        "Viết tổng quan thị trường tài sản mã hóa hôm nay. Tập trung BTC và ETH: giá hiện tại, biến động 24h, vốn hóa, và chỉ số Fear & Greed. Bắt đầu bằng TL;DR 2-3 câu ngắn gọn cho người mới. Sau đó phân tích chi tiết với số liệu cụ thể. Trích nguồn: 'Theo CoinGecko...', 'Dữ liệu CoinLore...'. Viết bằng tiếng Việt, khách quan, không khuyến nghị mua/bán.", "300"],
       ["L1", "Tin nổi bật", "BẬT", "2",
-       "Tóm tắt 3-5 tin tức tài sản mã hóa nổi bật nhất hôm nay. Mỗi tin 1-2 câu. Ghi rõ nguồn mỗi tin (CoinDesk, CryptoPanic, v.v.). Ưu tiên tin ảnh hưởng trực tiếp đến giá BTC/ETH. Viết bằng tiếng Việt, dễ hiểu.", "200"],
+       "Chọn 3-5 tin tức tài sản mã hóa quan trọng nhất hôm nay. Với MỖI tin: (1) Nêu tiêu đề và nguồn, (2) Giải thích ngắn gọn TẠI SAO tin này quan trọng — ảnh hưởng gì đến BTC/ETH hoặc thị trường chung, (3) Nếu có số liệu liên quan (giá, volume, %) thì đề cập. KHÔNG chỉ liệt kê tiêu đề — phải PHÂN TÍCH ý nghĩa. Viết bằng tiếng Việt, dễ hiểu, dùng bullet points (-).", "250"],
       ["L1", "Kết luận & Sự kiện sắp tới", "BẬT", "3",
-       "Viết kết luận ngắn gọn 2-3 câu về tình hình thị trường hôm nay (tích cực/tiêu cực/trung tính). Nếu có sự kiện kinh tế quan trọng trong tuần (Fed, CPI, PPI...), nhắc ngắn gọn 1-2 câu dạng: 'Tuần này có sự kiện [tên], có thể ảnh hưởng đến thị trường'. Viết đơn giản, không dùng thuật ngữ phức tạp.", "150"],
+       "Viết kết luận ngắn gọn 2-3 câu về tình hình thị trường hôm nay (tích cực/tiêu cực/trung tính). Sau đó PHẢI xem phần LỊCH SỰ KIỆN KINH TẾ VĨ MÔ ở trên và liệt kê CỤ THỂ: tên sự kiện, ngày giờ, dự báo (forecast) nếu có. Ví dụ: 'Ngày 18/03: Fed công bố lãi suất (dự báo 4.50%, trước đó 4.75%)'. KHÔNG viết chung chung 'có sự kiện kinh tế' — phải nêu TÊN và SỐ LIỆU cụ thể. Nếu không có sự kiện thì ghi rõ 'Tuần này không có sự kiện vĩ mô quan trọng'. Viết đơn giản.", "200"],
 
       // L2: Intermediate — TA focus, altcoin coverage (3 sections)
       ["L2", "Phân tích kỹ thuật", "BẬT", "1",
