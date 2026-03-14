@@ -24,7 +24,8 @@ logger = get_logger("article_generator")
 
 # Inter-tier cooldown (seconds) to avoid free-tier LLM rate limits (429).
 # Set to 0 in tests via env var or when IS_PRODUCTION is False.
-_TIER_COOLDOWN = 15 if os.getenv("GITHUB_ACTIONS") == "true" else 0
+_TIER_COOLDOWN = 45 if os.getenv("GITHUB_ACTIONS") == "true" else 0
+_TIER_RETRY_WAIT = 60  # seconds to wait before retrying a failed tier (429)
 
 # FR17: NQ05-compliant disclaimer (Vietnamese)
 DISCLAIMER = (
@@ -126,21 +127,29 @@ async def generate_tier_articles(
             "economic_events": context.economic_events,
         }
 
-        try:
-            article = await _generate_single_article(llm, template, variables, tier)
-            articles.append(article)
-            logger.info(
-                f"Generated {tier}: {article.word_count} words "
-                f"via {article.llm_used} in {article.generation_time_sec:.1f}s"
-            )
-            # Rate limit cooldown: free-tier Gemini/Groq share RPM+TPM limits.
-            # Without pause, L3-L5 hit 429 after L1-L2 exhaust the window.
-            if _TIER_COOLDOWN and tier != TIERS[-1]:
-                logger.info(f"Rate limit cooldown: waiting {_TIER_COOLDOWN}s before next tier")
-                await asyncio.sleep(_TIER_COOLDOWN)
-        except Exception as e:
-            logger.error(f"Failed to generate {tier}: {e}")
-            continue
+        # Try generation with 1 retry on 429 rate limit errors
+        for attempt in range(2):
+            try:
+                article = await _generate_single_article(llm, template, variables, tier)
+                articles.append(article)
+                logger.info(
+                    f"Generated {tier}: {article.word_count} words "
+                    f"via {article.llm_used} in {article.generation_time_sec:.1f}s"
+                )
+                # Rate limit cooldown: free-tier Gemini/Groq share RPM+TPM limits.
+                if _TIER_COOLDOWN and tier != TIERS[-1]:
+                    logger.info(f"Rate limit cooldown: waiting {_TIER_COOLDOWN}s before next tier")
+                    await asyncio.sleep(_TIER_COOLDOWN)
+                break  # success, move to next tier
+            except Exception as e:
+                if attempt == 0 and "429" in str(e):
+                    logger.warning(
+                        f"{tier} hit rate limit, waiting {_TIER_RETRY_WAIT}s before retry..."
+                    )
+                    await asyncio.sleep(_TIER_RETRY_WAIT)
+                    continue  # retry once
+                logger.error(f"Failed to generate {tier}: {e}")
+                break  # give up on this tier
 
     logger.info(f"Generated {len(articles)}/{len(TIERS)} tier articles")
     return articles
@@ -194,21 +203,40 @@ async def _generate_single_article(
             f"DIỄN GIẢI QUAN TRỌNG (dùng để phân tích sâu, KHÔNG copy nguyên văn):\n{interp}\n\n"
         )
     full_prompt += (
-        "ĐỊNH DẠNG BÀI VIẾT:\n"
-        "- Dùng ## cho tiêu đề mỗi section\n"
-        "- Dùng **bold** cho từ khóa quan trọng và số liệu nổi bật\n"
+        "ĐỊNH DẠNG BẮT BUỘC (Markdown):\n"
+        "- BẮT BUỘC dùng ## cho tiêu đề mỗi section\n"
+        "- BẮT BUỘC dùng **bold** cho số liệu quan trọng và từ khóa nổi bật\n"
         "- Dùng - cho bullet points khi liệt kê\n"
-        "- Dùng *italic* cho nguồn trích dẫn\n"
-        "- Mỗi section bắt đầu bằng TL;DR in đậm: **TL;DR:** ...\n\n"
-        "BÀI VIẾT CẦN CÓ 2 LỚP (FR14 Dual-Layer):\n"
-        "1. **TL;DR** — Ngôn ngữ đơn giản, không thuật ngữ, 2-3 dòng per section\n"
-        "2. **Phân tích chi tiết** — Chuyên sâu, có số liệu, thuật ngữ chính xác\n\n"
-        "LƯU Ý QUAN TRỌNG: KHÔNG chỉ liệt kê lại số liệu. "
-        "Hãy PHÂN TÍCH ý nghĩa của dữ liệu, giải thích MỐI QUAN HỆ giữa các chỉ số, "
-        "và đưa ra NHẬN ĐỊNH có giá trị cho người đọc. "
-        "CHỈ sử dụng dữ liệu được cung cấp ở trên. "
-        "KHÔNG tự tạo tin tức, sự kiện, hoặc số liệu. "
-        "Nếu không có dữ liệu cho phần nào, ghi 'Chưa có dữ liệu cập nhật'.\n\n"
+        "- Dùng *italic* cho nguồn trích dẫn\n\n"
+        "CẤU TRÚC MỖI SECTION (BẮT BUỘC theo đúng format này):\n"
+        "## [Tên section]\n"
+        "**Tóm lược:** [2-3 câu ngắn gọn, ai đọc cũng hiểu, KHÔNG dùng thuật ngữ, "
+        "PHẢI có insight/nhận định rõ ràng — không chỉ lặp lại số liệu]\n\n"
+        "**Phân tích chi tiết:**\n"
+        "[Phân tích chuyên sâu với số liệu cụ thể. PHẢI giải thích Ý NGHĨA — "
+        "tại sao con số đó quan trọng, nó cho thấy điều gì, "
+        "mối quan hệ với các chỉ số khác ra sao]\n\n"
+        "VÍ DỤ OUTPUT ĐÚNG:\n"
+        "## Tổng quan thị trường\n"
+        "**Tóm lược:** Thị trường đang trong vùng **sợ hãi cực độ** (Fear & Greed: 16) — "
+        "đây thường là vùng tích lũy trước đợt tăng mới. BTC giảm nhẹ **0.5%** nhưng "
+        "vốn hóa vẫn giữ trên **$1,400B**, cho thấy lực bán đang yếu dần.\n\n"
+        "**Phân tích chi tiết:**\n"
+        "- **BTC $71,115** (-0.5%) — biến động rất nhẹ, volume **$42.3B** không đột biến "
+        "→ thị trường đang chờ đợi catalyst mới...\n\n"
+        "YÊU CẦU PHÂN TÍCH (BẮT BUỘC — đây là tiêu chí đánh giá bài viết):\n"
+        "1. SO SÁNH: Khi có 2+ chỉ số, PHẢI so sánh và chỉ ra mâu thuẫn/đồng thuận.\n"
+        "   VD: 'BTC giảm **2%** NHƯNG volume tăng **30%** → có lực mua mạnh đang bắt đáy'\n"
+        "2. GIẢI THÍCH Ý NGHĨA: Mỗi con số PHẢI kèm giải thích nó có nghĩa gì.\n"
+        "   VD: 'Fear & Greed Index ở mức **16** (sợ hãi cực độ) — "
+        "lịch sử cho thấy đây thường là vùng tích lũy trước đợt phục hồi'\n"
+        "3. MỐI QUAN HỆ NHÂN QUẢ: Chỉ ra chuỗi tác động giữa các yếu tố.\n"
+        "   VD: 'DXY tăng **0.8%** → USD mạnh lên → BTC chịu áp lực giảm vì "
+        "dòng tiền chảy về USD'\n\n"
+        "LƯU Ý:\n"
+        "- KHÔNG dùng 'TL;DR' — dùng '**Tóm lược:**' thay thế\n"
+        "- CHỈ sử dụng dữ liệu được cung cấp ở trên. KHÔNG tự tạo tin/số liệu.\n"
+        "- Nếu không có dữ liệu cho phần nào, ghi 'Chưa có dữ liệu cập nhật'.\n\n"
         "CÁC PHẦN BÀI VIẾT:\n\n" + "\n\n".join(section_prompts)
     )
 

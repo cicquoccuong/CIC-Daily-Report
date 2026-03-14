@@ -78,6 +78,7 @@ class CalendarResult:
     events: list[EconomicEvent] = field(default_factory=list)
     today_events: list[EconomicEvent] = field(default_factory=list)
     upcoming_events: list[EconomicEvent] = field(default_factory=list)
+    recent_events: list[EconomicEvent] = field(default_factory=list)
 
     def format_for_llm(self) -> str:
         """Format events as text context for LLM prompt."""
@@ -87,9 +88,9 @@ class CalendarResult:
         lines: list[str] = []
 
         if self.today_events:
-            lines.append("📅 SỰ KIỆN KINH TẾ HÔM NAY:")
+            lines.append("SỰ KIỆN KINH TẾ HÔM NAY:")
             for ev in self.today_events:
-                line = f"  • {ev.title} ({ev.impact})"
+                line = f"  - {ev.title} ({ev.impact})"
                 if ev.forecast:
                     line += f" — Dự báo: {ev.forecast}"
                 if ev.previous:
@@ -97,16 +98,30 @@ class CalendarResult:
                 lines.append(line)
 
         if self.upcoming_events:
-            lines.append("\n📅 SỰ KIỆN SẮP TỚI TRONG TUẦN:")
+            lines.append("\nSỰ KIỆN SẮP TỚI TRONG TUẦN:")
             for ev in self.upcoming_events:
-                # Parse date for display
                 date_str = _format_event_date(ev.date)
-                line = f"  • [{date_str}] {ev.title} ({ev.impact})"
+                line = f"  - [{date_str}] {ev.title} ({ev.impact})"
                 if ev.forecast:
                     line += f" — Dự báo: {ev.forecast}"
                 if ev.previous:
                     line += f", Trước đó: {ev.previous}"
                 lines.append(line)
+
+        if self.recent_events and not self.today_events and not self.upcoming_events:
+            # Show recent events when there are no today/upcoming events
+            lines.append("SỰ KIỆN KINH TẾ ĐÃ DIỄN RA TRONG TUẦN:")
+            for ev in self.recent_events:
+                date_str = _format_event_date(ev.date)
+                line = f"  - [{date_str}] {ev.title} ({ev.impact})"
+                if ev.forecast:
+                    line += f" — Dự báo: {ev.forecast}"
+                if ev.previous:
+                    line += f", Trước đó: {ev.previous}"
+                lines.append(line)
+
+        if not lines:
+            return "Tuần này không có sự kiện kinh tế vĩ mô tác động cao nào."
 
         return "\n".join(lines)
 
@@ -170,10 +185,11 @@ async def collect_economic_calendar() -> CalendarResult:
                     )
                 )
 
-        # Split into today vs upcoming
+        # Split into today vs upcoming vs recent (past events this week)
         now_utc = datetime.now(timezone.utc)
         today_events: list[EconomicEvent] = []
         upcoming_events: list[EconomicEvent] = []
+        recent_events: list[EconomicEvent] = []
 
         for ev in filtered:
             try:
@@ -183,6 +199,9 @@ async def collect_economic_calendar() -> CalendarResult:
                     today_events.append(ev)
                 elif ev_utc > now_utc:
                     upcoming_events.append(ev)
+                else:
+                    # Past events this week — still useful for context
+                    recent_events.append(ev)
             except (ValueError, TypeError):
                 upcoming_events.append(ev)
 
@@ -190,6 +209,7 @@ async def collect_economic_calendar() -> CalendarResult:
             events=filtered,
             today_events=today_events,
             upcoming_events=upcoming_events,
+            recent_events=recent_events,
         )
 
         logger.info(

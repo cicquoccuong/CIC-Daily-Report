@@ -1,6 +1,6 @@
 """Tests for generators/article_generator.py — all mocked."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from cic_daily_report.adapters.llm_adapter import LLMResponse
 from cic_daily_report.generators.article_generator import (
@@ -126,6 +126,87 @@ class TestGenerateTierArticles:
         call_args = mock_llm.generate.call_args
         prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
         assert "BTC, ETH" in prompt
+
+    @patch("cic_daily_report.generators.article_generator.asyncio.sleep", new_callable=AsyncMock)
+    async def test_retries_once_on_429_then_succeeds(self, mock_sleep):
+        """Q1: 429 rate limit → wait → retry → success."""
+        templates = _make_templates("L1")
+        context = _make_context()
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            side_effect=[
+                Exception("429 Too Many Requests"),
+                LLMResponse(text=_MOCK_ARTICLE, tokens_used=100, model="m"),
+            ]
+        )
+
+        articles = await generate_tier_articles(mock_llm, templates, context)
+
+        assert len(articles) == 1
+        assert articles[0].tier == "L1"
+        assert mock_llm.generate.call_count == 2  # called twice (1 fail + 1 success)
+        mock_sleep.assert_called_with(60)  # _TIER_RETRY_WAIT = 60s
+
+    @patch("cic_daily_report.generators.article_generator.asyncio.sleep", new_callable=AsyncMock)
+    async def test_gives_up_after_two_429_failures(self, mock_sleep):
+        """Q1: 429 → retry → 429 again → skip tier."""
+        templates = _make_templates("L1")
+        context = _make_context()
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            side_effect=[
+                Exception("429 Too Many Requests"),
+                Exception("429 Too Many Requests"),
+            ]
+        )
+
+        articles = await generate_tier_articles(mock_llm, templates, context)
+
+        assert len(articles) == 0  # tier skipped after 2 failures
+        assert mock_llm.generate.call_count == 2
+
+    @patch("cic_daily_report.generators.article_generator.asyncio.sleep", new_callable=AsyncMock)
+    async def test_non_429_error_skips_without_retry(self, mock_sleep):
+        """Non-429 errors should NOT retry — skip immediately."""
+        templates = _make_templates("L1", "L2")
+        context = _make_context()
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            side_effect=[
+                Exception("Connection timeout"),
+                LLMResponse(text=_MOCK_ARTICLE, tokens_used=100, model="m"),
+            ]
+        )
+
+        articles = await generate_tier_articles(mock_llm, templates, context)
+
+        # L1 failed (no retry), L2 succeeded
+        assert len(articles) == 1
+        assert articles[0].tier == "L2"
+        assert mock_llm.generate.call_count == 2  # 1 fail (L1) + 1 success (L2)
+
+    async def test_prompt_contains_analysis_requirements(self):
+        """Q2+Q4: Prompt must include comparison, meaning, and causation requirements."""
+        templates = _make_templates("L1")
+        context = _make_context()
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=10, model="m")
+        )
+
+        await generate_tier_articles(mock_llm, templates, context)
+
+        call_args = mock_llm.generate.call_args
+        prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
+        assert "SO SÁNH" in prompt
+        assert "GIẢI THÍCH Ý NGHĨA" in prompt
+        assert "MỐI QUAN HỆ NHÂN QUẢ" in prompt
+        assert "**Tóm lược:**" in prompt
+        assert "TL;DR" not in prompt.split("KHÔNG dùng")[0]  # TL;DR only in "don't use" context
 
     async def test_nq05_system_prompt_used(self):
         templates = _make_templates("L1")
