@@ -93,31 +93,55 @@ var SHEET_CONFIGS = [
       "Số từ tối đa": "#,##0"
     },
     defaultData: [
-      // L1: Beginner — BTC/ETH only, simple language
+      // L1: Beginner — BTC/ETH only, simple language (3 sections)
       ["L1", "Tổng quan thị trường", "BẬT", "1",
        "Viết tổng quan thị trường tài sản mã hóa hôm nay. Tập trung BTC và ETH: giá hiện tại, biến động 24h, vốn hóa, và chỉ số Fear & Greed. Bắt đầu bằng TL;DR 2-3 câu ngắn gọn cho người mới. Sau đó phân tích chi tiết với số liệu cụ thể. Trích nguồn: 'Theo CoinGecko...', 'Dữ liệu CoinLore...'. Viết bằng tiếng Việt, khách quan, không khuyến nghị mua/bán.", "300"],
       ["L1", "Tin nổi bật", "BẬT", "2",
        "Tóm tắt 3-5 tin tức tài sản mã hóa nổi bật nhất hôm nay. Mỗi tin 1-2 câu. Ghi rõ nguồn mỗi tin (CoinDesk, CryptoPanic, v.v.). Ưu tiên tin ảnh hưởng trực tiếp đến giá BTC/ETH. Viết bằng tiếng Việt, dễ hiểu.", "200"],
-      // L2: Intermediate — TA focus, altcoin coverage
+      ["L1", "Kết luận & Sự kiện sắp tới", "BẬT", "3",
+       "Viết kết luận ngắn gọn 2-3 câu về tình hình thị trường hôm nay (tích cực/tiêu cực/trung tính). Nếu có sự kiện kinh tế quan trọng trong tuần (Fed, CPI, PPI...), nhắc ngắn gọn 1-2 câu dạng: 'Tuần này có sự kiện [tên], có thể ảnh hưởng đến thị trường'. Viết đơn giản, không dùng thuật ngữ phức tạp.", "150"],
+
+      // L2: Intermediate — TA focus, altcoin coverage (3 sections)
       ["L2", "Phân tích kỹ thuật", "BẬT", "1",
        "Phân tích kỹ thuật các coin chính dựa trên dữ liệu giá và khối lượng. Bắt đầu bằng TL;DR tóm tắt xu hướng chung. Sau đó phân tích chi tiết: mức hỗ trợ/kháng cự quan trọng, xu hướng volume, tín hiệu ngắn hạn. Trích nguồn dữ liệu. Viết bằng tiếng Việt, khách quan, không khuyến nghị mua/bán.", "400"],
       ["L2", "Altcoin đáng chú ý", "BẬT", "2",
        "Liệt kê altcoin có biến động giá lớn (>5%) trong 24h qua. Bắt đầu bằng TL;DR nêu altcoin nổi bật nhất. Sau đó mỗi coin nêu: % biến động, volume thay đổi, nguyên nhân nếu có tin liên quan. Ghi rõ nguồn. Viết bằng tiếng Việt.", "300"],
-      // L3: Advanced — on-chain + macro correlation
+      ["L2", "Xu hướng & Sự kiện vĩ mô", "BẬT", "3",
+       "Tóm tắt xu hướng thị trường ngắn hạn (momentum, sentiment). Nếu có sự kiện kinh tế vĩ mô quan trọng trong tuần (họp Fed, công bố CPI/PPI, NFP...), giải thích ngắn gọn: sự kiện gì, dự báo ra sao, và có thể ảnh hưởng thế nào đến thị trường crypto. Bắt đầu bằng TL;DR 2 câu. Viết dễ hiểu, trích nguồn.", "250"],
+
+      // L3: Advanced — on-chain + macro + derivatives (4 sections)
       ["L3", "Phân tích on-chain", "BẬT", "1",
-       "Phân tích dữ liệu on-chain: Funding Rate, dòng tiền vào/ra sàn, MVRV, và các chỉ số blockchain. Bắt đầu bằng TL;DR tóm tắt tín hiệu on-chain chính (tích cực/tiêu cực/trung tính). Sau đó giải thích ý nghĩa từng chỉ số, so sánh với trung bình lịch sử. Trích nguồn: 'Dữ liệu Glassnode...', 'Theo CryptoQuant...'. Viết bằng tiếng Việt.", "400"],
-      ["L3", "Phân tích vĩ mô", "BẬT", "2",
-       "Phân tích tác động yếu tố vĩ mô lên thị trường tài sản mã hóa: chỉ số DXY, giá vàng, chính sách Fed, CPI, lãi suất trái phiếu. Bắt đầu bằng TL;DR tóm tắt tín hiệu macro. Sau đó phân tích chi tiết: tương quan DXY-BTC, Gold-BTC, ảnh hưởng Fed lên dòng tiền. Trích nguồn: 'Dữ liệu FRED cho thấy...'. Viết bằng tiếng Việt.", "300"],
-      // L4: Expert — risk analysis by sector (NQ05 compliant, NO allocation %)
+       "Phân tích dữ liệu on-chain: Funding Rate, dòng tiền vào/ra sàn, MVRV, và các chỉ số blockchain. Bắt đầu bằng TL;DR tóm tắt tín hiệu on-chain chính (tích cực/tiêu cực/trung tính). Sau đó giải thích ý nghĩa từng chỉ số, so sánh với trung bình lịch sử. Trích nguồn: 'Dữ liệu Glassnode...', 'Theo CryptoQuant...'. Viết bằng tiếng Việt.", "350"],
+      ["L3", "Vĩ mô & Lịch sự kiện kinh tế", "BẬT", "2",
+       "Phân tích tác động yếu tố vĩ mô lên crypto: DXY, giá vàng, lãi suất trái phiếu. Phân tích CHI TIẾT các sự kiện kinh tế hôm nay và sắp tới trong tuần: Fed quyết định lãi suất, CPI, PPI, FOMC, NFP... Với mỗi sự kiện: nêu dự báo (forecast) vs giá trị trước đó (previous), phân tích kịch bản tác động lên BTC/crypto. Bắt đầu bằng TL;DR. Trích nguồn. Viết bằng tiếng Việt.", "350"],
+      ["L3", "Tín hiệu Derivatives", "BẬT", "3",
+       "Phân tích tín hiệu từ thị trường phái sinh: Funding Rate các coin chính, Open Interest, Long/Short Ratio, Taker Buy/Sell. Bắt đầu bằng TL;DR: thị trường phái sinh đang nghiêng về bulls hay bears. Sau đó chi tiết từng chỉ số, nêu bất thường nếu có. Trích nguồn. Viết bằng tiếng Việt.", "250"],
+      ["L3", "Tổng hợp & Triển vọng", "BẬT", "4",
+       "Tổng hợp tất cả tín hiệu (on-chain + macro + derivatives + tin tức) thành bức tranh toàn cảnh. Bắt đầu bằng TL;DR 3 câu. Các tín hiệu đang đồng thuận hay mâu thuẫn? Thị trường đang ở giai đoạn nào? Chỉ phân tích, không khuyến nghị. Viết bằng tiếng Việt.", "250"],
+
+      // L4: Expert — sector + risk + sentiment + macro events (4 sections)
       ["L4", "Phân tích rủi ro theo sector", "BẬT", "1",
-       "Phân tích rủi ro thị trường theo sector: Layer 1, DeFi, Layer 2, AI tokens, Meme. Bắt đầu bằng TL;DR đánh giá mức rủi ro chung. Sau đó so sánh hiệu suất giữa các sector, xác định sector outperform/underperform, đánh giá rủi ro tập trung. CHỈ PHÂN TÍCH rủi ro — TUYỆT ĐỐI KHÔNG đưa tỷ lệ phân bổ (%) hoặc khuyến nghị mua/bán. Trích nguồn dữ liệu. Viết bằng tiếng Việt.", "400"],
-      ["L4", "Tín hiệu cảnh báo", "BẬT", "2",
-       "Tổng hợp tín hiệu cảnh báo đáng chú ý: funding rate bất thường, Fear & Greed cực đoan, volume đột biến, liquidation lớn. Bắt đầu bằng TL;DR: có hay không tín hiệu cảnh báo nghiêm trọng. Sau đó phân tích chi tiết từng tín hiệu, giải thích ý nghĩa lịch sử. Chỉ nêu THÔNG TIN, không khuyến nghị hành động. Trích nguồn. Viết bằng tiếng Việt.", "300"],
-      // L5: Master — comprehensive cross-market analysis
-      ["L5", "Báo cáo tổng hợp chuyên sâu", "BẬT", "1",
-       "Viết báo cáo tổng hợp chuyên sâu: kỹ thuật BTC/ETH, on-chain metrics, macro correlation, derivatives insight. Bắt đầu bằng Executive Summary (TL;DR) 3-5 câu. Sau đó phân tích đa chiều, liên kết data points giữa kỹ thuật-on-chain-macro. Trích rõ nguồn cho mỗi data point. Viết chuyên sâu, thuật ngữ chính xác. Đây là thông tin tham khảo, không phải lời khuyên đầu tư.", "500"],
-      ["L5", "Phân tích liên thị trường", "BẬT", "2",
-       "Phân tích mối tương quan giữa crypto và thị trường tài chính: BTC vs DXY, BTC vs Gold, crypto vs equity markets. Phân tích sector rotation: dòng tiền đang dịch chuyển giữa các sector nào. Bắt đầu bằng TL;DR tóm tắt correlation chính. Sau đó phân tích chi tiết cross-market, derivatives insights (funding, OI). Trích nguồn dữ liệu. Viết chuyên sâu bằng tiếng Việt.", "400"]
+       "Phân tích rủi ro thị trường theo sector: Layer 1, DeFi, Layer 2, AI tokens, Meme. Bắt đầu bằng TL;DR đánh giá mức rủi ro chung. Sau đó so sánh hiệu suất giữa các sector, xác định sector outperform/underperform, đánh giá rủi ro tập trung. CHỈ PHÂN TÍCH rủi ro — TUYỆT ĐỐI KHÔNG đưa tỷ lệ phân bổ (%) hoặc khuyến nghị mua/bán. Trích nguồn dữ liệu. Viết bằng tiếng Việt.", "350"],
+      ["L4", "Sentiment & Derivatives", "BẬT", "2",
+       "Phân tích sentiment thị trường: Fear & Greed Index, Altcoin Season Index, funding rate tổng hợp, liquidation data, Long/Short ratio. Bắt đầu bằng TL;DR: sentiment chung đang ở mức nào. Sau đó phân tích chi tiết các chỉ số, so sánh với mức trung bình và cực đoan lịch sử. Trích nguồn. Viết bằng tiếng Việt.", "300"],
+      ["L4", "Sự kiện vĩ mô & Tác động", "BẬT", "3",
+       "Phân tích CHUYÊN SÂU các sự kiện kinh tế vĩ mô hôm nay và tuần này. Với mỗi sự kiện quan trọng (Fed, CPI, PPI, FOMC, NFP...): (1) Nêu forecast vs previous, (2) Phân tích 2 kịch bản (tốt hơn/xấu hơn dự báo), (3) Tác động lên DXY → BTC → altcoins. Liên kết với dữ liệu FRED (lãi suất, CPI, Fed Balance Sheet). Bắt đầu bằng TL;DR. Viết chuyên sâu bằng tiếng Việt.", "300"],
+      ["L4", "Tín hiệu cảnh báo", "BẬT", "4",
+       "Tổng hợp tín hiệu cảnh báo đáng chú ý: funding rate bất thường, Fear & Greed cực đoan, volume đột biến, liquidation lớn. Bắt đầu bằng TL;DR: có hay không tín hiệu cảnh báo nghiêm trọng. Sau đó phân tích chi tiết từng tín hiệu, giải thích ý nghĩa lịch sử. Chỉ nêu THÔNG TIN, không khuyến nghị hành động. Trích nguồn. Viết bằng tiếng Việt.", "250"],
+
+      // L5: Master — comprehensive 6-section analysis
+      ["L5", "Executive Summary", "BẬT", "1",
+       "Viết Executive Summary (TL;DR) 5-7 câu tổng hợp toàn bộ tình hình: giá BTC/ETH, sentiment, on-chain, macro, sự kiện kinh tế sắp tới. Mỗi câu chứa 1 insight quan trọng nhất. Viết ngắn gọn, ai đọc cũng hiểu, không thuật ngữ phức tạp. Đây là phần QUAN TRỌNG NHẤT — người bận chỉ đọc phần này.", "200"],
+      ["L5", "Macro & Sự kiện kinh tế", "BẬT", "2",
+       "Phân tích TOÀN DIỆN yếu tố vĩ mô và lịch sự kiện: DXY, Gold, Oil, VIX, S&P 500, US 10Y Treasury. Phân tích CHUYÊN SÂU mỗi sự kiện kinh tế quan trọng (Fed Rate Decision, CPI, PPI, FOMC, NFP...): forecast vs previous, 2 kịch bản, tác động dây chuyền lên crypto. Liên kết FRED data (Fed Balance Sheet, CPI trend, Treasury Yield curve). So sánh correlation BTC-DXY, BTC-Gold hiện tại vs trung bình. Trích nguồn cụ thể.", "400"],
+      ["L5", "On-chain deep dive", "BẬT", "3",
+       "Phân tích chuyên sâu on-chain: MVRV Z-Score, SOPR, Exchange Reserves trend, Funding Rate by exchange, Open Interest, Taker Buy/Sell Volume. So sánh mỗi chỉ số với historical average và extreme zones. Phân tích dòng tiền: BTC/ETH đang chảy vào hay ra khỏi sàn? Whale activity? Trích nguồn Glassnode/CryptoQuant. Bắt đầu bằng TL;DR 3 câu.", "400"],
+      ["L5", "Sector rotation & Performance", "BẬT", "4",
+       "Phân tích sector rotation: Layer 1, DeFi, Layer 2, AI tokens, Meme, Stablecoins. Xác định dòng tiền đang dịch chuyển từ sector nào sang sector nào. So sánh hiệu suất 24h và 7d giữa các sector. Phân tích nguyên nhân rotation (tin tức, narrative, technical). Bắt đầu bằng TL;DR. CHỈ PHÂN TÍCH, không khuyến nghị. Trích nguồn.", "350"],
+      ["L5", "Phân tích liên thị trường", "BẬT", "5",
+       "Phân tích mối tương quan crypto vs tài chính truyền thống: BTC-DXY correlation, BTC-Gold correlation, crypto-equity correlation. Derivatives insight: funding rate disparity giữa các sàn, OI concentration, basis spread. Bắt đầu bằng TL;DR. Phân tích cross-market signals: các thị trường đang gửi tín hiệu gì? Đồng thuận hay mâu thuẫn? Trích nguồn.", "350"],
+      ["L5", "Risk flags & Kết luận", "BẬT", "6",
+       "Tổng hợp tất cả risk flags: (1) On-chain anomalies, (2) Derivatives extremes, (3) Macro risks từ sự kiện kinh tế, (4) Sentiment extremes. Đánh giá mức rủi ro tổng thể (thấp/trung bình/cao) với dẫn chứng cụ thể. Kết luận: các yếu tố đang hỗ trợ hay cản trở thị trường? Bức tranh toàn cảnh. Chỉ phân tích, không khuyến nghị hành động. Trích nguồn.", "300"]
     ]
   },
   {

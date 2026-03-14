@@ -137,6 +137,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     from cic_daily_report.adapters.llm_adapter import LLMAdapter
     from cic_daily_report.collectors.cryptopanic_client import collect_cryptopanic
     from cic_daily_report.collectors.data_cleaner import clean_articles
+    from cic_daily_report.collectors.economic_calendar import collect_economic_calendar
     from cic_daily_report.collectors.market_data import collect_market_data
     from cic_daily_report.collectors.onchain_data import collect_onchain
     from cic_daily_report.collectors.rss_collector import collect_rss
@@ -167,6 +168,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         collect_market_data(),
         collect_onchain(),
         collect_telegram(),
+        collect_economic_calendar(),
         return_exceptions=True,
     )
 
@@ -175,6 +177,9 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     market_data = results[2] if not isinstance(results[2], Exception) else []
     onchain_data = results[3] if not isinstance(results[3], Exception) else []
     tg_messages = results[4] if not isinstance(results[4], Exception) else []
+    from cic_daily_report.collectors.economic_calendar import CalendarResult
+
+    econ_calendar = results[5] if not isinstance(results[5], Exception) else CalendarResult()
 
     for r in results:
         if isinstance(r, Exception):
@@ -442,6 +447,9 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     if interpretation_notes:
         interpretation_text = "\n".join(f"• {n}" for n in interpretation_notes)
 
+    # Format economic calendar events for LLM context (FR60)
+    economic_events_text = econ_calendar.format_for_llm()
+
     context = GenerationContext(
         coin_lists=coin_lists,
         market_data=market_text,
@@ -450,6 +458,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         key_metrics=key_metrics,
         tier_context=tier_context,
         interpretation_notes=interpretation_text,
+        economic_events=economic_events_text,
     )
 
     generated = []

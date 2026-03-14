@@ -48,7 +48,7 @@ TIER_MAX_TOKENS = {
     "L1": 2048,
     "L2": 3072,
     "L3": 4096,
-    "L4": 3072,
+    "L4": 4096,
     "L5": 6144,
 }
 
@@ -77,6 +77,7 @@ class GenerationContext:
     key_metrics: dict[str, str | float] = field(default_factory=dict)
     tier_context: dict[str, str] = field(default_factory=dict)
     interpretation_notes: str = ""
+    economic_events: str = ""
 
 
 async def generate_tier_articles(
@@ -116,6 +117,7 @@ async def generate_tier_articles(
             "tier": tier,
             "tier_context": context.tier_context.get(tier, ""),
             "interpretation_notes": context.interpretation_notes,
+            "economic_events": context.economic_events,
         }
 
         try:
@@ -165,6 +167,12 @@ async def _generate_single_article(
         f"BẢNG CHỈ SỐ CHÍNH:\n"
         f"{variables.get('key_metrics_table', 'N/A')}\n\n"
     )
+    # Add economic calendar events if available (FR60)
+    econ_events = variables.get("economic_events", "")
+    if econ_events:
+        full_prompt += (
+            f"LỊCH SỰ KIỆN KINH TẾ VĨ MÔ (phân tích tác động lên crypto):\n{econ_events}\n\n"
+        )
     # Add interpretation notes if available
     interp = variables.get("interpretation_notes", "")
     if interp:

@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.18.0] - 2026-03-14
+
+### FR60 — Economic Calendar Integration + Template Upgrade
+
+**Economic Calendar Collector (NEW):**
+- New `collectors/economic_calendar.py`: fetches macro-economic events from FairEconomy feed
+- Filters High-impact USD events relevant to crypto (Fed, FOMC, CPI, PPI, NFP, GDP, etc.)
+- 30+ event titles in `CRYPTO_RELEVANT_EVENTS` set (exact + prefix matching)
+- Auto-splits events into today vs upcoming, formats as Vietnamese text for LLM prompt
+- Graceful fallback: returns empty CalendarResult on any error (HTTP, JSON, timeout)
+- Integrated as 6th parallel collector in `daily_pipeline.py` via `asyncio.gather()`
+- New `economic_events` field in `GenerationContext` dataclass
+
+**Template Upgrade (AutoSetup.gs):**
+- L1: 2→3 sections (added "Kết luận & Sự kiện sắp tới")
+- L2: 2→3 sections (added "Xu hướng & Sự kiện vĩ mô")
+- L3: 2→4 sections (On-chain + Vĩ mô & Lịch sự kiện + Derivatives + Tổng hợp)
+- L4: 2→4 sections (Sector + Sentiment & Derivatives + Sự kiện vĩ mô + Cảnh báo)
+- L5: 2→6 sections (Executive Summary + Macro + On-chain + Sector + Liên thị trường + Risk)
+- Each section prompt includes specific economic event analysis instructions
+- L4 TIER_MAX_TOKENS: 3072→4096 (supports 4 sections)
+
+**Article Generator:**
+- `economic_events` variable injected into LLM prompt with "LỊCH SỰ KIỆN KINH TẾ VĨ MÔ" header
+- Economic context only added when events are available (no empty sections)
+
+**Tests:** 440 passed (+14 new), 0 regressions
+- 14 new tests: `_is_crypto_relevant()`, `EconomicEvent`, `CalendarResult.format_for_llm()`, `collect_economic_calendar()` (5 scenarios)
+- Test fixture: `economic_calendar_sample.json` (10 events)
+
+**Version sync:** config.py, pyproject.toml, Menu.gs, test_config.py → 0.18.0
+
+---
+
 ## [0.17.0] - 2026-03-14
 
 ### PRD Remediation — 24 findings across 5 clusters (R1→R3→R2→R4→R5)

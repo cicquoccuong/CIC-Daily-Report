@@ -133,3 +133,19 @@ development_status:
   #   No API key required — GitHub Actions servers (US/EU) access Binance freely
   # F3: 5 new RSS feeds (12 → 17): BeInCrypto_VN(vi), CCN, Blockworks, DLNews, Reuters, Bankless
   # All 358 tests pass. Lint clean.
+
+  # Post-Launch: PRD Remediation (v0.17.0, 2026-03-14)
+  post-launch-prd-remediation: done
+  # R1: Config & Templates (dual-layer prompts, new L4+L5 sections, NQ05 fix)
+  # R2: Validation Layer (pre-flight + post-generation checks)
+  # R3: Crash Notification (TG failure alerts in GH Actions)
+  # R4: Format & Delivery (copy-paste fix, deferred event reprocessing)
+  # R5: Bug Fixes (CJK sanitization, conflict detection, data retention)
+  # 426 tests pass. Lint clean.
+
+  # Post-Launch: Economic Calendar + Template Upgrade (v0.18.0, 2026-03-14)
+  post-launch-economic-calendar: done
+  # FR60: Economic calendar collector (FairEconomy feed, High-impact USD crypto-relevant)
+  # Template upgrade: L1(3) L2(3) L3(4) L4(4) L5(6) = 20 sections total
+  # L4 TIER_MAX_TOKENS: 3072→4096
+  # 440 tests pass (+14 new). Lint clean.
