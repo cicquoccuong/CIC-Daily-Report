@@ -120,10 +120,12 @@ class TestEvaluateItems:
 
     def test_image_url_extracted_from_metadata(self):
         """FR25: image_url extracted from CryptoPanic metadata."""
-        items = [_make_item(
-            "Exchange hack",
-            image_url="https://example.com/image.jpg",
-        )]
+        items = [
+            _make_item(
+                "Exchange hack",
+                image_url="https://example.com/image.jpg",
+            )
+        ]
         cfg = DetectionConfig()
         events = _evaluate_items(items, cfg)
         assert len(events) == 1

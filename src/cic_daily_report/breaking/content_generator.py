@@ -20,19 +20,22 @@ Viết bản tin BREAKING NEWS ngắn gọn bằng tiếng Việt.
 
 **Sự kiện:** {title}
 **Nguồn:** {source}
-
+**Link:** {url}
+{summary_section}
 Yêu cầu TUYỆT ĐỐI:
 - Viết {word_target} từ — NGẮN GỌN, đi thẳng vào vấn đề
 - KHÔNG viết nước đôi ("có thể tăng hoặc giảm", "tuy nhiên cũng có thể...")
 - KHÔNG bịa thêm dữ liệu, nguồn, hoặc con số không có ở trên
 - KHÔNG đưa ra khuyến nghị mua/bán
 - Dùng 'tài sản mã hóa' thay vì 'tiền điện tử'
+- ĐƯỢC PHÉP nêu tên cụ thể các tài sản (BTC, ETH, SOL...) khi liên quan đến sự kiện
+- CHỈ phân tích dựa trên thông tin sự kiện ở trên, KHÔNG thêm bối cảnh bịa
 
 Cấu trúc BẮT BUỘC:
-1. **Tiêu đề** (1 dòng tiếng Việt, ngắn gọn)
-2. **Chuyện gì xảy ra:** (2-3 câu — SỰ KIỆN cụ thể, không lan man)
+1. **Tiêu đề** (1 dòng tiếng Việt, ngắn gọn, nêu rõ tên tài sản nếu có)
+2. **Chuyện gì xảy ra:** (2-3 câu — SỰ KIỆN cụ thể, dùng dữ liệu từ trên)
 3. **Tại sao quan trọng:** (2-3 câu — tác động trực tiếp đến thị trường)
-4. Nguồn: {source}"""
+4. 🔗 Nguồn: {source}"""
 
 RAW_DATA_TEMPLATE = """⚠️ AI không khả dụng — dữ liệu thô
 
@@ -79,9 +82,15 @@ async def generate_breaking_content(
     """
     word_target = "200-250" if severity == "critical" else "100-150"
 
+    # Build summary section from raw_data if available
+    summary_text = event.raw_data.get("summary", "") if event.raw_data else ""
+    summary_section = f"**Tóm tắt nguồn:** {summary_text}\n" if summary_text else ""
+
     prompt = BREAKING_PROMPT_TEMPLATE.format(
         title=event.title,
         source=event.source,
+        url=event.url,
+        summary_section=summary_section,
         word_target=word_target,
     )
 

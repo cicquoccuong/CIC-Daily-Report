@@ -20,12 +20,15 @@ class TestCheckAndFix:
         result = check_and_fix(content)
         assert result.violations_found >= 1
         assert "nên mua" not in result.content
-        assert "[đã biên tập]" in result.content
+        # Sentence containing violation is removed entirely (not replaced with placeholder)
 
     def test_detects_multiple_violations(self):
-        content = "Nên mua BTC, khuyến nghị bán ETH." + DISCLAIMER
+        # Put violations on separate lines so both are independently detected
+        content = "Nên mua BTC ngay.\nKhuyến nghị bán ETH." + DISCLAIMER
         result = check_and_fix(content)
         assert result.violations_found >= 2
+        assert "nên mua" not in result.content.lower()
+        assert "khuyến nghị" not in result.content.lower()
 
     def test_case_insensitive(self):
         content = "GUARANTEED profit!" + DISCLAIMER
@@ -47,11 +50,11 @@ class TestCheckAndFix:
         assert "tiền điện tử" not in result.content.lower()
         assert result.content.count("tài sản mã hóa") >= 2
 
-    def test_appends_disclaimer_if_missing(self):
+    def test_reports_disclaimer_missing(self):
         content = "Clean content without disclaimer."
         result = check_and_fix(content)
-        assert result.disclaimer_present
-        assert "Tuyên bố miễn trừ trách nhiệm" in result.content
+        # Filter no longer auto-appends disclaimer (caller responsibility)
+        assert not result.disclaimer_present
 
     def test_keeps_existing_disclaimer(self):
         content = "Content here." + DISCLAIMER
@@ -87,7 +90,8 @@ class TestAllocationPatterns:
         content = "Gợi ý phân bổ: 50% BTC, 30% ETH." + DISCLAIMER
         result = check_and_fix(content)
         assert result.violations_found >= 1
-        assert "[đã biên tập]" in result.content
+        # Sentence containing violation is removed entirely
+        assert "50% BTC" not in result.content
 
     def test_detects_ty_trong_pattern(self):
         content = "Tỷ trọng: 40% cho SOL là hợp lý." + DISCLAIMER
@@ -100,6 +104,45 @@ class TestAllocationPatterns:
         result = check_and_fix(content)
         # Should not flag non-allocation percentages
         assert "5%" in result.content
+
+
+class TestSemanticNQ05Patterns:
+    """Tests for semantic NQ05 violation detection (Phase 1)."""
+
+    def test_removes_vung_tich_luy(self):
+        content = "Đây là vùng tích lũy trước đợt tăng mới." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "vùng tích lũy" not in result.content
+
+    def test_removes_co_hoi_tot(self):
+        content = "Đây là cơ hội tốt để tích lũy BTC." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "cơ hội tốt" not in result.content
+
+    def test_removes_smart_money(self):
+        content = "Smart money đang mua vào mạnh mẽ." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "smart money" not in result.content.lower()
+
+    def test_removes_thoi_diem_tot(self):
+        content = "Đây là thời điểm tốt để mua vào." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "thời điểm tốt" not in result.content
+
+    def test_removes_nen_can_nhac(self):
+        content = "Nhà đầu tư nên cân nhắc mua BTC." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "nên cân nhắc" not in result.content
+
+    def test_clean_content_not_flagged_by_semantic(self):
+        content = "BTC giảm 2% trong bối cảnh thị trường biến động." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found == 0
 
 
 class TestBatchFilter:

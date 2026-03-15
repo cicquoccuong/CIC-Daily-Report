@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.20.0] - 2026-03-15
+
+### Phase 1 — Prompt Redesign & Output Quality (ICS Anti-Repetition)
+
+**Root cause**: All 5 tiers received same data with nearly identical prompts, causing massive
+content repetition visible to higher-tier members who see all lower-tier content via ICS structure.
+
+**1A. Tier Context Redesign (daily_pipeline.py):**
+- Each tier now answers a DIFFERENT question:
+  L1="Hôm nay thế nào?", L2="Coins nào?", L3="Tại sao?", L4="Rủi ro?", L5="Nếu X thì sao?"
+- Each tier explicitly states "MEMBER ĐÃ ĐỌC tier thấp hơn — KHÔNG lặp lại"
+- Different tone per tier: L1=casual, L2=professional, L3=analytical, L4=risk-focused, L5=formal
+- L2 must mention ≥10/19 coins with sector grouping
+- L3-L5 have explicit "KHÔNG LÀM" lists to prevent content overlap
+- Each tier has specific "NỘI DUNG BẮT BUỘC" checklist
+
+**1B. Prompt Engineering (article_generator.py):**
+- Removed bad example "vùng tích lũy trước đợt tăng mới" (NQ05 borderline prediction)
+- Added domain knowledge block: Funding Rate, OI, F&G, BTC Dominance, DXY interpretation
+- Added negative examples with ⚠️ SAI markers (wrong FR/OI interpretation, NQ05 violations)
+- Added anti-fabrication examples (MVRV, correlation coefficient, smart money)
+- URLs now passed in news_text for LLM to reference actual source links
+
+**1C. NQ05 Filter Overhaul (nq05_filter.py):**
+- Banned keywords now remove ENTIRE SENTENCE (was: replace with "[đã biên tập]" leaving broken text)
+- New `_remove_sentences_with_pattern()` handles both prose and bullet points
+- Added 5 semantic NQ05 patterns: "vùng tích lũy trước đợt tăng", "cơ hội tốt để tích lũy",
+  "smart money đang mua", "thời điểm tốt để mua", "nên cân nhắc mua"
+- Removed auto-append disclaimer (was causing double disclaimer with article_generator)
+
+**1D. Summary Generator Fix (summary_generator.py):**
+- Added `check_and_fix()` NQ05 filter call before appending disclaimer (was skipped entirely)
+
+**1E. Breaking News Improvements (content_generator.py):**
+- Prompt now receives event URL + summary from raw_data (was: title only → filler content)
+- Clarified NQ05 allows naming specific assets (BTC, ETH, SOL...)
+- Structured output now includes 🔗 source link
+
+**1F. Post-Generation Validation (article_generator.py):**
+- New `_validate_output()` scans LLM output for fabricated metrics
+  (MVRV, SOPR, Exchange Reserves, whale data, liquidation data, correlation coefficients)
+- L2 coin count check: warns if <5 coins mentioned (target: ≥10)
+- Banned source citation check (Bloomberg, CryptoQuant, TradingView, etc.)
+- All warnings logged for pipeline monitoring
+
 ## [0.19.0] - 2026-03-15
 
 ### Anti-Hallucination & Output Quality

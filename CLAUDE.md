@@ -1,7 +1,7 @@
 # CIC Daily Report
 
 ## System
-- **Version**: 0.18.0 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
+- **Version**: 0.20.0 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
 - **Purpose**: Automated crypto daily report pipeline for CIC community (BIC Group/BIC Chat)
 - **Output**: 5 tier articles (L1→L5 cumulative) + 1 BIC Chat summary + Breaking news alerts
 - **Operator**: Anh Cường (no-code user, receives on Telegram, copy-pastes to BIC)
@@ -62,7 +62,7 @@ docs/               # planning docs, guides
 ## Quy Trình Làm Việc (MANDATORY)
 
 > ⚠️ Đọc và tuân thủ quy trình chuẩn tại:
-> `{project-root}/_bmad/_config/custom/optimized-team-flow/QUY-TRINH-LAM-VIEC-CHUAN.md` (v1.1)
+> `{project-root}/_bmad/_config/custom/optimized-team-flow/QUY-TRINH-LAM-VIEC-CHUAN.md` (v1.5)
 > Áp dụng cho TẤT CẢ agents, TẤT CẢ sessions. **KHÔNG có ngoại lệ.**
 
 ## Rules (MANDATORY)

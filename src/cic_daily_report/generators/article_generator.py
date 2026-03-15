@@ -236,27 +236,43 @@ async def _generate_single_article(
         "[Phân tích chuyên sâu với số liệu cụ thể. PHẢI giải thích Ý NGHĨA — "
         "tại sao con số đó quan trọng, nó cho thấy điều gì, "
         "mối quan hệ với các chỉ số khác ra sao]\n\n"
-        "VÍ DỤ OUTPUT ĐÚNG:\n"
-        "## Tổng quan thị trường\n"
-        "**Tóm lược:** Thị trường đang trong vùng **sợ hãi cực độ** (Fear & Greed: 16) — "
-        "đây thường là vùng tích lũy trước đợt tăng mới. BTC giảm nhẹ **0.5%** nhưng "
-        "vốn hóa vẫn giữ trên **$1,400B**, cho thấy lực bán đang yếu dần.\n\n"
-        "**Phân tích chi tiết:**\n"
-        "- **BTC $71,115** (-0.5%) — biến động rất nhẹ, volume **$42.3B** không đột biến "
-        "→ thị trường đang chờ đợi catalyst mới...\n\n"
-        "YÊU CẦU PHÂN TÍCH (BẮT BUỘC — đây là tiêu chí đánh giá bài viết):\n"
+        "KIẾN THỨC NỀN (dùng để DIỄN GIẢI dữ liệu, KHÔNG copy vào bài):\n"
+        "- Funding Rate: phí mà long trả cho short (dương) hoặc ngược lại (âm).\n"
+        "  Dương = thị trường thiên long/lạc quan. Âm = thiên short/bi quan.\n"
+        "  Cực đoan (>0.05% hoặc <-0.03%) = rủi ro liquidation cascade.\n"
+        "  ⚠️ SAI: 'Funding Rate dương cho thấy áp lực bán' (NGƯỢC LẠI!)\n"
+        "  ⚠️ SAI: 'Funding Rate tích cực' (nó là phí, không phải tín hiệu tích cực)\n"
+        "- Open Interest (OI): tổng hợp đồng derivatives đang mở.\n"
+        "  OI tăng + giá tăng = trend mạnh, tiền mới vào.\n"
+        "  OI tăng + giá giảm = short mới mở, rủi ro squeeze.\n"
+        "  OI giảm = đóng vị thế, momentum yếu.\n"
+        "  ⚠️ SAI: 'OI tăng là tín hiệu tăng giá' (phải xem cùng hướng giá)\n"
+        "- Fear & Greed: 0-24 Extreme Fear, 25-49 Fear, 50 Neutral,\n"
+        "  51-74 Greed, 75-100 Extreme Greed.\n"
+        "  ⚠️ SAI: 'F&G thấp = vùng tích lũy trước đợt tăng' (KHÔNG CHẮC CHẮN,\n"
+        "  đây là vi phạm NQ05 vì ngụ ý dự đoán giá)\n"
+        "- BTC Dominance: % vốn hóa BTC so với toàn thị trường.\n"
+        "  Tăng = tiền chảy về BTC (risk-off). Giảm = altcoin season.\n"
+        "- DXY (Dollar Index): USD mạnh thường gây áp lực lên BTC.\n"
+        "  Nhưng correlation KHÔNG phải lúc nào cũng đúng.\n\n"
+        "YÊU CẦU PHÂN TÍCH (BẮT BUỘC — tiêu chí đánh giá bài viết):\n"
         "1. SO SÁNH: Khi có 2+ chỉ số, PHẢI so sánh và chỉ ra mâu thuẫn/đồng thuận.\n"
-        "   VD: 'BTC giảm **2%** NHƯNG volume tăng **30%** → có lực mua mạnh đang bắt đáy'\n"
+        "   VD: 'BTC giảm **2%** NHƯNG volume tăng **30%** → lực mua đang tăng'\n"
         "2. GIẢI THÍCH Ý NGHĨA: Mỗi con số PHẢI kèm giải thích nó có nghĩa gì.\n"
-        "   VD: 'Fear & Greed Index ở mức **16** (sợ hãi cực độ) — "
-        "lịch sử cho thấy đây thường là vùng tích lũy trước đợt phục hồi'\n"
+        "   VD: 'Fear & Greed ở mức **16** (sợ hãi cực độ) — thị trường đang hoảng loạn'\n"
         "3. MỐI QUAN HỆ NHÂN QUẢ: Chỉ ra chuỗi tác động giữa các yếu tố.\n"
-        "   VD: 'DXY tăng **0.8%** → USD mạnh lên → BTC chịu áp lực giảm vì "
-        "dòng tiền chảy về USD'\n\n"
+        "   VD: 'DXY tăng **0.8%** → USD mạnh lên → BTC chịu áp lực giảm'\n\n"
+        "⛔ VÍ DỤ SAI (TUYỆT ĐỐI KHÔNG viết kiểu này):\n"
+        "- 'đây là vùng tích lũy trước đợt tăng mới' → DỰ ĐOÁN GIÁ = NQ05 violation\n"
+        "- 'cơ hội tốt để tích lũy' → KHUYẾN NGHỊ MUA = NQ05 violation\n"
+        "- 'smart money đang mua vào' → BỊA DỮ LIỆU (không có whale data)\n"
+        "- 'theo Glassnode, MVRV đang ở mức...' → BỊA NGUỒN (không có MVRV trong data)\n"
+        "- 'tương quan BTC-Gold đạt 0.85' → BỊA SỐ (không có correlation data)\n\n"
         "LƯU Ý:\n"
         "- KHÔNG dùng 'TL;DR' — dùng '**Tóm lược:**' thay thế\n"
         "- CHỈ sử dụng dữ liệu được cung cấp ở trên. KHÔNG tự tạo tin/số liệu.\n"
-        "- Nếu không có dữ liệu cho phần nào, ghi 'Chưa có dữ liệu cập nhật'.\n\n"
+        "- Nếu không có dữ liệu cho phần nào, ghi 'Chưa có dữ liệu cập nhật'.\n"
+        "- Khi trích dẫn tin tức, ƯU TIÊN kèm link nếu có trong dữ liệu.\n\n"
         "⛔ KIỂM TRA CUỐI CÙNG (bắt buộc trước khi trả lời):\n"
         "- Mọi nguồn bạn cite PHẢI nằm trong: CoinLore, CoinGecko, yfinance, "
         "Glassnode, Binance Futures, Bybit, OKX, FRED, alternative.me, FairEconomy, "
@@ -284,6 +300,11 @@ async def _generate_single_article(
             source="article_generator",
         )
 
+    # Post-generation validation: scan for common LLM fabrication patterns
+    warnings = _validate_output(content, tier, variables.get("onchain_data", ""))
+    for w in warnings:
+        logger.warning(f"[{tier}] Post-gen validation: {w}")
+
     content_with_disclaimer = content + DISCLAIMER
     word_count = len(content_with_disclaimer.split())
     elapsed = time.monotonic() - start
@@ -296,3 +317,68 @@ async def _generate_single_article(
         llm_used=response.model,
         generation_time_sec=elapsed,
     )
+
+
+# Metrics that the pipeline does NOT collect — if LLM mentions these, it fabricated them
+_FABRICATED_METRIC_PATTERNS = [
+    (r"\bMVRV\b", "MVRV"),
+    (r"\bSOPR\b", "SOPR"),
+    (r"\bExchange\s+Reserve", "Exchange Reserves"),
+    (r"\bwhale\s+(?:movement|transaction|accumulation)", "whale data"),
+    (r"\bliquidation\s+(?:data|map|level|cascade)", "liquidation data"),
+    (r"\b(?:tương quan|correlation)\s*[=:]\s*[\d.]+", "correlation coefficient"),
+    (r"\bNUPL\b", "NUPL"),
+    (r"\bPuell\s+Multiple\b", "Puell Multiple"),
+]
+
+
+def _validate_output(content: str, tier: str, onchain_data: str) -> list[str]:
+    """Post-generation validation: detect fabricated data and quality issues.
+
+    Returns a list of warning strings (empty = all good).
+    """
+    import re
+
+    warnings = []
+
+    # Check for fabricated metrics not in pipeline data
+    for pattern, name in _FABRICATED_METRIC_PATTERNS:
+        if re.search(pattern, content, re.IGNORECASE):
+            # Only flag if metric is NOT in the actual onchain data
+            if name.upper() not in onchain_data.upper():
+                warnings.append(f"Possibly fabricated metric: {name} (not in input data)")
+
+    # L2 should mention multiple coins — warn if too few
+    if tier == "L2":
+        coin_symbols = [
+            "BTC",
+            "ETH",
+            "SOL",
+            "BNB",
+            "XRP",
+            "ADA",
+            "DOGE",
+            "AVAX",
+            "DOT",
+            "MATIC",
+            "LINK",
+            "UNI",
+            "ATOM",
+            "LTC",
+            "NEAR",
+            "APT",
+            "ARB",
+            "OP",
+            "SUI",
+        ]
+        mentioned = sum(1 for s in coin_symbols if s in content.upper())
+        if mentioned < 10:
+            warnings.append(f"L2 only mentions {mentioned} coins (target: ≥10 of 19)")
+
+    # Check for banned source citations (sources not in our pipeline)
+    banned_sources = ["Bloomberg", "CryptoQuant", "TradingView", "Santiment", "IntoTheBlock"]
+    for src in banned_sources:
+        if src.lower() in content.lower():
+            warnings.append(f"Banned source cited: {src} (not in pipeline data)")
+
+    return warnings

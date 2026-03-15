@@ -10,7 +10,6 @@ import re
 from dataclasses import dataclass, field
 
 from cic_daily_report.core.logger import get_logger
-from cic_daily_report.generators.article_generator import DISCLAIMER
 
 logger = get_logger("nq05_filter")
 
@@ -71,6 +70,38 @@ class FilterResult:
         return "pass"
 
 
+# Semantic patterns that imply NQ05 violations even without exact keyword match
+SEMANTIC_NQ05_PATTERNS = [
+    r"vùng tích lũy\s+trước\s+đợt\s+(?:tăng|phục hồi)",
+    r"cơ hội\s+(?:tốt|vàng)\s+để\s+(?:tích lũy|mua vào)",
+    r"smart money\s+(?:đang\s+)?(?:mua|tích lũy|accumulate)",
+    r"thời điểm\s+(?:tốt|thích hợp)\s+để\s+(?:mua|vào lệnh|entry)",
+    r"(?:nên|hãy)\s+(?:cân nhắc|xem xét)\s+(?:mua|bán|tích lũy)",
+]
+
+
+def _remove_sentences_with_pattern(text: str, pattern: re.Pattern) -> str:
+    """Remove entire sentences/bullet points containing a pattern match.
+
+    Handles both prose sentences (ending with .) and bullet points (lines starting with -).
+    """
+    lines = text.split("\n")
+    cleaned_lines = []
+    for line in lines:
+        if pattern.search(line):
+            # For bullet points, remove the whole line
+            if line.strip().startswith("-") or line.strip().startswith("•"):
+                continue
+            # For prose, remove individual sentences containing the pattern
+            sentences = re.split(r"(?<=[.!?])\s+", line)
+            kept = [s for s in sentences if not pattern.search(s)]
+            if kept:
+                cleaned_lines.append(" ".join(kept))
+        else:
+            cleaned_lines.append(line)
+    return "\n".join(cleaned_lines)
+
+
 def check_and_fix(
     content: str,
     extra_banned_keywords: list[str] | None = None,
@@ -91,13 +122,14 @@ def check_and_fix(
     result = FilterResult(content=content)
     all_banned = DEFAULT_BANNED_KEYWORDS + (extra_banned_keywords or [])
 
-    # Step 1: Scan and remove banned keywords
+    # Step 1: Scan and remove ENTIRE SENTENCES containing banned keywords.
+    # Previous approach replaced keywords with "[đã biên tập]" which left broken text.
     for keyword in all_banned:
         pattern = re.compile(re.escape(keyword), re.IGNORECASE)
         matches = pattern.findall(result.content)
         if matches:
             result.violations_found += len(matches)
-            result.content = pattern.sub("[đã biên tập]", result.content)
+            result.content = _remove_sentences_with_pattern(result.content, pattern)
             result.auto_fixed += len(matches)
             result.flagged_for_review.append(f"Removed: '{keyword}' ({len(matches)}x)")
 
@@ -107,13 +139,25 @@ def check_and_fix(
         matches = pattern.findall(result.content)
         if matches:
             result.violations_found += len(matches)
-            result.content = pattern.sub("[đã biên tập]", result.content)
+            result.content = _remove_sentences_with_pattern(result.content, pattern)
             result.auto_fixed += len(matches)
             result.flagged_for_review.append(
                 f"Allocation pattern removed: '{pattern_str}' ({len(matches)}x)"
             )
 
-    # Step 1c: Sanitize non-Vietnamese characters (Chinese/Japanese/Korean)
+    # Step 1c: Check semantic NQ05 patterns (implicit violations)
+    for pattern_str in SEMANTIC_NQ05_PATTERNS:
+        pattern = re.compile(pattern_str, re.IGNORECASE)
+        matches = pattern.findall(result.content)
+        if matches:
+            result.violations_found += len(matches)
+            result.content = _remove_sentences_with_pattern(result.content, pattern)
+            result.auto_fixed += len(matches)
+            result.flagged_for_review.append(
+                f"Semantic NQ05 violation removed: '{pattern_str}' ({len(matches)}x)"
+            )
+
+    # Step 1d: Sanitize non-Vietnamese characters (Chinese/Japanese/Korean)
     # LLMs sometimes output CJK chars in Vietnamese content
     cjk_pattern = re.compile(r"[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]+")
     cjk_matches = cjk_pattern.findall(result.content)
@@ -130,12 +174,9 @@ def check_and_fix(
             result.content = pattern.sub(correct, result.content)
             result.auto_fixed += len(matches)
 
-    # Step 3: Check disclaimer (FR17)
+    # Step 3: Check disclaimer presence (FR17) — report only, do NOT append.
+    # Disclaimer is appended by article_generator/content_generator to avoid duplication.
     result.disclaimer_present = "Tuyên bố miễn trừ trách nhiệm" in result.content
-    if not result.disclaimer_present:
-        result.content = result.content.rstrip() + DISCLAIMER
-        result.disclaimer_present = True
-        result.auto_fixed += 1
 
     # Determine pass/fail
     result.passed = True  # Auto-fixed violations count as passed

@@ -16,6 +16,7 @@ from cic_daily_report.generators.article_generator import (
     NQ05_SYSTEM_PROMPT,
     GeneratedArticle,
 )
+from cic_daily_report.generators.nq05_filter import check_and_fix
 from cic_daily_report.generators.template_engine import render_key_metrics_table
 
 logger = get_logger("summary_generator")
@@ -75,7 +76,9 @@ async def generate_bic_summary(
         temperature=0.5,
     )
 
-    content = response.text.strip() + DISCLAIMER
+    # Apply NQ05 post-filter before appending disclaimer
+    filtered = check_and_fix(response.text.strip())
+    content = filtered.content + DISCLAIMER
     word_count = len(content.split())
     elapsed = time.monotonic() - start
 

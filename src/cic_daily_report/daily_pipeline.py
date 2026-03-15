@@ -250,6 +250,9 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     macro_items = []
     for a in cleaned_news[:30]:
         line = f"- {a.get('title', '')} ({a.get('source_name', '')})"
+        url = a.get("url", "")
+        if url:
+            line += f"\n  Link: {url}"
         summary = a.get("summary", "")
         if summary:
             line += f"\n  Tóm tắt: {summary[:300]}"
@@ -382,8 +385,8 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     if isinstance(fg_raw, int):
         if fg_raw <= 20:
             interpretation_notes.append(
-                f"Fear & Greed = {fg_raw} (Extreme Fear) — lịch sử cho thấy đây thường là "
-                "vùng tích lũy, smart money có xu hướng mua vào ở vùng này"
+                f"Fear & Greed = {fg_raw} (Extreme Fear) — mức sợ hãi cực độ, "
+                "thị trường đang hoảng loạn. Sentiment tiêu cực mạnh."
             )
         elif fg_raw <= 40:
             interpretation_notes.append(
@@ -459,39 +462,99 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
                 "rủi ro squeeze tăng nếu giá giảm đột ngột"
             )
 
-    # Build per-tier analysis context (different tiers get different focus)
+    # Build per-tier analysis context — each tier answers a DIFFERENT question.
+    # Members see ALL lower tiers (L5 sees L4→L1), so content MUST NOT repeat.
     tier_context: dict[str, str] = {}
     tier_context["L1"] = (
-        "Tier L1: Viết cho người mới, chỉ BTC và ETH. "
-        "Tập trung: giá hiện tại, xu hướng ngắn hạn, tâm lý thị trường. "
-        "Giải thích đơn giản, không thuật ngữ phức tạp."
+        "Tier L1 — CÂU HỎI CHÍNH: 'Hôm nay thị trường thế nào?'\n"
+        "ĐỐI TƯỢNG: Người mới, chỉ quan tâm BTC và ETH.\n"
+        "GIỌNG VĂN: Thân thiện, dễ hiểu, như giải thích cho bạn bè.\n"
+        "NỘI DUNG BẮT BUỘC:\n"
+        "- Giá BTC và ETH hiện tại + biến động 24h (lấy từ dữ liệu)\n"
+        "- Fear & Greed Index: con số + giải thích đơn giản nó nghĩa là gì\n"
+        "- 1-2 tin tức quan trọng nhất hôm nay (tóm gọn 1-2 câu mỗi tin)\n"
+        "- Kết luận ngắn: thị trường đang bullish/bearish/sideways\n"
+        "KHÔNG LÀM:\n"
+        "- KHÔNG dùng thuật ngữ phức tạp (funding rate, OI, correlation...)\n"
+        "- KHÔNG phân tích on-chain hay macro\n"
+        "- KHÔNG liệt kê hơn 2 coins\n"
     )
     tier_context["L2"] = (
-        "Tier L2: Phân tích cho 19 coins. "
-        "Tập trung: giá hiện tại và biến động 24h, volume so sánh, "
-        "altcoin nổi bật (biến động >3%). "
-        "CHỈ dùng giá và % từ dữ liệu được cung cấp. "
-        "KHÔNG tự tính hoặc bịa vùng support/resistance."
+        "Tier L2 — CÂU HỎI CHÍNH: 'Coins nào đáng chú ý hôm nay?'\n"
+        "ĐỐI TƯỢNG: Đã hiểu cơ bản, muốn biết tổng quan altcoin.\n"
+        "GIỌNG VĂN: Chuyên nghiệp nhưng dễ hiểu.\n"
+        "⚠️ MEMBER ĐÃ ĐỌC L1 — KHÔNG lặp lại phân tích BTC/ETH cơ bản.\n"
+        "NỘI DUNG BẮT BUỘC:\n"
+        "- Tổng quan nhanh BTC Dominance + Altcoin Season Index (nếu có)\n"
+        "- PHẢI nhắc đến TỐI THIỂU 10/19 coins trong danh sách\n"
+        "- Nhóm coins theo sector: L1 (SOL, AVAX, ADA...), DeFi, L2, Meme, AI\n"
+        "- Highlight coins biến động mạnh (>3%) — giải thích ngắn lý do nếu có tin\n"
+        "- So sánh volume giữa các nhóm sector\n"
+        "- USDT/VND rate (nếu có trong dữ liệu)\n"
+        "KHÔNG LÀM:\n"
+        "- KHÔNG lặp nội dung L1 (giá BTC/ETH, F&G đã có ở L1)\n"
+        "- KHÔNG phân tích on-chain/derivatives (để cho L3-L5)\n"
+        "- KHÔNG bịa vùng giá support/resistance\n"
+        "CHỈ dùng giá và % từ dữ liệu được cung cấp.\n"
     )
     tier_context["L3"] = (
-        "Tier L3: Phân tích on-chain + macro chuyên sâu. "
-        "Tập trung: DXY-BTC correlation, Gold signal, on-chain metrics interpretation, "
-        "funding rate ý nghĩa gì cho sentiment. "
-        "Giải thích mối quan hệ giữa macro và crypto."
+        "Tier L3 — CÂU HỎI CHÍNH: 'Tại sao thị trường diễn biến như vậy?'\n"
+        "ĐỐI TƯỢNG: Có kinh nghiệm, muốn hiểu nguyên nhân sâu.\n"
+        "GIỌNG VĂN: Phân tích chuyên sâu, có logic nhân-quả rõ ràng.\n"
+        "⚠️ MEMBER ĐÃ ĐỌC L1+L2 — KHÔNG lặp giá coin hay liệt kê biến động.\n"
+        "NỘI DUNG BẮT BUỘC:\n"
+        "- Phân tích MỐI QUAN HỆ macro → crypto: DXY tác động BTC thế nào?\n"
+        "  Gold đang signal gì? Lịch kinh tế có sự kiện nào quan trọng?\n"
+        "- On-chain interpretation (CHỈ dữ liệu có sẵn):\n"
+        "  + Funding Rate: dương = long trả phí cho short (thị trường lạc quan),\n"
+        "    âm = short trả phí (thị trường bi quan). Cực đoan → rủi ro squeeze.\n"
+        "  + Open Interest: tăng + giá tăng = trend mạnh, tăng + giá giảm = rủi ro.\n"
+        "  + Long/Short Ratio: >1 = thiên long, <1 = thiên short.\n"
+        "- Chuỗi nhân quả: nối các điểm dữ liệu thành câu chuyện logic\n"
+        "- Sự kiện kinh tế vĩ mô: nêu RÕ ngày cụ thể và tác động dự kiến\n"
+        "KHÔNG LÀM:\n"
+        "- KHÔNG liệt kê giá từng coin (đã có ở L2)\n"
+        "- KHÔNG phân tích rủi ro/scenario (để cho L4-L5)\n"
+        "- KHÔNG bịa dữ liệu MVRV, SOPR, Exchange Reserves (không có trong input)\n"
     )
     tier_context["L4"] = (
-        "Tier L4: Phân tích rủi ro và quản lý danh mục. "
-        "Tập trung: phân tích rủi ro theo sector (L1/DeFi/L2/AI), "
-        "so sánh hiệu suất giữa các nhóm coin. "
-        "TUYỆT ĐỐI KHÔNG đưa ra tỷ lệ phân bổ cụ thể (%) — vi phạm NQ05. "
-        "Chỉ phân tích rủi ro, KHÔNG gợi ý mua/bán/phân bổ."
+        "Tier L4 — CÂU HỎI CHÍNH: 'Rủi ro hiện tại là gì?'\n"
+        "ĐỐI TƯỢNG: Trader/investor có kinh nghiệm, cần đánh giá rủi ro.\n"
+        "GIỌNG VĂN: Nghiêm túc, cảnh báo rõ ràng, có data backing.\n"
+        "⚠️ MEMBER ĐÃ ĐỌC L1+L2+L3 — KHÔNG lặp phân tích macro/on-chain.\n"
+        "NỘI DUNG BẮT BUỘC:\n"
+        "- Derivatives risk: Funding Rate cực đoan? OI quá cao = rủi ro cascade?\n"
+        "  Long/Short ratio lệch → rủi ro squeeze bên nào?\n"
+        "- Sector risk comparison: sector nào đang chịu áp lực? Sector nào hold?\n"
+        "- Red flags từ dữ liệu: chỉ số nào ở vùng nguy hiểm?\n"
+        "- Macro risk: DXY trend, lịch sự kiện sắp tới có thể gây volatility?\n"
+        "- Correlation breakdown: khi nào BTC-altcoin decouple? Dấu hiệu?\n"
+        "KHÔNG LÀM:\n"
+        "- KHÔNG lặp nội dung L1/L2/L3\n"
+        "- KHÔNG đưa tỷ lệ phân bổ % cụ thể — VI PHẠM NQ05\n"
+        "- KHÔNG gợi ý mua/bán/hold bất kỳ tài sản nào\n"
+        "- KHÔNG bịa dữ liệu liquidation, whale movement (không có trong input)\n"
     )
     tier_context["L5"] = (
-        "Tier L5: Báo cáo chuyên sâu toàn diện cho Master members. "
-        "Tập trung: macro-crypto correlation, on-chain deep dive, "
-        "sector rotation analysis (DeFi vs L1 vs AI tokens), "
-        "derivatives insight (funding rate, OI), risk flags. "
-        "Viết chuyên sâu, dùng thuật ngữ chính xác, có dẫn chứng data."
+        "Tier L5 — CÂU HỎI CHÍNH: 'Nếu X xảy ra thì sao? Bức tranh tổng thể?'\n"
+        "ĐỐI TƯỢNG: Master members, tư duy chiến lược, cần scenario analysis.\n"
+        "GIỌNG VĂN: Formal, framework-based, dùng thuật ngữ chính xác.\n"
+        "⚠️ MEMBER ĐÃ ĐỌC L1→L4 — CHỈ viết nội dung HOÀN TOÀN MỚI.\n"
+        "NỘI DUNG BẮT BUỘC:\n"
+        "- Scenario analysis (DỰA TRÊN DỮ LIỆU CÓ SẴN, KHÔNG BỊA):\n"
+        "  + Bullish case: nếu [điều kiện từ data] → kỳ vọng gì?\n"
+        "  + Bearish case: nếu [điều kiện từ data] → rủi ro gì?\n"
+        "  + Base case: khả năng cao nhất dựa trên dữ liệu hiện tại\n"
+        "- Tổng hợp tín hiệu: macro + on-chain + sentiment đồng thuận hay mâu thuẫn?\n"
+        "- Sector rotation insight: dòng tiền đang chảy về đâu?\n"
+        "  (dựa trên volume comparison + price action từ dữ liệu)\n"
+        "- Key levels to watch: mức giá/chỉ số quan trọng cần theo dõi\n"
+        "  (CHỈ từ dữ liệu có sẵn, KHÔNG bịa support/resistance)\n"
+        "- Timeline: sự kiện sắp tới trong 7 ngày (từ lịch kinh tế)\n"
+        "KHÔNG LÀM:\n"
+        "- KHÔNG lặp BẤT KỲ nội dung nào từ L1-L4\n"
+        "- KHÔNG bịa correlation coefficient, MVRV, SOPR, whale data\n"
+        "- KHÔNG khuyến nghị mua/bán/phân bổ — VI PHẠM NQ05\n"
     )
 
     # Format interpretation notes for LLM
@@ -532,11 +595,14 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         logger.error(msg)
         errors.append(Exception(msg))
     for article in generated:
-        # FR14 dual-layer check: TL;DR marker should exist
+        # FR14 dual-layer check: Tóm lược marker should exist
         content_lower = article.content.lower()
-        if "tl;dr" not in content_lower and "tl; dr" not in content_lower:
+        has_summary = (
+            "tóm lược" in content_lower or "tl;dr" in content_lower or "tl; dr" in content_lower
+        )
+        if not has_summary:
             logger.warning(
-                f"[{article.tier}] Missing TL;DR section — FR14 dual-layer may be incomplete"
+                f"[{article.tier}] Missing Tóm lược section — FR14 dual-layer may be incomplete"
             )
 
     # Generate BIC Chat summary (FR15)
