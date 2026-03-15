@@ -45,6 +45,19 @@ content repetition visible to higher-tier members who see all lower-tier content
 - Banned source citation check (Bloomberg, CryptoQuant, TradingView, etc.)
 - All warnings logged for pipeline monitoring
 
+**1G. Pipeline Stability Fixes (post-deploy):**
+- `_TIER_COOLDOWN` 45→60s, `_TIER_RETRY_WAIT` 60→120s — Groq free tier TPM limit
+  caused L3-L5 rate limit failures with insufficient cooldown
+- Fixed NQ05 violation in interpretation note: "giai đoạn tích lũy trước breakout"
+  → "volume thấp thường đi kèm biến động mạnh sau đó (hướng chưa rõ)"
+- On-chain prompt header: removed "Glassnode, Binance Futures, Bybit" (geo-blocked/unavailable),
+  now shows only "OKX, FRED" to prevent LLM citing unavailable sources
+- Disabled 7 dead RSS feeds (BeInCrypto_VN 403, CCN 403, DLNews 404, Reuters DNS fail,
+  Bankless 403, CoinMetrics 403, Galaxy_Digital 404) — `enabled=False` for easy re-enable
+- `sheets_client.read_all()`: filters out empty-key dict entries from corrupt sheet headers
+- `sheets_client.clear_and_rewrite()`: auto-repairs header row against schema definition
+  (fixes BREAKING_LOG duplicate empty columns causing context load failure)
+
 ## [0.19.0] - 2026-03-15
 
 ### Anti-Hallucination & Output Quality

@@ -413,7 +413,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
             elif abs(p.change_24h) < 1:
                 interpretation_notes.append(
                     f"BTC biến động chỉ {p.change_24h:+.1f}% — thị trường đi ngang, "
-                    "thường báo hiệu giai đoạn tích lũy trước breakout"
+                    "volume thấp thường đi kèm biến động mạnh sau đó (hướng chưa rõ)"
                 )
     alt_season = key_metrics.get("Altcoin Season")
     if isinstance(alt_season, int):

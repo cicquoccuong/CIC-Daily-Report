@@ -146,7 +146,7 @@ class TestGenerateTierArticles:
         assert len(articles) == 1
         assert articles[0].tier == "L1"
         assert mock_llm.generate.call_count == 2  # called twice (1 fail + 1 success)
-        mock_sleep.assert_called_with(60)  # _TIER_RETRY_WAIT = 60s
+        mock_sleep.assert_called_with(120)  # _TIER_RETRY_WAIT = 120s
 
     @patch("cic_daily_report.generators.article_generator.asyncio.sleep", new_callable=AsyncMock)
     async def test_gives_up_after_two_429_failures(self, mock_sleep):

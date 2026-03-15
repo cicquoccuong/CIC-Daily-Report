@@ -233,11 +233,17 @@ class SheetsClient:
             ) from e
 
     def read_all(self, tab_name: str) -> list[dict[str, Any]]:
-        """Read all rows from a tab as list of dicts (header-keyed)."""
+        """Read all rows from a tab as list of dicts (header-keyed).
+
+        Filters out entries with empty-string keys (caused by extra blank columns
+        in the Google Sheet header row) to prevent downstream KeyError issues.
+        """
         ss = self._connect()
         try:
             ws = ss.worksheet(tab_name)
-            return ws.get_all_records()
+            records = ws.get_all_records()
+            # Defensive: strip entries with empty keys (corrupt header columns)
+            return [{k: v for k, v in row.items() if k} for row in records]
         except Exception as e:
             raise StorageError(
                 f"read_all failed for {tab_name}: {e}", source="sheets_client"
@@ -295,6 +301,8 @@ class SheetsClient:
     def clear_and_rewrite(self, sheet_name: str, rows: list[list[Any]]) -> None:
         """Clear all data rows (row 2+) in sheet_name, then append rows.
 
+        Also repairs the header row if the tab has a known schema, to fix
+        issues with duplicate/empty columns from manual sheet edits.
         Raises StorageError on any failure — caller is responsible for fallback.
         """
         ss = self._connect()
@@ -304,6 +312,13 @@ class SheetsClient:
             if len(all_vals) > 1:
                 ws.delete_rows(2, len(all_vals))
                 logger.info(f"Cleared {len(all_vals) - 1} data rows from {sheet_name}")
+            # Repair header row if schema exists and header doesn't match
+            expected_headers = TABS.get(sheet_name)
+            if expected_headers:
+                current_header = all_vals[0] if all_vals else []
+                if current_header != expected_headers:
+                    ws.update("A1", [expected_headers], value_input_option="RAW")
+                    logger.info(f"Repaired header row for {sheet_name}")
             if rows:
                 ws.append_rows(rows, value_input_option="RAW")
                 logger.info(f"Wrote {len(rows)} rows to {sheet_name}")

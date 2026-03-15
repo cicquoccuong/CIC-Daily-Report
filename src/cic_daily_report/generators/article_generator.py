@@ -24,8 +24,8 @@ logger = get_logger("article_generator")
 
 # Inter-tier cooldown (seconds) to avoid free-tier LLM rate limits (429).
 # Set to 0 in tests via env var or when IS_PRODUCTION is False.
-_TIER_COOLDOWN = 45 if os.getenv("GITHUB_ACTIONS") == "true" else 0
-_TIER_RETRY_WAIT = 60  # seconds to wait before retrying a failed tier (429)
+_TIER_COOLDOWN = 60 if os.getenv("GITHUB_ACTIONS") == "true" else 0
+_TIER_RETRY_WAIT = 120  # seconds to wait before retrying a failed tier (429)
 
 # FR17: NQ05-compliant disclaimer (Vietnamese)
 DISCLAIMER = (
@@ -195,7 +195,7 @@ async def _generate_single_article(
         f"{variables.get('market_data') or 'Không có dữ liệu'}\n\n"
         f"TIN TỨC (nguồn: CoinDesk, CoinTelegraph, Decrypt, RSS feeds):\n"
         f"{variables.get('news_summary') or 'Không có tin tức'}\n\n"
-        f"DỮ LIỆU ON-CHAIN & DERIVATIVES (nguồn: Glassnode, Binance Futures, Bybit, OKX, FRED):\n"
+        f"DỮ LIỆU ON-CHAIN & DERIVATIVES (nguồn: OKX, FRED):\n"
         f"{variables.get('onchain_data') or 'Không có dữ liệu'}\n\n"
         f"BẢNG CHỈ SỐ CHÍNH (nguồn: tổng hợp từ các API trên):\n"
         f"{variables.get('key_metrics_table', 'N/A')}\n\n"
