@@ -1,0 +1,27 @@
+# Enforce LF line endings for all text files (prevents CRLF/LF CI failures)
+* text=auto eol=lf
+
+# Ensure Python files always use LF
+*.py text eol=lf
+*.pyi text eol=lf
+
+# Config & docs
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.sh text eol=lf
+
+# Binary files — no conversion
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary

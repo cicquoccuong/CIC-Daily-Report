@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 from cic_daily_report.adapters.llm_adapter import LLMResponse
 from cic_daily_report.breaking.content_generator import (
+    _DISCLAIMER_RE,
     BreakingContent,
     _raw_data_fallback,
     generate_breaking_content,
@@ -128,3 +129,47 @@ class TestFR25ImageUrl:
         event = _event(image_url="https://example.com/fallback.jpg")
         result = _raw_data_fallback(event)
         assert result.image_url == "https://example.com/fallback.jpg"
+
+
+class TestSourceUrlInContent:
+    """AI-generated content must include clickable source URL."""
+
+    async def test_ai_content_includes_source_url(self):
+        llm = _mock_llm()
+        result = await generate_breaking_content(_event(), llm)
+        assert "https://coindesk.com/hack" in result.content
+
+    async def test_ai_content_includes_source_name_with_url(self):
+        llm = _mock_llm()
+        result = await generate_breaking_content(_event(), llm)
+        assert "🔗 Nguồn: CoinDesk — https://coindesk.com/hack" in result.content
+
+
+class TestDisclaimerDedup:
+    """LLM-generated disclaimer must be stripped; only standard disclaimer remains."""
+
+    def test_disclaimer_regex_strips_trailing_disclaimer(self):
+        text = (
+            "Tin nóng về tài sản mã hóa.\n\n"
+            "---\n"
+            "⚠️ Tuyên bố miễn trừ trách nhiệm: Đây không phải lời khuyên đầu tư."
+        )
+        clean = _DISCLAIMER_RE.sub("", text).rstrip()
+        assert "Tin nóng" in clean
+        assert "⚠️" not in clean
+
+    def test_disclaimer_regex_preserves_content_without_disclaimer(self):
+        text = "Tin nóng về tài sản mã hóa quan trọng."
+        clean = _DISCLAIMER_RE.sub("", text).rstrip()
+        assert clean == text
+
+    async def test_no_double_disclaimer_when_llm_includes_one(self):
+        llm_text = (
+            "Tin nóng: sự kiện quan trọng.\n\n"
+            "---\n"
+            "⚠️ Tuyên bố miễn trừ trách nhiệm: Không phải lời khuyên đầu tư."
+        )
+        llm = _mock_llm(llm_text)
+        result = await generate_breaking_content(_event(), llm)
+        count = result.content.count("⚠️")
+        assert count == 1, f"Expected 1 disclaimer, found {count}"

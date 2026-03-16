@@ -6,6 +6,7 @@ up to 500 for critical events. Raw data fallback if all LLMs fail.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from cic_daily_report.breaking.event_detector import BreakingEvent
@@ -14,6 +15,12 @@ from cic_daily_report.generators.article_generator import DISCLAIMER, NQ05_SYSTE
 from cic_daily_report.generators.nq05_filter import check_and_fix
 
 logger = get_logger("breaking_content")
+
+# Pattern to strip LLM-generated disclaimers (prevents double disclaimer)
+_DISCLAIMER_RE = re.compile(
+    r"\n*-{2,}\n*⚠️.*$",
+    re.DOTALL,
+)
 
 BREAKING_PROMPT_TEMPLATE = """\
 Viết bản tin BREAKING NEWS ngắn gọn bằng tiếng Việt.
@@ -31,11 +38,10 @@ Yêu cầu TUYỆT ĐỐI:
 - ĐƯỢC PHÉP nêu tên cụ thể các tài sản (BTC, ETH, SOL...) khi liên quan đến sự kiện
 - CHỈ phân tích dựa trên thông tin sự kiện ở trên, KHÔNG thêm bối cảnh bịa
 
-Cấu trúc BẮT BUỘC:
+Cấu trúc BẮT BUỘC (CHỈ viết 3 phần này, KHÔNG thêm nguồn hay tuyên bố miễn trừ):
 1. **Tiêu đề** (1 dòng tiếng Việt, ngắn gọn, nêu rõ tên tài sản nếu có)
 2. **Chuyện gì xảy ra:** (2-3 câu — SỰ KIỆN cụ thể, dùng dữ liệu từ trên)
-3. **Tại sao quan trọng:** (2-3 câu — tác động trực tiếp đến thị trường)
-4. 🔗 Nguồn: {source}"""
+3. **Tại sao quan trọng:** (2-3 câu — tác động trực tiếp đến thị trường)"""
 
 RAW_DATA_TEMPLATE = """⚠️ AI không khả dụng — dữ liệu thô
 
@@ -105,12 +111,18 @@ async def generate_breaking_content(
         # Apply NQ05 post-filter
         filtered = check_and_fix(response.text, extra_banned_keywords)
 
-        word_count = len(filtered.content.split())
+        # Strip any LLM-generated disclaimer to prevent duplication
+        clean_content = _DISCLAIMER_RE.sub("", filtered.content).rstrip()
+
+        word_count = len(clean_content.split())
         model_used = getattr(llm, "last_provider", response.model)
 
         logger.info(f"Breaking content generated: {word_count} words via {model_used}")
 
-        content_with_disclaimer = filtered.content + DISCLAIMER
+        # Append source link + standard disclaimer
+        content_with_disclaimer = (
+            clean_content + f"\n\n🔗 Nguồn: {event.source} — {event.url}" + DISCLAIMER
+        )
 
         return BreakingContent(
             event=event,
