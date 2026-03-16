@@ -90,6 +90,9 @@ class GenerationContext:
     interpretation_notes: str = ""
     economic_events: str = ""
     recent_breaking: str = ""  # v0.19.0: breaking news context from last 24h
+    metrics_interpretation: object | None = None  # v0.21.0: MetricsInterpretation from engine
+    narratives_text: str = ""  # v0.21.0: detected narratives from news
+    sector_data: str = ""  # v0.21.0: sector/DeFi data from CoinGecko + DefiLlama
 
 
 async def generate_tier_articles(
@@ -109,6 +112,7 @@ async def generate_tier_articles(
     """
     articles: list[GeneratedArticle] = []
     metrics_table = render_key_metrics_table(context.key_metrics)
+    previous_tiers_summary: list[str] = []  # v0.21.0: inter-tier context
 
     for tier in TIERS:
         template = templates.get(tier)
@@ -119,6 +123,22 @@ async def generate_tier_articles(
         coins = context.coin_lists.get(tier, [])
         coin_str = ", ".join(coins) if coins else "N/A"
 
+        # v0.21.0: Build tier-specific interpretation from Metrics Engine
+        tier_interpretation = context.interpretation_notes  # fallback to old format
+        if context.metrics_interpretation is not None:
+            try:
+                tier_interpretation = context.metrics_interpretation.format_for_tier(tier)
+            except Exception:
+                pass  # fallback to old interpretation_notes
+
+        # v0.21.0: Build inter-tier context (what previous tiers already covered)
+        prev_context = ""
+        if previous_tiers_summary:
+            prev_context = (
+                "⚠️ CÁC TIER TRƯỚC ĐÃ VIẾT (KHÔNG được lặp lại nội dung này):\n"
+                + "\n".join(previous_tiers_summary)
+            )
+
         variables = {
             "coin_list": coin_str,
             "coin_count": str(len(coins)),
@@ -128,9 +148,12 @@ async def generate_tier_articles(
             "key_metrics_table": metrics_table,
             "tier": tier,
             "tier_context": context.tier_context.get(tier, ""),
-            "interpretation_notes": context.interpretation_notes,
+            "interpretation_notes": tier_interpretation,
             "economic_events": context.economic_events,
             "recent_breaking": context.recent_breaking,
+            "previous_tiers": prev_context,
+            "narratives": context.narratives_text,
+            "sector_data": context.sector_data,
         }
 
         # Try generation with 1 retry on 429 rate limit errors
@@ -142,6 +165,9 @@ async def generate_tier_articles(
                     f"Generated {tier}: {article.word_count} words "
                     f"via {article.llm_used} in {article.generation_time_sec:.1f}s"
                 )
+                # v0.21.0: Build summary of this tier for inter-tier context
+                summary = _summarize_tier_output(tier, article.content)
+                previous_tiers_summary.append(summary)
                 # Rate limit cooldown: free-tier Gemini/Groq share RPM+TPM limits.
                 if _TIER_COOLDOWN and tier != TIERS[-1]:
                     logger.info(f"Rate limit cooldown: waiting {_TIER_COOLDOWN}s before next tier")
@@ -216,11 +242,24 @@ async def _generate_single_article(
             f"SỰ KIỆN BREAKING GẦN ĐÂY (24h qua — PHẢI nhắc đến trong bài):\n{breaking_ctx}\n"
             "→ Bài viết sáng nay PHẢI cập nhật tình hình sau các sự kiện trên.\n\n"
         )
-    # Add interpretation notes if available
+    # v0.21.0: Add sector data if available
+    sector = variables.get("sector_data", "")
+    if sector:
+        full_prompt += f"{sector}\n\n"
+    # v0.21.0: Add inter-tier context (what previous tiers already wrote)
+    prev_tiers = variables.get("previous_tiers", "")
+    if prev_tiers:
+        full_prompt += f"{prev_tiers}\n\n"
+    # v0.21.0: Add detected narratives
+    narr = variables.get("narratives", "")
+    if narr:
+        full_prompt += f"{narr}\n\n"
+    # Add interpretation notes if available (v0.21.0: now tier-specific from Metrics Engine)
     interp = variables.get("interpretation_notes", "")
     if interp:
         full_prompt += (
-            f"DIỄN GIẢI QUAN TRỌNG (dùng để phân tích sâu, KHÔNG copy nguyên văn):\n{interp}\n\n"
+            f"PHÂN TÍCH DỮ LIỆU TỰ ĐỘNG (Metrics Engine — dùng làm nền tảng, "
+            f"KHÔNG copy nguyên văn):\n{interp}\n\n"
         )
     full_prompt += (
         "ĐỊNH DẠNG BẮT BUỘC (Markdown):\n"
@@ -382,3 +421,58 @@ def _validate_output(content: str, tier: str, onchain_data: str) -> list[str]:
             warnings.append(f"Banned source cited: {src} (not in pipeline data)")
 
     return warnings
+
+
+# ---------------------------------------------------------------------------
+# v0.21.0: Inter-tier context helpers
+# ---------------------------------------------------------------------------
+
+# Approximate tier focus for summary labels
+_TIER_FOCUS = {
+    "L1": "Tổng quan BTC/ETH, F&G, tin chính",
+    "L2": "Altcoin, sector, BTC Dominance",
+    "L3": "Nguyên nhân, macro, on-chain, nhân quả",
+    "L4": "Rủi ro, derivatives, cảnh báo",
+    "L5": "Scenario analysis, tổng hợp tín hiệu",
+}
+
+
+def _summarize_tier_output(tier: str, content: str) -> str:
+    """Create a concise summary of a tier's output for inter-tier context.
+
+    Extracts section titles and first sentence of each section to give
+    the next tier a sense of what was already covered — without sending
+    the full content (which would bloat the prompt).
+    """
+    import re
+
+    focus = _TIER_FOCUS.get(tier, "")
+    lines = content.split("\n")
+
+    # Extract section headers and their first substantive line
+    sections: list[str] = []
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            header = line.lstrip("# ").strip()
+            # Find first non-empty line after header
+            for j in range(i + 1, min(i + 5, len(lines))):
+                candidate = lines[j].strip()
+                if candidate and not candidate.startswith("#"):
+                    # Take first 120 chars
+                    snippet = candidate[:120]
+                    if len(candidate) > 120:
+                        snippet += "..."
+                    sections.append(f"  - {header}: {snippet}")
+                    break
+            else:
+                sections.append(f"  - {header}")
+
+    summary_parts = [f"[{tier}] ({focus}):"]
+    if sections:
+        summary_parts.extend(sections[:6])  # max 6 sections
+    else:
+        # Fallback: first 200 chars of content
+        preview = re.sub(r"\s+", " ", content[:200]).strip()
+        summary_parts.append(f"  Nội dung: {preview}...")
+
+    return "\n".join(summary_parts)

@@ -164,10 +164,16 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     from cic_daily_report.collectors.market_data import collect_market_data
     from cic_daily_report.collectors.onchain_data import collect_onchain
     from cic_daily_report.collectors.rss_collector import collect_rss
+    from cic_daily_report.collectors.sector_data import SectorSnapshot, collect_sector_data
     from cic_daily_report.collectors.telegram_scraper import collect_telegram
     from cic_daily_report.generators.article_generator import (
         GenerationContext,
         generate_tier_articles,
+    )
+    from cic_daily_report.generators.metrics_engine import (
+        detect_narratives,
+        format_narratives_for_llm,
+        interpret_metrics,
     )
     from cic_daily_report.generators.nq05_filter import check_and_fix
     from cic_daily_report.generators.summary_generator import generate_bic_summary
@@ -192,6 +198,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         collect_onchain(),
         collect_telegram(),
         collect_economic_calendar(),
+        collect_sector_data(),
         return_exceptions=True,
     )
 
@@ -203,6 +210,9 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     from cic_daily_report.collectors.economic_calendar import CalendarResult
 
     econ_calendar = results[5] if not isinstance(results[5], Exception) else CalendarResult()
+    sector_snapshot: SectorSnapshot = (
+        results[6] if not isinstance(results[6], Exception) else SectorSnapshot([], 0.0, [])
+    )
 
     for r in results:
         if isinstance(r, Exception):
@@ -379,88 +389,18 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         if not coins:
             logger.warning(f"No coins configured for tier {tier}")
 
-    # Build interpretation notes for LLM context
-    interpretation_notes: list[str] = []
-    fg_raw = key_metrics.get("Fear & Greed")
-    if isinstance(fg_raw, int):
-        if fg_raw <= 20:
-            interpretation_notes.append(
-                f"Fear & Greed = {fg_raw} (Extreme Fear) — mức sợ hãi cực độ, "
-                "thị trường đang hoảng loạn. Sentiment tiêu cực mạnh."
-            )
-        elif fg_raw <= 40:
-            interpretation_notes.append(
-                f"Fear & Greed = {fg_raw} (Fear) — thị trường thận trọng, "
-                "cần theo dõi volume để xác nhận xu hướng"
-            )
-        elif fg_raw >= 80:
-            interpretation_notes.append(
-                f"Fear & Greed = {fg_raw} (Extreme Greed) — lịch sử cho thấy "
-                "rủi ro điều chỉnh tăng cao ở vùng này"
-            )
-        elif fg_raw >= 60:
-            interpretation_notes.append(
-                f"Fear & Greed = {fg_raw} (Greed) — tâm lý tích cực nhưng cần "
-                "cảnh giác nếu tiếp tục tăng"
-            )
-    for p in market_data:
-        if p.symbol == "BTC" and p.data_type == "crypto":
-            if abs(p.change_24h) >= 5:
-                interpretation_notes.append(
-                    f"BTC biến động {p.change_24h:+.1f}% trong 24h — mức biến động bất thường, "
-                    "cần phân tích nguyên nhân (tin tức, liquidation, whale activity)"
-                )
-            elif abs(p.change_24h) < 1:
-                interpretation_notes.append(
-                    f"BTC biến động chỉ {p.change_24h:+.1f}% — thị trường đi ngang, "
-                    "volume thấp thường đi kèm biến động mạnh sau đó (hướng chưa rõ)"
-                )
-    alt_season = key_metrics.get("Altcoin Season")
-    if isinstance(alt_season, int):
-        if alt_season >= 75:
-            interpretation_notes.append(
-                f"Altcoin Season Index = {alt_season} — đang là mùa altcoin, "
-                "dòng tiền chảy mạnh vào altcoin"
-            )
-        elif alt_season <= 25:
-            interpretation_notes.append(
-                f"Altcoin Season Index = {alt_season} — BTC season, altcoin underperform so với BTC"
-            )
-    dxy_val = key_metrics.get("DXY")
-    if isinstance(dxy_val, (int, float)):
-        if dxy_val >= 105:
-            interpretation_notes.append(
-                f"DXY = {dxy_val} (cao) — USD mạnh thường gây áp lực giảm lên crypto"
-            )
-        elif dxy_val <= 100:
-            interpretation_notes.append(
-                f"DXY = {dxy_val} (thấp) — USD yếu thường hỗ trợ crypto tăng giá"
-            )
+    # v0.21.0: Metrics Engine — pre-computed data interpretation (Phase 1a/1b)
+    metrics_interp = interpret_metrics(market_data, onchain_data, key_metrics)
+    logger.info(f"Metrics Engine: regime={metrics_interp.regime.regime}")
 
-    # Funding Rate + derivatives correlation hints
-    funding_rate_val = None
-    oi_val = None
-    for m in onchain_data:
-        if m.metric_name == "BTC_Funding_Rate":
-            funding_rate_val = m.value
-        elif m.metric_name == "BTC_Open_Interest":
-            oi_val = m.value
-    if funding_rate_val is not None:
-        fr_pct = funding_rate_val * 100
-        if fr_pct < -0.01:
-            note = (
-                f"Funding Rate = {fr_pct:.4f}% (âm) — short đang trả phí cho long, "
-                "thường báo hiệu thị trường đang bị bán quá mức"
-            )
-            if oi_val and oi_val > 0:
-                oi_fmt = _format_onchain_value("BTC_Open_Interest", oi_val)
-                note += f". Open Interest = {oi_fmt} BTC contracts"
-            interpretation_notes.append(note)
-        elif fr_pct > 0.05:
-            interpretation_notes.append(
-                f"Funding Rate = {fr_pct:.4f}% (cao bất thường) — long đang trả phí cao, "
-                "rủi ro squeeze tăng nếu giá giảm đột ngột"
-            )
+    # v0.21.0: Narrative Detection (Phase 1d)
+    narratives = detect_narratives(cleaned_news)
+    narratives_text = format_narratives_for_llm(narratives)
+    if narratives:
+        logger.info(f"Narratives detected: {[n.name for n in narratives[:5]]}")
+
+    # v0.21.0: Format sector data for LLM context (Phase 2)
+    sector_text = sector_snapshot.format_for_llm()
 
     # Build per-tier analysis context — each tier answers a DIFFERENT question.
     # Members see ALL lower tiers (L5 sees L4→L1), so content MUST NOT repeat.
@@ -557,11 +497,6 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         "- KHÔNG khuyến nghị mua/bán/phân bổ — VI PHẠM NQ05\n"
     )
 
-    # Format interpretation notes for LLM
-    interpretation_text = ""
-    if interpretation_notes:
-        interpretation_text = "\n".join(f"• {n}" for n in interpretation_notes)
-
     # Format economic calendar events for LLM context (FR60)
     economic_events_text = econ_calendar.format_for_llm()
 
@@ -575,9 +510,12 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         onchain_data=onchain_text,
         key_metrics=key_metrics,
         tier_context=tier_context,
-        interpretation_notes=interpretation_text,
+        interpretation_notes="",  # v0.21.0: replaced by metrics_interpretation per tier
         economic_events=economic_events_text,
         recent_breaking=recent_breaking_text,
+        metrics_interpretation=metrics_interp,  # v0.21.0: Metrics Engine
+        narratives_text=narratives_text,  # v0.21.0: Narrative Detection
+        sector_data=sector_text,  # v0.21.0: Sector + DeFi data (Phase 2)
     )
 
     generated = []

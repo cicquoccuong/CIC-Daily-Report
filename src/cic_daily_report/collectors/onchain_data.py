@@ -112,14 +112,16 @@ async def _collect_glassnode() -> list[OnChainMetric]:
 
 
 async def _collect_derivatives() -> list[OnChainMetric]:
-    """Collect BTC derivatives — Binance Futures (primary) → Bybit → OKX fallback (FR5).
+    """Collect BTC derivatives — Binance Futures → Binance Spot → Bybit → OKX fallback (FR5).
 
     Metrics: BTC_Funding_Rate, BTC_Open_Interest, BTC_Long_Short_Ratio, BTC_Taker_Buy_Sell_Ratio
     All public endpoints — no API key required.
-    GitHub Actions servers (US/EU) access Binance Futures freely.
+    Binance Futures may return 451 (geo-blocked from GitHub Actions).
+    Binance Spot (api.binance.com) added as fallback — not geo-blocked.
     """
     providers = [
-        ("Binance", _derivatives_binance),
+        ("Binance_Futures", _derivatives_binance),
+        ("Binance_Spot", _derivatives_binance_spot),
         ("Bybit", _derivatives_bybit),
         ("OKX", _derivatives_okx),
     ]
@@ -211,6 +213,73 @@ async def _derivatives_binance() -> list[OnChainMetric]:
                 )
         except Exception as e:
             logger.debug(f"Binance takerBuySellVol: {e}")
+
+    return metrics
+
+
+async def _derivatives_binance_spot() -> list[OnChainMetric]:
+    """Binance Spot public API — fallback when Futures is geo-blocked (451).
+
+    Uses api.binance.com (Spot) which is NOT geo-blocked from GitHub Actions.
+    Provides: 24h volume, price change (useful as proxy for market activity).
+    Futures-specific metrics (funding rate, OI) are not available on Spot.
+    """
+    metrics: list[OnChainMetric] = []
+    base = "https://api.binance.com"
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        # BTC/USDT 24h ticker for volume and price data
+        try:
+            resp = await client.get(
+                f"{base}/api/v3/ticker/24hr",
+                params={"symbol": "BTCUSDT"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            volume = float(data.get("quoteVolume", 0))
+            if volume > 0:
+                metrics.append(
+                    OnChainMetric(
+                        "BTC_Spot_Volume_24h",
+                        volume,
+                        "Binance_Spot",
+                        "USDT quote volume",
+                    )
+                )
+            # Taker buy ratio from Spot (proxy for buy pressure)
+            buy_vol = float(data.get("volume", 0))
+            price_change = float(data.get("priceChangePercent", 0))
+            if buy_vol > 0:
+                metrics.append(
+                    OnChainMetric(
+                        "BTC_Spot_Price_Change_24h",
+                        price_change / 100,  # store as decimal
+                        "Binance_Spot",
+                        "24h price change %",
+                    )
+                )
+        except Exception as e:
+            logger.debug(f"Binance Spot ticker: {e}")
+
+        # Binance Coin-M funding rate (alternative endpoint, may work)
+        try:
+            resp = await client.get(
+                f"{base}/dapi/v1/fundingRate",
+                params={"symbol": "BTCUSD_PERP", "limit": "1"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data:
+                    metrics.append(
+                        OnChainMetric(
+                            "BTC_Funding_Rate",
+                            float(data[0]["fundingRate"]),
+                            "Binance_CoinM",
+                            "8h rate (Coin-M)",
+                        )
+                    )
+        except Exception as e:
+            logger.debug(f"Binance Coin-M funding: {e}")
 
     return metrics
 

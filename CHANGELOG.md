@@ -1,5 +1,81 @@
 # Changelog
 
+## [0.21.0] - 2026-03-16
+
+### Phase 1 — Data Architecture Overhaul (Metrics Engine + Inter-Tier Context)
+
+**Root cause (3rd time)**: Previous fixes (v0.13 data enrichment, v0.19 anti-hallucination,
+v0.20 tier context redesign) were all prompt engineering — addressing symptoms, not architecture.
+All 5 tiers received IDENTICAL data, no inter-tier awareness, and missing pre-computed insights
+caused AI to guess/repeat instead of analyze.
+
+**1a. Metrics Engine (NEW: generators/metrics_engine.py):**
+- Pre-computed data interpretation replaces LLM guessing
+- Funding Rate, OI, Long/Short Ratio → structured conclusions with reasoning
+- DXY, Gold, BTC Dominance → macro analysis with cause-effect
+- Fear & Greed, Altcoin Season → labeled sentiment with historical context
+- Cross-signal analysis: detects agreement vs conflict between indicators
+- Volume pattern analysis: top coins + divergence detection
+- Tier-specific output: L1-L2 get sentiment only, L3-L5 get derivatives + macro + cross-signals
+
+**1b. Market Regime Classification (in metrics_engine.py):**
+- Scoring system classifies: Bull / Bear / Recovery / Distribution / Neutral
+- Inputs: BTC price action, F&G, Altcoin Season, DXY, Funding Rate
+- Confidence levels: high/medium/low based on signal agreement
+- Vietnamese-formatted output included in every tier's prompt
+
+**1c. Inter-Tier Context Passing (article_generator.py):**
+- After generating each tier, section headers + first lines are summarized
+- Summary passed to next tier as "CÁC TIER TRƯỚC ĐÃ VIẾT" context
+- L2 knows what L1 covered, L3 knows L1+L2, etc.
+- Eliminates content repetition at the architectural level (not just prompt hints)
+
+**1d. Narrative Detection (in metrics_engine.py):**
+- Keyword clustering from RSS news titles (15 narrative categories)
+- Categories: ETF, Regulation, DeFi, AI, Exchange, Hack, Stablecoin, L2, etc.
+- Top narratives with sample headlines passed to LLM as "CHỦ ĐỀ NÓNG HÔM NAY"
+- AI can now write about dominant themes instead of random news
+
+**Pipeline integration (daily_pipeline.py):**
+- Removed 80+ lines of scattered interpretation_notes code
+- Replaced with 3-line Metrics Engine call: interpret + narratives + format
+- GenerationContext extended with metrics_interpretation + narratives_text fields
+- Backward compatible: old interpretation_notes field kept as empty fallback
+
+**Phase 2 — Data Source Expansion:**
+
+**2a. Sector Data Collector (NEW: collectors/sector_data.py):**
+- CoinGecko `/categories` endpoint — 12 tracked sectors (DeFi, L1, L2, AI, Gaming, Meme, RWA, etc.)
+- Market cap + 24h change + volume + top 3 coins per sector
+- Formatted as "PHÂN TÍCH THEO SECTOR" context for LLM
+
+**2b. DefiLlama TVL (in sector_data.py):**
+- Total DeFi TVL from historical endpoint
+- Top 15 protocols by TVL with chain, category, 1d change
+- Free API, no key required, no rate limit
+
+**2c. Binance Spot Fallback (onchain_data.py):**
+- Added `_derivatives_binance_spot()` using `api.binance.com` (not geo-blocked)
+- Provides BTC spot volume, price change as derivatives proxy
+- Attempts Binance Coin-M funding rate (alternative endpoint)
+- Fallback chain now: Binance Futures → Binance Spot → Bybit → OKX
+
+**Pipeline integration:**
+- `collect_sector_data()` added to parallel Stage 1 collection
+- `SectorSnapshot.format_for_llm()` passed to each tier via `sector_data` field
+- GenerationContext extended with `sector_data: str` field
+- L2-L5 now have real sector data for analysis (previously empty)
+
+**Tests: 45 new tests total (527 total, 100% pass)**
+- TestMarketRegime: 9 tests (bull, bear, neutral, recovery, distribution, edge cases)
+- TestInterpretMetrics: 11 tests (tier formatting, derivatives, cross-signals)
+- TestNarrativeDetection: 9 tests (detection, filtering, formatting)
+- TestSummarizeTierOutput: 5 tests (header extraction, fallback, truncation)
+- TestSectorSnapshot: 3 tests (formatting with/without data)
+- TestCoinGeckoCategories: 4 tests (parsing, HTTP error, network error, sorting)
+- TestDefiLlama: 2 tests (TVL + protocols, failure handling)
+- TestCollectSectorData: 2 tests (integration, partial failure)
+
 ## [0.20.0] - 2026-03-15
 
 ### Phase 1 — Prompt Redesign & Output Quality (ICS Anti-Repetition)
