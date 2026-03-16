@@ -66,7 +66,32 @@ caused AI to guess/repeat instead of analyze.
 - GenerationContext extended with `sector_data: str` field
 - L2-L5 now have real sector data for analysis (previously empty)
 
-**Tests: 45 new tests total (527 total, 100% pass)**
+**Phase 3 — Prompt Optimization (leveraging new data architecture):**
+
+**3a. Tier-Specific Data Filtering (article_generator.py):**
+- `_filter_data_for_tier()` reduces noise for lower tiers
+- L1: BTC/ETH prices + F&G + top 5 news only (no on-chain, sector, macro events)
+- L2: Full market + sector + news (no on-chain details)
+- L3: Full analytical data, reduced news (already in L1/L2)
+- L4: On-chain + sector + macro focus, minimal news
+- L5: Everything (scenario analysis needs full context)
+
+**3b. Data Quality Monitor (NEW: generators/data_quality.py):**
+- `assess_data_quality()` scores data completeness 0-100 (A/B/C/D/F)
+- Scoring: News 25pts, Market 25pts, On-chain 20pts, Sector 15pts, Econ 15pts
+- Vietnamese warnings passed to LLM when data is degraded
+- `is_degraded` flag (score < 40) for pipeline-level decisions
+- Integrated into daily_pipeline.py with logging
+
+**3c. Tier Prompt Refinement (daily_pipeline.py):**
+- L1: Uses Market Regime from Metrics Engine (no more LLM guessing bullish/bearish)
+- L2: References CoinGecko/DefiLlama sector data for grouping coins
+- L3: Delegates derivatives interpretation to Metrics Engine (removed inline guide)
+- L4: Uses cross-signal analysis for risk detection, sector risk from DefiLlama
+- L5: Uses sector rotation data + regime confidence for scenario analysis
+- Trimmed redundant "KIẾN THỨC NỀN" block in prompt (Metrics Engine handles this)
+
+**Tests: 80 new tests total (562 total, 100% pass)**
 - TestMarketRegime: 9 tests (bull, bear, neutral, recovery, distribution, edge cases)
 - TestInterpretMetrics: 11 tests (tier formatting, derivatives, cross-signals)
 - TestNarrativeDetection: 9 tests (detection, filtering, formatting)
@@ -75,6 +100,10 @@ caused AI to guess/repeat instead of analyze.
 - TestCoinGeckoCategories: 4 tests (parsing, HTTP error, network error, sorting)
 - TestDefiLlama: 2 tests (TVL + protocols, failure handling)
 - TestCollectSectorData: 2 tests (integration, partial failure)
+- TestDataQualityReport: 5 tests (grades, formatting, threshold boundaries)
+- TestAssessDataQuality: 10 tests (perfect score, no data, partial, boundaries)
+- TestFilterDataL1-L5: 20 tests (per-tier data filtering)
+- TestFilterDataEdgeCases: 2 tests (empty context, metrics table preservation)
 
 ## [0.20.0] - 2026-03-15
 

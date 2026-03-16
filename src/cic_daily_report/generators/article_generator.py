@@ -93,6 +93,7 @@ class GenerationContext:
     metrics_interpretation: object | None = None  # v0.21.0: MetricsInterpretation from engine
     narratives_text: str = ""  # v0.21.0: detected narratives from news
     sector_data: str = ""  # v0.21.0: sector/DeFi data from CoinGecko + DefiLlama
+    data_quality_notes: str = ""  # v0.21.0: quality warnings for LLM
 
 
 async def generate_tier_articles(
@@ -139,21 +140,25 @@ async def generate_tier_articles(
                 + "\n".join(previous_tiers_summary)
             )
 
+        # v0.21.0 Phase 3: Tier-specific data filtering — less noise for lower tiers
+        filtered = _filter_data_for_tier(tier, context, metrics_table)
+        filtered["data_quality_notes"] = context.data_quality_notes
+
         variables = {
             "coin_list": coin_str,
             "coin_count": str(len(coins)),
-            "market_data": context.market_data,
-            "news_summary": context.news_summary,
-            "onchain_data": context.onchain_data,
-            "key_metrics_table": metrics_table,
+            "market_data": filtered["market_data"],
+            "news_summary": filtered["news_summary"],
+            "onchain_data": filtered["onchain_data"],
+            "key_metrics_table": filtered["key_metrics_table"],
             "tier": tier,
             "tier_context": context.tier_context.get(tier, ""),
             "interpretation_notes": tier_interpretation,
-            "economic_events": context.economic_events,
+            "economic_events": filtered["economic_events"],
             "recent_breaking": context.recent_breaking,
             "previous_tiers": prev_context,
-            "narratives": context.narratives_text,
-            "sector_data": context.sector_data,
+            "narratives": filtered["narratives"],
+            "sector_data": filtered["sector_data"],
         }
 
         # Try generation with 1 retry on 429 rate limit errors
@@ -185,6 +190,64 @@ async def generate_tier_articles(
 
     logger.info(f"Generated {len(articles)}/{len(TIERS)} tier articles")
     return articles
+
+
+def _filter_data_for_tier(
+    tier: str,
+    context: GenerationContext,
+    metrics_table: str,
+) -> dict[str, str]:
+    """Filter data blocks per tier to reduce noise and focus the LLM.
+
+    L1: BTC/ETH prices + top news only (no on-chain, no sector, no econ calendar)
+    L2: All market data + sector + news (no on-chain details)
+    L3: Market + on-chain + macro + econ calendar (full analytical data)
+    L4: On-chain + sector + econ (risk-focused, less news)
+    L5: Everything (scenario analysis needs full context)
+    """
+    full = {
+        "market_data": context.market_data,
+        "news_summary": context.news_summary,
+        "onchain_data": context.onchain_data,
+        "key_metrics_table": metrics_table,
+        "economic_events": context.economic_events,
+        "narratives": context.narratives_text,
+        "sector_data": context.sector_data,
+    }
+
+    if tier == "L1":
+        # Beginners: only BTC/ETH prices, F&G, top 5 news headlines
+        market_lines = context.market_data.split("\n")
+        keywords = ["BTC:", "ETH:", "Fear", "Total_MCap"]
+        btc_eth_lines = [ln for ln in market_lines if any(s in ln for s in keywords)]
+        news_lines = context.news_summary.split("\n")
+        # Keep first ~15 lines of news (roughly top 5 articles with summaries)
+        short_news = "\n".join(news_lines[:15]) if news_lines else ""
+        full["market_data"] = "\n".join(btc_eth_lines) if btc_eth_lines else context.market_data
+        full["news_summary"] = short_news
+        full["onchain_data"] = ""  # L1 doesn't analyze on-chain
+        full["economic_events"] = ""  # L1 doesn't analyze macro events
+        full["sector_data"] = ""  # L1 doesn't analyze sectors
+        full["narratives"] = ""  # L1 just reports, doesn't need narrative context
+
+    elif tier == "L2":
+        # Altcoin overview: full market + sector, no on-chain details
+        full["onchain_data"] = ""  # L2 focuses on coins, not derivatives
+        full["economic_events"] = ""  # macro is for L3+
+
+    elif tier == "L3":
+        # Deep analysis: full market + on-chain + macro, less news (already in L1/L2)
+        news_lines = context.news_summary.split("\n")
+        full["news_summary"] = "\n".join(news_lines[:10]) if news_lines else ""
+
+    elif tier == "L4":
+        # Risk analysis: on-chain + sector + macro focus, minimal news
+        news_lines = context.news_summary.split("\n")
+        full["news_summary"] = "\n".join(news_lines[:5]) if news_lines else ""
+
+    # L5 gets everything (no filtering)
+
+    return full
 
 
 async def _generate_single_article(
@@ -226,6 +289,10 @@ async def _generate_single_article(
         f"BẢNG CHỈ SỐ CHÍNH (nguồn: tổng hợp từ các API trên):\n"
         f"{variables.get('key_metrics_table', 'N/A')}\n\n"
     )
+    # v0.21.0: Add data quality warnings
+    dq_notes = variables.get("data_quality_notes", "")
+    if dq_notes:
+        full_prompt += f"{dq_notes}\n\n"
     # Add economic calendar events if available (FR60)
     econ_events = variables.get("economic_events", "")
     if econ_events:
@@ -275,25 +342,15 @@ async def _generate_single_article(
         "[Phân tích chuyên sâu với số liệu cụ thể. PHẢI giải thích Ý NGHĨA — "
         "tại sao con số đó quan trọng, nó cho thấy điều gì, "
         "mối quan hệ với các chỉ số khác ra sao]\n\n"
-        "KIẾN THỨC NỀN (dùng để DIỄN GIẢI dữ liệu, KHÔNG copy vào bài):\n"
-        "- Funding Rate: phí mà long trả cho short (dương) hoặc ngược lại (âm).\n"
-        "  Dương = thị trường thiên long/lạc quan. Âm = thiên short/bi quan.\n"
-        "  Cực đoan (>0.05% hoặc <-0.03%) = rủi ro liquidation cascade.\n"
-        "  ⚠️ SAI: 'Funding Rate dương cho thấy áp lực bán' (NGƯỢC LẠI!)\n"
-        "  ⚠️ SAI: 'Funding Rate tích cực' (nó là phí, không phải tín hiệu tích cực)\n"
-        "- Open Interest (OI): tổng hợp đồng derivatives đang mở.\n"
-        "  OI tăng + giá tăng = trend mạnh, tiền mới vào.\n"
-        "  OI tăng + giá giảm = short mới mở, rủi ro squeeze.\n"
-        "  OI giảm = đóng vị thế, momentum yếu.\n"
+        "KIẾN THỨC NỀN (chống hiểu sai — KHÔNG copy vào bài):\n"
+        "- Funding Rate dương = long trả short (lạc quan). Âm = ngược lại.\n"
+        "  ⚠️ SAI: 'dương = áp lực bán' hoặc 'Funding Rate tích cực'\n"
+        "- OI tăng + giá tăng = trend mạnh. OI tăng + giá giảm = rủi ro squeeze.\n"
         "  ⚠️ SAI: 'OI tăng là tín hiệu tăng giá' (phải xem cùng hướng giá)\n"
-        "- Fear & Greed: 0-24 Extreme Fear, 25-49 Fear, 50 Neutral,\n"
-        "  51-74 Greed, 75-100 Extreme Greed.\n"
-        "  ⚠️ SAI: 'F&G thấp = vùng tích lũy trước đợt tăng' (KHÔNG CHẮC CHẮN,\n"
-        "  đây là vi phạm NQ05 vì ngụ ý dự đoán giá)\n"
-        "- BTC Dominance: % vốn hóa BTC so với toàn thị trường.\n"
-        "  Tăng = tiền chảy về BTC (risk-off). Giảm = altcoin season.\n"
-        "- DXY (Dollar Index): USD mạnh thường gây áp lực lên BTC.\n"
-        "  Nhưng correlation KHÔNG phải lúc nào cũng đúng.\n\n"
+        "- Fear & Greed: 0-24 Extreme Fear, 25-49 Fear, 50-74 Greed, 75-100 Extreme Greed.\n"
+        "  ⚠️ SAI: 'F&G thấp = sắp tăng' (vi phạm NQ05 — ngụ ý dự đoán giá)\n"
+        "→ CHI TIẾT DIỄN GIẢI: xem phần PHÂN TÍCH DỮ LIỆU TỰ ĐỘNG (Metrics Engine)\n"
+        "  đã tính sẵn. DÙNG kết quả đó, KHÔNG tự diễn giải lại từ con số thô.\n\n"
         "YÊU CẦU PHÂN TÍCH (BẮT BUỘC — tiêu chí đánh giá bài viết):\n"
         "1. SO SÁNH: Khi có 2+ chỉ số, PHẢI so sánh và chỉ ra mâu thuẫn/đồng thuận.\n"
         "   VD: 'BTC giảm **2%** NHƯNG volume tăng **30%** → lực mua đang tăng'\n"

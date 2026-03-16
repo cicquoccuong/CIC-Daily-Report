@@ -170,6 +170,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         GenerationContext,
         generate_tier_articles,
     )
+    from cic_daily_report.generators.data_quality import assess_data_quality
     from cic_daily_report.generators.metrics_engine import (
         detect_narratives,
         format_narratives_for_llm,
@@ -330,15 +331,23 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         if p.symbol == "BTC" and p.data_type == "crypto" and abs(p.change_24h) >= 5:
             key_metrics["⚠️ BTC Move"] = f"{p.change_24h:+.1f}% — significant daily move"
 
-    # Warn if critical data is missing
-    if not cleaned_news:
-        logger.warning("No news articles collected — LLM will have no news context")
-    if not market_data:
-        logger.warning("No market data collected — LLM will have no price context")
+    # v0.21.0: Data quality assessment (Phase 3b)
+    quality = assess_data_quality(
+        news_count=len(cleaned_news),
+        market_data=market_data,
+        onchain_data=onchain_data,
+        has_sector_data=bool(sector_snapshot.sectors or sector_snapshot.defi_total_tvl > 0),
+        has_econ_calendar=bool(econ_calendar.events if hasattr(econ_calendar, "events") else False),
+    )
+    if quality.is_degraded:
+        logger.warning(f"DATA QUALITY DEGRADED: {quality.grade} ({quality.score}/100)")
+        for issue in quality.issues:
+            logger.warning(f"  → {issue}")
 
     logger.info(
         f"Collection done: {len(cleaned_news)} news, "
-        f"{len(market_data)} market, {len(onchain_data)} onchain"
+        f"{len(market_data)} market, {len(onchain_data)} onchain "
+        f"| Quality: {quality.grade} ({quality.score}/100)"
     )
 
     # --- Write raw data to Sheets (A1-A3) ---
@@ -413,7 +422,8 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         "- Giá BTC và ETH hiện tại + biến động 24h (lấy từ dữ liệu)\n"
         "- Fear & Greed Index: con số + giải thích đơn giản nó nghĩa là gì\n"
         "- 1-2 tin tức quan trọng nhất hôm nay (tóm gọn 1-2 câu mỗi tin)\n"
-        "- Kết luận ngắn: thị trường đang bullish/bearish/sideways\n"
+        "- Kết luận: dùng Market Regime từ PHÂN TÍCH DỮ LIỆU TỰ ĐỘNG (Bull/Bear/Neutral/...)\n"
+        "  để mô tả tình hình, KHÔNG tự phán đoán bullish/bearish\n"
         "KHÔNG LÀM:\n"
         "- KHÔNG dùng thuật ngữ phức tạp (funding rate, OI, correlation...)\n"
         "- KHÔNG phân tích on-chain hay macro\n"
@@ -427,8 +437,11 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         "NỘI DUNG BẮT BUỘC:\n"
         "- Tổng quan nhanh BTC Dominance + Altcoin Season Index (nếu có)\n"
         "- PHẢI nhắc đến TỐI THIỂU 10/19 coins trong danh sách\n"
-        "- Nhóm coins theo sector: L1 (SOL, AVAX, ADA...), DeFi, L2, Meme, AI\n"
-        "- Highlight coins biến động mạnh (>3%) — giải thích ngắn lý do nếu có tin\n"
+        "- Nhóm coins theo SECTOR DATA (CoinGecko/DefiLlama) nếu có:\n"
+        "  DeFi, Layer 1, Layer 2, AI & Big Data, Gaming, Meme, RWA...\n"
+        "  Dùng market_cap_change_24h để highlight sector tăng/giảm mạnh nhất\n"
+        "- Highlight coins biến động mạnh (>3%) — nối với narrative nếu có\n"
+        "  VD: SOL +8% → có thể liên quan narrative 'Solana DeFi growth'\n"
         "- So sánh volume giữa các nhóm sector\n"
         "- USDT/VND rate (nếu có trong dữ liệu)\n"
         "KHÔNG LÀM:\n"
@@ -445,17 +458,18 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         "NỘI DUNG BẮT BUỘC:\n"
         "- Phân tích MỐI QUAN HỆ macro → crypto: DXY tác động BTC thế nào?\n"
         "  Gold đang signal gì? Lịch kinh tế có sự kiện nào quan trọng?\n"
-        "- On-chain interpretation (CHỈ dữ liệu có sẵn):\n"
-        "  + Funding Rate: dương = long trả phí cho short (thị trường lạc quan),\n"
-        "    âm = short trả phí (thị trường bi quan). Cực đoan → rủi ro squeeze.\n"
-        "  + Open Interest: tăng + giá tăng = trend mạnh, tăng + giá giảm = rủi ro.\n"
-        "  + Long/Short Ratio: >1 = thiên long, <1 = thiên short.\n"
-        "- Chuỗi nhân quả: nối các điểm dữ liệu thành câu chuyện logic\n"
+        "- On-chain & Derivatives: DỰA VÀO phần PHÂN TÍCH DỮ LIỆU TỰ ĐỘNG\n"
+        "  (Metrics Engine đã tính sẵn ý nghĩa Funding Rate, OI, Long/Short).\n"
+        "  NHIỆM VỤ CỦA BẠN: diễn giải bằng ngôn ngữ tự nhiên + nối với macro,\n"
+        "  KHÔNG copy nguyên văn từ Metrics Engine, KHÔNG tự diễn giải lại từ raw data.\n"
+        "- Chuỗi nhân quả: nối macro + derivatives + sentiment thành câu chuyện logic\n"
+        "  VD: 'DXY tăng → USD mạnh → áp lực BTC + Funding Rate dương = long đang cố giữ'\n"
         "- Sự kiện kinh tế vĩ mô: nêu RÕ ngày cụ thể và tác động dự kiến\n"
         "KHÔNG LÀM:\n"
         "- KHÔNG liệt kê giá từng coin (đã có ở L2)\n"
         "- KHÔNG phân tích rủi ro/scenario (để cho L4-L5)\n"
         "- KHÔNG bịa dữ liệu MVRV, SOPR, Exchange Reserves (không có trong input)\n"
+        "- KHÔNG tự diễn giải Funding Rate/OI từ con số thô — dùng Metrics Engine\n"
     )
     tier_context["L4"] = (
         "Tier L4 — CÂU HỎI CHÍNH: 'Rủi ro hiện tại là gì?'\n"
@@ -463,12 +477,17 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         "GIỌNG VĂN: Nghiêm túc, cảnh báo rõ ràng, có data backing.\n"
         "⚠️ MEMBER ĐÃ ĐỌC L1+L2+L3 — KHÔNG lặp phân tích macro/on-chain.\n"
         "NỘI DUNG BẮT BUỘC:\n"
-        "- Derivatives risk: Funding Rate cực đoan? OI quá cao = rủi ro cascade?\n"
-        "  Long/Short ratio lệch → rủi ro squeeze bên nào?\n"
-        "- Sector risk comparison: sector nào đang chịu áp lực? Sector nào hold?\n"
+        "- CROSS-SIGNAL ANALYSIS: Dùng phần 'Tín hiệu mâu thuẫn' từ Metrics Engine\n"
+        "  để phát hiện khi các chỉ số xung đột nhau (VD: giá tăng nhưng funding âm).\n"
+        "  Giải thích TẠI SAO mâu thuẫn → rủi ro gì cụ thể cho trader?\n"
+        "- Derivatives risk: Metrics Engine đã đánh giá Funding Rate/OI/L-S.\n"
+        "  Bạn CẦN: nối kết quả đó thành BỨC TRANH RỦI RO tổng thể\n"
+        "  (cascade liquidation? squeeze? position crowding?)\n"
+        "- Sector risk: dùng SECTOR DATA (CoinGecko/DefiLlama) để so sánh:\n"
+        "  sector nào market_cap_change_24h âm nhiều nhất? TVL đang giảm?\n"
+        "  Top protocols thay đổi TVL ra sao? (từ dữ liệu DefiLlama)\n"
         "- Red flags từ dữ liệu: chỉ số nào ở vùng nguy hiểm?\n"
         "- Macro risk: DXY trend, lịch sự kiện sắp tới có thể gây volatility?\n"
-        "- Correlation breakdown: khi nào BTC-altcoin decouple? Dấu hiệu?\n"
         "KHÔNG LÀM:\n"
         "- KHÔNG lặp nội dung L1/L2/L3\n"
         "- KHÔNG đưa tỷ lệ phân bổ % cụ thể — VI PHẠM NQ05\n"
@@ -481,13 +500,17 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         "GIỌNG VĂN: Formal, framework-based, dùng thuật ngữ chính xác.\n"
         "⚠️ MEMBER ĐÃ ĐỌC L1→L4 — CHỈ viết nội dung HOÀN TOÀN MỚI.\n"
         "NỘI DUNG BẮT BUỘC:\n"
-        "- Scenario analysis (DỰA TRÊN DỮ LIỆU CÓ SẴN, KHÔNG BỊA):\n"
-        "  + Bullish case: nếu [điều kiện từ data] → kỳ vọng gì?\n"
-        "  + Bearish case: nếu [điều kiện từ data] → rủi ro gì?\n"
-        "  + Base case: khả năng cao nhất dựa trên dữ liệu hiện tại\n"
-        "- Tổng hợp tín hiệu: macro + on-chain + sentiment đồng thuận hay mâu thuẫn?\n"
-        "- Sector rotation insight: dòng tiền đang chảy về đâu?\n"
-        "  (dựa trên volume comparison + price action từ dữ liệu)\n"
+        "- Scenario analysis (DỰA TRÊN Market Regime + Metrics Engine):\n"
+        "  + Dùng regime hiện tại (Bull/Bear/Recovery/Distribution/Neutral)\n"
+        "    và confidence level để xác định base case\n"
+        "  + Bullish case: nếu [điều kiện cụ thể từ signals] → kỳ vọng gì?\n"
+        "  + Bearish case: nếu [tín hiệu mâu thuẫn/rủi ro từ L4] → hậu quả?\n"
+        "- Tổng hợp tín hiệu: dùng cross_signal_summary từ Metrics Engine\n"
+        "  để đánh giá mức đồng thuận/phân kỳ giữa macro + derivatives + sentiment\n"
+        "- Sector rotation (DỰA TRÊN SECTOR DATA nếu có):\n"
+        "  + CoinGecko categories: sector nào market_cap tăng/giảm mạnh nhất?\n"
+        "  + DefiLlama: TVL tổng + top protocols change → dòng tiền DeFi chảy đi đâu?\n"
+        "  + Nối sector performance với narratives đang thịnh hành\n"
         "- Key levels to watch: mức giá/chỉ số quan trọng cần theo dõi\n"
         "  (CHỈ từ dữ liệu có sẵn, KHÔNG bịa support/resistance)\n"
         "- Timeline: sự kiện sắp tới trong 7 ngày (từ lịch kinh tế)\n"
@@ -516,6 +539,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         metrics_interpretation=metrics_interp,  # v0.21.0: Metrics Engine
         narratives_text=narratives_text,  # v0.21.0: Narrative Detection
         sector_data=sector_text,  # v0.21.0: Sector + DeFi data (Phase 2)
+        data_quality_notes=quality.format_for_llm(),  # v0.21.0: Quality warnings
     )
 
     generated = []
