@@ -336,7 +336,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         news_count=len(cleaned_news),
         market_data=market_data,
         onchain_data=onchain_data,
-        has_sector_data=bool(sector_snapshot.sectors or sector_snapshot.defi_total_tvl > 0),
+        has_sector_data=bool(sector_snapshot.sectors or (sector_snapshot.defi_total_tvl or 0) > 0),
         has_econ_calendar=bool(econ_calendar.events if hasattr(econ_calendar, "events") else False),
     )
     if quality.is_degraded:

@@ -126,7 +126,7 @@ def assess_data_quality(
         issues.append("No derivatives data (all providers failed)")
         warnings.append(
             "KHÔNG CÓ dữ liệu derivatives (Funding Rate, OI) — "
-            "L3-L5 sẽ thiếu phân tích on-chain, viết 'Chưa có dữ liệu' thay vì bịa"
+            "L3-L5 BỎ QUA phần on-chain, KHÔNG bịa số liệu"
         )
     elif onchain_score < 14:
         missing = []

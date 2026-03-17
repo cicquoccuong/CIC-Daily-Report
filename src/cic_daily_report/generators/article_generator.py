@@ -263,8 +263,6 @@ def _filter_data_for_tier(
         news_lines = context.news_summary.split("\n")
         full["news_summary"] = "\n".join(news_lines[:20]) if news_lines else ""
 
-    # L5 gets everything (no filtering)
-
     return full
 
 

@@ -177,7 +177,7 @@ async def _collect_defillama() -> tuple[float, list[DefiProtocol]]:
             resp.raise_for_status()
             data = resp.json()
             if data and isinstance(data, list):
-                total_tvl = float(data[-1].get("tvl", 0))
+                total_tvl = float(data[-1].get("tvl") or 0)
         except Exception as e:
             logger.warning(f"DefiLlama total TVL failed: {e}")
 
