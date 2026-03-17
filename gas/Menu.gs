@@ -414,9 +414,9 @@ function menuShowAbout() {
   var ui = SpreadsheetApp.getUi();
   ui.alert(
     "ℹ️ CIC Daily Report",
-    "Phiên bản: 0.18.0\n" +
+    "Phiên bản: 0.22.0\n" +
     "Nền tảng: Google Sheets + GitHub Actions\n" +
-    "AI: Groq Llama 3.3 → Gemini Flash → Flash Lite\n" +
+    "AI: Gemini Flash → Flash Lite → Groq Llama 3.3\n" +
     "Giao hàng: Telegram Bot + Email backup\n\n" +
     "Được phát triển bởi CIC Team\n" +
     "Hệ thống tự động — dữ liệu được cập nhật bởi pipeline",

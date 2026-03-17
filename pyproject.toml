@@ -1,6 +1,6 @@
 [project]
 name = "cic-daily-report"
-version = "0.18.0"
+version = "0.22.0"
 description = "Automated crypto daily report pipeline for CIC community"
 requires-python = ">=3.12"
 dependencies = [
