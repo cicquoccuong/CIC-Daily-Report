@@ -206,16 +206,18 @@ async def _call_gemini(
     temperature: float,
     system_prompt: str,
 ) -> LLMResponse:
-    """Call Google Gemini API."""
-    full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
-
-    payload = {
-        "contents": [{"parts": [{"text": full_prompt}]}],
+    """Call Google Gemini API with proper system_instruction separation."""
+    payload: dict = {
+        "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "maxOutputTokens": max_tokens,
             "temperature": temperature,
         },
     }
+    # Use dedicated system_instruction field — Gemini processes this BEFORE
+    # user content, giving higher priority to NQ05 rules & behavioral constraints.
+    if system_prompt:
+        payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
 
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(

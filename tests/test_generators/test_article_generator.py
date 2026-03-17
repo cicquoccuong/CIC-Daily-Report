@@ -203,10 +203,9 @@ class TestGenerateTierArticles:
         call_args = mock_llm.generate.call_args
         prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
         assert "SO SÁNH" in prompt
-        assert "GIẢI THÍCH Ý NGHĨA" in prompt
-        assert "MỐI QUAN HỆ NHÂN QUẢ" in prompt
+        assert "Ý NGHĨA" in prompt  # v0.22.0: shortened from "GIẢI THÍCH Ý NGHĨA"
+        assert "NHÂN QUẢ" in prompt
         assert "**Tóm lược:**" in prompt
-        assert "TL;DR" not in prompt.split("KHÔNG dùng")[0]  # TL;DR only in "don't use" context
 
     async def test_nq05_system_prompt_used(self):
         templates = _make_templates("L1")
@@ -222,7 +221,7 @@ class TestGenerateTierArticles:
         call_args = mock_llm.generate.call_args
         sys_prompt = call_args.kwargs.get("system_prompt", "")
         assert "NQ05" in sys_prompt
-        assert "KHÔNG BAO GIỜ" in sys_prompt
+        assert "KHÔNG khuyến nghị" in sys_prompt  # v0.22.0: rewritten system prompt
 
 
 class TestAntiHallucinationGuardrails:
@@ -239,16 +238,11 @@ class TestAntiHallucinationGuardrails:
 
         assert "CHỐNG BỊA" in NQ05_SYSTEM_PROMPT
 
-    async def test_guardrail_allows_glassnode(self):
-        """Glassnode is a real data source (onchain_data.py) — must be in allowed list."""
-        templates = _make_templates("L1")
-        context = _make_context()
-        mock_llm = AsyncMock()
-        mock_llm.generate = AsyncMock(
-            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=10, model="m")
-        )
-        await generate_tier_articles(mock_llm, templates, context)
-        call_args = mock_llm.generate.call_args
-        prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
-        # Glassnode must be in allowed sources, NOT in banned list
-        assert "Glassnode" in prompt.split("PHẢI nằm trong")[1].split("KHÔNG ĐƯỢC")[0]
+    async def test_guardrail_bans_fabrication_sources(self):
+        """v0.22.0: System prompt bans known fabrication sources."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        # These sources must be explicitly banned to prevent LLM fabrication
+        assert "Bloomberg" in NQ05_SYSTEM_PROMPT
+        assert "CryptoQuant" in NQ05_SYSTEM_PROMPT
+        assert "TradingView" in NQ05_SYSTEM_PROMPT

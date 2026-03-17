@@ -112,18 +112,17 @@ async def _collect_glassnode() -> list[OnChainMetric]:
 
 
 async def _collect_derivatives() -> list[OnChainMetric]:
-    """Collect BTC derivatives — Binance Futures → Binance Spot → Bybit → OKX fallback (FR5).
+    """Collect BTC derivatives — OKX → Binance Futures → Bybit fallback (FR5).
 
     Metrics: BTC_Funding_Rate, BTC_Open_Interest, BTC_Long_Short_Ratio, BTC_Taker_Buy_Sell_Ratio
     All public endpoints — no API key required.
-    Binance Futures may return 451 (geo-blocked from GitHub Actions).
-    Binance Spot (api.binance.com) added as fallback — not geo-blocked.
+    v0.22.0: OKX first — Binance (both Spot & Futures) and Bybit are geo-blocked/403 from
+    GitHub Actions. OKX is the only reliable provider on CI.
     """
     providers = [
-        ("Binance_Futures", _derivatives_binance),
-        ("Binance_Spot", _derivatives_binance_spot),
-        ("Bybit", _derivatives_bybit),
         ("OKX", _derivatives_okx),
+        ("Binance_Futures", _derivatives_binance),
+        ("Bybit", _derivatives_bybit),
     ]
     for provider_name, collector in providers:
         try:

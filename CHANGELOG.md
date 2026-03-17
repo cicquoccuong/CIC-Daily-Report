@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.22.0] - 2026-03-17
+
+### Prompt Architecture Overhaul
+
+- **Fix Gemini API**: Use `system_instruction` parameter instead of concatenating
+  system+user prompt. Gemini now processes NQ05 rules with higher priority.
+- **Rewrite system prompt**: Role (analyst + investor perspective), 4-step process
+  (summarize→find patterns→interpret→present), filler phrase blacklist.
+- **Question-driven tier prompts**: Each tier has 3-4 specific questions to answer
+  instead of open-ended "write analysis". Includes few-shot example paragraphs.
+- **Reduce L5 data**: Cap news at top 20 lines to prevent Groq 413 Payload Too Large.
+- **Prompt restructured**: "Context first, questions last" following Gemini best practices.
+
+### Bug Fixes
+
+- **DefiLlama None comparison**: Guard against `tvl=None` from API causing TypeError.
+- **Derivatives fallback reorder**: OKX first (only provider working on GitHub Actions),
+  removed Binance Spot (also 451 geo-blocked). Binance Futures + Bybit kept as fallbacks.
+- **Sector data None guards**: All format_for_llm() comparisons now handle None values.
+
 ## [0.21.0] - 2026-03-16
 
 ### Phase 1 — Data Architecture Overhaul (Metrics Engine + Inter-Tier Context)

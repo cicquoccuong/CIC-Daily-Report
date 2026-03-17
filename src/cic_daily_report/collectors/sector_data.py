@@ -59,28 +59,31 @@ class SectorSnapshot:
         parts: list[str] = []
 
         if self.sectors:
-            parts.append("PHÂN TÍCH THEO SECTOR (nguồn: CoinGecko):")
+            parts.append("=== PHÂN TÍCH THEO SECTOR (nguồn: CoinGecko) ===")
             for s in self.sectors[:10]:  # top 10 sectors
-                mcap_b = s.market_cap / 1e9 if s.market_cap > 0 else 0
-                vol_b = s.volume_24h / 1e9 if s.volume_24h > 0 else 0
+                mcap_b = (s.market_cap or 0) / 1e9 if (s.market_cap or 0) > 0 else 0
+                vol_b = (s.volume_24h or 0) / 1e9 if (s.volume_24h or 0) > 0 else 0
+                change = s.market_cap_change_24h or 0
                 coins = ", ".join(s.top_coins[:3]) if s.top_coins else "N/A"
                 parts.append(
-                    f"  • {s.name}: MCap ${mcap_b:.1f}B ({s.market_cap_change_24h:+.1f}%) "
+                    f"  • {s.name}: MCap ${mcap_b:.1f}B ({change:+.1f}%) "
                     f"| Vol ${vol_b:.1f}B | Top: {coins}"
                 )
 
-        if self.defi_total_tvl > 0:
+        if (self.defi_total_tvl or 0) > 0:
             tvl_b = self.defi_total_tvl / 1e9
             parts.append(f"\nDeFi TỔNG TVL: ${tvl_b:.1f}B (nguồn: DefiLlama)")
 
         if self.defi_protocols:
             parts.append("Top DeFi protocols:")
             for p in self.defi_protocols[:8]:
-                tvl_b = p.tvl / 1e9 if p.tvl > 1e9 else p.tvl / 1e6
-                unit = "B" if p.tvl > 1e9 else "M"
+                p_tvl = p.tvl or 0
+                tvl_b = p_tvl / 1e9 if p_tvl > 1e9 else p_tvl / 1e6
+                unit = "B" if p_tvl > 1e9 else "M"
+                change = p.change_1d or 0
                 parts.append(
                     f"  • {p.name} ({p.category}): TVL ${tvl_b:.1f}{unit} "
-                    f"({p.change_1d:+.1f}%) — {p.chain}"
+                    f"({change:+.1f}%) — {p.chain}"
                 )
 
         return "\n".join(parts) if parts else ""
@@ -184,15 +187,15 @@ async def _collect_defillama() -> tuple[float, list[DefiProtocol]]:
             resp.raise_for_status()
             data = resp.json()
             if data and isinstance(data, list):
-                # Sort by TVL, take top 15
+                # Sort by TVL, take top 15. Guard against None values from API.
                 sorted_protos = sorted(
-                    [p for p in data if p.get("tvl", 0) > 0],
-                    key=lambda p: p.get("tvl", 0),
+                    [p for p in data if (p.get("tvl") or 0) > 0],
+                    key=lambda p: p.get("tvl") or 0,
                     reverse=True,
                 )[:15]
 
                 for p in sorted_protos:
-                    change_1d = float(p.get("change_1d", 0) or 0)
+                    change_1d = float(p.get("change_1d") or 0)
                     chains = p.get("chains", [])
                     chain = chains[0] if chains else "Multi-chain"
                     protocols.append(

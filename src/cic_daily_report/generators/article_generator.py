@@ -36,21 +36,33 @@ DISCLAIMER = (
     "Hãy tự nghiên cứu (DYOR) trước khi đưa ra quyết định đầu tư."
 )
 
-# NQ05 prompt-layer instructions (QĐ4 Layer 1)
+# NQ05 prompt-layer instructions (QĐ4 Layer 1) — v0.22.0: rewritten for Gemini system_instruction
 NQ05_SYSTEM_PROMPT = (
-    "Bạn là chuyên gia phân tích thị trường tài sản mã hóa cho cộng đồng CIC.\n"
-    "QUY TẮC BẮT BUỘC (NQ05 Compliance):\n"
-    "- KHÔNG BAO GIỜ khuyến nghị mua, bán, hoặc giữ bất kỳ tài sản nào\n"
-    "- KHÔNG dùng từ: 'nên mua', 'nên bán', 'khuyến nghị', 'guaranteed', "
-    "'chắc chắn tăng/giảm'\n"
-    "- Dùng 'tài sản mã hóa' thay vì 'tiền điện tử' hoặc 'tiền ảo'\n"
-    "- Chỉ PHÂN TÍCH và THÔNG TIN, để người đọc tự quyết định\n"
-    "- CHỐNG BỊA DỮ LIỆU: CHỈ trích dẫn nguồn khi dữ liệu THỰC SỰ có trong phần "
-    "DỮ LIỆU được cung cấp. KHÔNG BAO GIỜ tự thêm nguồn, con số, vùng giá, "
-    "hoặc thông tin không có trong dữ liệu đầu vào.\n"
-    "- Nếu không có dữ liệu cho một khía cạnh, viết 'Chưa có dữ liệu cập nhật' "
-    "thay vì bịa số liệu.\n"
-    "Viết bằng tiếng Việt tự nhiên, thuật ngữ tài chính chính xác."
+    "VAI TRÒ: Bạn là nhà phân tích thị trường tài sản mã hóa cho cộng đồng CIC. "
+    "Bạn kết hợp góc nhìn nhà phân tích (data-driven, logic nhân-quả) "
+    "và nhà đầu tư (ý nghĩa thực tế cho người đọc).\n\n"
+    "QUY TRÌNH PHÂN TÍCH (tuân thủ theo thứ tự):\n"
+    "1. TỔNG HỢP: Đọc toàn bộ dữ liệu, xác định 3-5 điểm quan trọng nhất\n"
+    "2. TÌM PATTERN: Chỉ số nào liên quan nhau? Đồng thuận hay mâu thuẫn?\n"
+    "3. DIỄN GIẢI: Mỗi con số NGHĨA LÀ GÌ cho nhà đầu tư? So với hôm qua/tuần trước?\n"
+    "4. TRÌNH BÀY: Kể câu chuyện thị trường — KHÔNG liệt kê số liệu rời rạc\n\n"
+    "PHONG CÁCH: Chuyên nghiệp, rõ ràng, gần gũi. "
+    "Thuật ngữ tài chính chính xác. Viết tiếng Việt tự nhiên.\n\n"
+    "NQ05 COMPLIANCE (Nghị quyết 05/2025/NQ-CP — BẮT BUỘC):\n"
+    "- KHÔNG khuyến nghị mua/bán/giữ bất kỳ tài sản nào\n"
+    "- KHÔNG dùng: 'nên mua', 'nên bán', 'khuyến nghị', 'chắc chắn tăng/giảm'\n"
+    "- Dùng 'tài sản mã hóa' (không 'tiền điện tử', 'tiền ảo')\n"
+    "- Chỉ phân tích và thông tin — người đọc tự quyết định\n\n"
+    "CHỐNG BỊA DỮ LIỆU:\n"
+    "- CHỈ dùng data được cung cấp trong prompt. KHÔNG tự thêm nguồn, con số, vùng giá.\n"
+    "- Nếu thiếu dữ liệu → bỏ qua phần đó, KHÔNG viết 'Chưa có dữ liệu'.\n"
+    "- KHÔNG cite: Bloomberg, CryptoQuant, TradingView, Santiment, IntoTheBlock.\n\n"
+    "CỤM TỪ CẤM (filler — TUYỆT ĐỐI KHÔNG viết):\n"
+    "× 'có thể ảnh hưởng đến' → thay bằng nêu CỤ THỂ ảnh hưởng gì\n"
+    "× 'cần theo dõi thêm' → thay bằng nêu theo dõi CÁI GÌ, KHI NÀO\n"
+    "× 'điều này cho thấy' → thay bằng kết luận trực tiếp\n"
+    "× 'trong bối cảnh' → bỏ, vào thẳng nội dung\n"
+    "× 'tuy nhiên cần lưu ý' → nêu thẳng rủi ro cụ thể\n"
 )
 
 TIERS = ["L1", "L2", "L3", "L4", "L5"]
@@ -203,7 +215,7 @@ def _filter_data_for_tier(
     L2: All market data + sector + news (no on-chain details)
     L3: Market + on-chain + macro + econ calendar (full analytical data)
     L4: On-chain + sector + econ (risk-focused, less news)
-    L5: Everything (scenario analysis needs full context)
+    L5: Top 20 news + on-chain + sector + econ (reduced from ALL to prevent 413)
     """
     full = {
         "market_data": context.market_data,
@@ -245,6 +257,12 @@ def _filter_data_for_tier(
         news_lines = context.news_summary.split("\n")
         full["news_summary"] = "\n".join(news_lines[:5]) if news_lines else ""
 
+    elif tier == "L5":
+        # v0.22.0: L5 was getting ALL data → Groq 413 Payload Too Large.
+        # Reduce news to top 20 lines. Metrics Engine + narratives already summarize.
+        news_lines = context.news_summary.split("\n")
+        full["news_summary"] = "\n".join(news_lines[:20]) if news_lines else ""
+
     # L5 gets everything (no filtering)
 
     return full
@@ -268,114 +286,79 @@ async def _generate_single_article(
             f"## {sec.section_name}\n{sec.prompt}\n(Tối đa {sec.max_words} từ cho phần này)"
         )
 
+    # v0.22.0: Restructured prompt — "context first, questions last" (Gemini best practice)
+    # Layer 1: ALL DATA (context for Gemini to process first)
     full_prompt = (
-        f"Viết bài phân tích thị trường tier {tier} cho cộng đồng CIC.\n\n"
-        f"HƯỚNG DẪN PHÂN TÍCH CHO TIER NÀY:\n"
-        f"{variables.get('tier_context', '')}\n\n"
-        f"Danh sách coin: {variables.get('coin_list', 'N/A')}\n\n"
-        f"⚠️ QUY TẮC DỮ LIỆU TUYỆT ĐỐI:\n"
-        f"Bạn CHỈ được sử dụng dữ liệu bên dưới. KHÔNG ĐƯỢC:\n"
-        f"- Tự thêm nguồn (Glassnode, Bloomberg, CryptoQuant, TradingView...)\n"
-        f"- Tự bịa vùng giá support/resistance\n"
-        f"- Tự tạo con số % tăng/giảm không có trong dữ liệu\n"
-        f"- Viết 'theo [nguồn X]' nếu nguồn X không nằm trong dữ liệu dưới đây\n"
-        f"Nếu thiếu dữ liệu → viết 'Chưa có dữ liệu cập nhật', KHÔNG bịa.\n\n"
-        f"DỮ LIỆU THỊ TRƯỜNG (nguồn: CoinLore, CoinGecko, yfinance):\n"
+        f"=== DỮ LIỆU THỊ TRƯỜNG (nguồn: CoinLore, CoinGecko, yfinance) ===\n"
         f"{variables.get('market_data') or 'Không có dữ liệu'}\n\n"
-        f"TIN TỨC (nguồn: CoinDesk, CoinTelegraph, Decrypt, RSS feeds):\n"
-        f"{variables.get('news_summary') or 'Không có tin tức'}\n\n"
-        f"DỮ LIỆU ON-CHAIN & DERIVATIVES (nguồn: OKX, FRED):\n"
-        f"{variables.get('onchain_data') or 'Không có dữ liệu'}\n\n"
-        f"BẢNG CHỈ SỐ CHÍNH (nguồn: tổng hợp từ các API trên):\n"
+        f"=== BẢNG CHỈ SỐ CHÍNH ===\n"
         f"{variables.get('key_metrics_table', 'N/A')}\n\n"
     )
-    # v0.21.0: Add data quality warnings
-    dq_notes = variables.get("data_quality_notes", "")
-    if dq_notes:
-        full_prompt += f"{dq_notes}\n\n"
-    # Add economic calendar events if available (FR60)
-    econ_events = variables.get("economic_events", "")
-    if econ_events:
-        full_prompt += (
-            f"LỊCH SỰ KIỆN KINH TẾ VĨ MÔ (nguồn: FairEconomy):\n{econ_events}\n"
-            "→ Trích dẫn CỤ THỂ: tên sự kiện, ngày giờ, số liệu forecast/previous.\n"
-            "→ Chú ý phân biệt: sự kiện 'ĐÃ DIỄN RA' (kết quả thực tế) vs "
-            "'SẮP TỚI' (cần theo dõi). KHÔNG viết sự kiện đã qua như 'sắp tới'.\n\n"
-        )
-    # Add recent breaking news context (v0.19.0 — pipeline context sharing)
-    breaking_ctx = variables.get("recent_breaking", "")
-    if breaking_ctx:
-        full_prompt += (
-            f"SỰ KIỆN BREAKING GẦN ĐÂY (24h qua — PHẢI nhắc đến trong bài):\n{breaking_ctx}\n"
-            "→ Bài viết sáng nay PHẢI cập nhật tình hình sau các sự kiện trên.\n\n"
-        )
-    # v0.21.0: Add sector data if available
+    # Optional data blocks
+    news = variables.get("news_summary") or ""
+    if news:
+        full_prompt += f"=== TIN TỨC (nguồn: RSS feeds) ===\n{news}\n\n"
+    onchain = variables.get("onchain_data") or ""
+    if onchain:
+        full_prompt += f"=== DỮ LIỆU ON-CHAIN & DERIVATIVES (nguồn: OKX) ===\n{onchain}\n\n"
     sector = variables.get("sector_data", "")
     if sector:
         full_prompt += f"{sector}\n\n"
-    # v0.21.0: Add inter-tier context (what previous tiers already wrote)
-    prev_tiers = variables.get("previous_tiers", "")
-    if prev_tiers:
-        full_prompt += f"{prev_tiers}\n\n"
-    # v0.21.0: Add detected narratives
+    econ_events = variables.get("economic_events", "")
+    if econ_events:
+        full_prompt += (
+            f"=== LỊCH SỰ KIỆN KINH TẾ (nguồn: FairEconomy) ===\n{econ_events}\n"
+            "Lưu ý: phân biệt sự kiện ĐÃ QUA vs SẮP TỚI.\n\n"
+        )
+    breaking_ctx = variables.get("recent_breaking", "")
+    if breaking_ctx:
+        full_prompt += f"=== SỰ KIỆN BREAKING 24H QUA ===\n{breaking_ctx}\n\n"
     narr = variables.get("narratives", "")
     if narr:
         full_prompt += f"{narr}\n\n"
-    # Add interpretation notes if available (v0.21.0: now tier-specific from Metrics Engine)
+
+    # Layer 2: METRICS ENGINE (pre-computed analysis — MANDATORY to use)
     interp = variables.get("interpretation_notes", "")
     if interp:
         full_prompt += (
-            f"PHÂN TÍCH DỮ LIỆU TỰ ĐỘNG (Metrics Engine — dùng làm nền tảng, "
-            f"KHÔNG copy nguyên văn):\n{interp}\n\n"
+            f"=== PHÂN TÍCH TỰ ĐỘNG (Metrics Engine) ===\n"
+            f"Dùng kết quả này làm NỀN TẢNG phân tích. "
+            f"Diễn giải bằng ngôn ngữ tự nhiên, KHÔNG copy nguyên văn.\n"
+            f"{interp}\n\n"
         )
+
+    # Layer 3: Data quality warnings
+    dq_notes = variables.get("data_quality_notes", "")
+    if dq_notes:
+        full_prompt += f"{dq_notes}\n\n"
+
+    # Layer 4: Inter-tier context (what previous tiers already wrote)
+    prev_tiers = variables.get("previous_tiers", "")
+    if prev_tiers:
+        full_prompt += f"{prev_tiers}\n\n"
+
+    # Layer 5: TASK + QUESTIONS (at the END — Gemini processes context first)
     full_prompt += (
-        "ĐỊNH DẠNG BẮT BUỘC (Markdown):\n"
-        "- BẮT BUỘC dùng ## cho tiêu đề mỗi section\n"
-        "- BẮT BUỘC dùng **bold** cho số liệu quan trọng và từ khóa nổi bật\n"
-        "- Dùng - cho bullet points khi liệt kê\n"
-        "- Dùng *italic* cho nguồn trích dẫn\n\n"
-        "CẤU TRÚC MỖI SECTION (BẮT BUỘC theo đúng format này):\n"
-        "## [Tên section]\n"
-        "**Tóm lược:** [2-3 câu ngắn gọn, ai đọc cũng hiểu, KHÔNG dùng thuật ngữ, "
-        "PHẢI có insight/nhận định rõ ràng — không chỉ lặp lại số liệu]\n\n"
-        "**Phân tích chi tiết:**\n"
-        "[Phân tích chuyên sâu với số liệu cụ thể. PHẢI giải thích Ý NGHĨA — "
-        "tại sao con số đó quan trọng, nó cho thấy điều gì, "
-        "mối quan hệ với các chỉ số khác ra sao]\n\n"
-        "KIẾN THỨC NỀN (chống hiểu sai — KHÔNG copy vào bài):\n"
-        "- Funding Rate dương = long trả short (lạc quan). Âm = ngược lại.\n"
-        "  ⚠️ SAI: 'dương = áp lực bán' hoặc 'Funding Rate tích cực'\n"
-        "- OI tăng + giá tăng = trend mạnh. OI tăng + giá giảm = rủi ro squeeze.\n"
-        "  ⚠️ SAI: 'OI tăng là tín hiệu tăng giá' (phải xem cùng hướng giá)\n"
-        "- Fear & Greed: 0-24 Extreme Fear, 25-49 Fear, 50-74 Greed, 75-100 Extreme Greed.\n"
-        "  ⚠️ SAI: 'F&G thấp = sắp tăng' (vi phạm NQ05 — ngụ ý dự đoán giá)\n"
-        "→ CHI TIẾT DIỄN GIẢI: xem phần PHÂN TÍCH DỮ LIỆU TỰ ĐỘNG (Metrics Engine)\n"
-        "  đã tính sẵn. DÙNG kết quả đó, KHÔNG tự diễn giải lại từ con số thô.\n\n"
-        "YÊU CẦU PHÂN TÍCH (BẮT BUỘC — tiêu chí đánh giá bài viết):\n"
-        "1. SO SÁNH: Khi có 2+ chỉ số, PHẢI so sánh và chỉ ra mâu thuẫn/đồng thuận.\n"
-        "   VD: 'BTC giảm **2%** NHƯNG volume tăng **30%** → lực mua đang tăng'\n"
-        "2. GIẢI THÍCH Ý NGHĨA: Mỗi con số PHẢI kèm giải thích nó có nghĩa gì.\n"
-        "   VD: 'Fear & Greed ở mức **16** (sợ hãi cực độ) — thị trường đang hoảng loạn'\n"
-        "3. MỐI QUAN HỆ NHÂN QUẢ: Chỉ ra chuỗi tác động giữa các yếu tố.\n"
-        "   VD: 'DXY tăng **0.8%** → USD mạnh lên → BTC chịu áp lực giảm'\n\n"
-        "⛔ VÍ DỤ SAI (TUYỆT ĐỐI KHÔNG viết kiểu này):\n"
-        "- 'đây là vùng tích lũy trước đợt tăng mới' → DỰ ĐOÁN GIÁ = NQ05 violation\n"
-        "- 'cơ hội tốt để tích lũy' → KHUYẾN NGHỊ MUA = NQ05 violation\n"
-        "- 'smart money đang mua vào' → BỊA DỮ LIỆU (không có whale data)\n"
-        "- 'theo Glassnode, MVRV đang ở mức...' → BỊA NGUỒN (không có MVRV trong data)\n"
-        "- 'tương quan BTC-Gold đạt 0.85' → BỊA SỐ (không có correlation data)\n\n"
-        "LƯU Ý:\n"
-        "- KHÔNG dùng 'TL;DR' — dùng '**Tóm lược:**' thay thế\n"
-        "- CHỈ sử dụng dữ liệu được cung cấp ở trên. KHÔNG tự tạo tin/số liệu.\n"
-        "- Nếu không có dữ liệu cho phần nào, ghi 'Chưa có dữ liệu cập nhật'.\n"
-        "- Khi trích dẫn tin tức, ƯU TIÊN kèm link nếu có trong dữ liệu.\n\n"
-        "⛔ KIỂM TRA CUỐI CÙNG (bắt buộc trước khi trả lời):\n"
-        "- Mọi nguồn bạn cite PHẢI nằm trong: CoinLore, CoinGecko, yfinance, "
-        "Glassnode, Binance Futures, Bybit, OKX, FRED, alternative.me, FairEconomy, "
-        "Messari, và các nguồn tin RSS được liệt kê ở trên.\n"
-        "- KHÔNG ĐƯỢC cite: Bloomberg, CryptoQuant, TradingView, "
-        "Santiment, IntoTheBlock, Chainalysis (trừ khi có trong TIN TỨC ở trên).\n"
-        "- Mọi con số trong bài PHẢI truy nguyên được về dữ liệu ở trên.\n\n"
+        f"=== NHIỆM VỤ: Viết bài tier {tier} cho cộng đồng CIC ===\n"
+        f"Danh sách coin: {variables.get('coin_list', 'N/A')}\n\n"
+        f"{variables.get('tier_context', '')}\n\n"
+    )
+
+    # Layer 6: FORMAT + QUALITY RULES (concise, positive-first)
+    full_prompt += (
+        "ĐỊNH DẠNG:\n"
+        "- ## cho tiêu đề, **bold** cho số liệu quan trọng, - cho bullet\n"
+        "- Mỗi section: ## [Tên] → **Tóm lược:** (2-3 câu insight) → **Phân tích chi tiết:**\n\n"
+        "YÊU CẦU CHẤT LƯỢNG:\n"
+        "1. SO SÁNH: 2+ chỉ số → chỉ ra đồng thuận/mâu thuẫn\n"
+        "   VD: 'BTC +2.8% NHƯNG F&G=28 (Fear) → giá hồi nhưng sentiment chưa theo'\n"
+        "2. NHÂN QUẢ: Nối các yếu tố thành chuỗi tác động\n"
+        "   VD: 'DXY giảm về 99.87 → USD yếu → dòng tiền có xu hướng chảy vào crypto'\n"
+        "3. Ý NGHĨA: Mỗi số liệu phải kèm giải thích nó quan trọng thế nào\n\n"
+        "⛔ KHÔNG:\n"
+        "- Bịa MVRV, SOPR, whale data, correlation coefficient, support/resistance\n"
+        "- Dự đoán giá hoặc khuyến nghị mua/bán (NQ05)\n"
+        "- Cite nguồn không có trong data (Bloomberg, TradingView, CryptoQuant...)\n\n"
         "CÁC PHẦN BÀI VIẾT:\n\n" + "\n\n".join(section_prompts)
     )
 
