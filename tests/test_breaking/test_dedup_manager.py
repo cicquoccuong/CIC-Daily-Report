@@ -228,3 +228,75 @@ class TestSimilarityDedup:
         result = mgr.check_and_filter([event])
         assert len(result.new_events) == 0
         assert result.duplicates_skipped == 1
+
+
+class TestDedupOnLoad:
+    """B1: Dedup entries by hash on load, keeping most-progressed status."""
+
+    def test_duplicate_entries_consolidated(self):
+        """Same hash appearing twice → keep one with better status."""
+        entries = [
+            DedupEntry(hash="abc", title="T", source="S", status="deferred_to_morning"),
+            DedupEntry(hash="abc", title="T", source="S", status="sent"),
+        ]
+        mgr = DedupManager(existing_entries=entries)
+        assert len(mgr.entries) == 1
+        assert mgr.entries[0].status == "sent"
+
+    def test_keeps_pending_when_no_duplicate(self):
+        entries = [
+            DedupEntry(hash="a", title="A", source="S", status="pending"),
+            DedupEntry(hash="b", title="B", source="S", status="sent"),
+        ]
+        mgr = DedupManager(existing_entries=entries)
+        assert len(mgr.entries) == 2
+
+    def test_deferred_beats_pending(self):
+        entries = [
+            DedupEntry(hash="x", title="T", source="S", status="pending"),
+            DedupEntry(hash="x", title="T", source="S", status="deferred_to_morning"),
+        ]
+        mgr = DedupManager(existing_entries=entries)
+        assert len(mgr.entries) == 1
+        assert mgr.entries[0].status == "deferred_to_morning"
+
+    def test_three_duplicates_keeps_best(self):
+        entries = [
+            DedupEntry(hash="x", title="T", source="S", status="pending"),
+            DedupEntry(hash="x", title="T", source="S", status="deferred_to_morning"),
+            DedupEntry(hash="x", title="T", source="S", status="sent"),
+        ]
+        mgr = DedupManager(existing_entries=entries)
+        assert len(mgr.entries) == 1
+        assert mgr.entries[0].status == "sent"
+
+
+class TestSeverityInUpdate:
+    """C4: update_entry_status can set severity."""
+
+    def test_severity_set_on_update(self):
+        mgr = DedupManager()
+        mgr.check_and_filter([_event()])
+        h = compute_hash("BTC hack", "CoinDesk")
+        mgr.update_entry_status(h, "deferred_to_morning", severity="important")
+        assert mgr._hash_map[h].severity == "important"
+
+    def test_severity_not_overwritten_when_empty(self):
+        entries = [DedupEntry(hash="a", title="T", source="S", severity="critical")]
+        mgr = DedupManager(existing_entries=entries)
+        mgr.update_entry_status("a", "sent")
+        assert mgr._hash_map["a"].severity == "critical"
+
+
+class TestGenerationFailedStatus:
+    """C3: generation_failed entries retrievable for retry."""
+
+    def test_get_generation_failed(self):
+        entries = [
+            DedupEntry(hash="a", title="A", source="S", status="generation_failed"),
+            DedupEntry(hash="b", title="B", source="S", status="sent"),
+        ]
+        mgr = DedupManager(existing_entries=entries)
+        failed = mgr.get_deferred_events("generation_failed")
+        assert len(failed) == 1
+        assert failed[0].hash == "a"

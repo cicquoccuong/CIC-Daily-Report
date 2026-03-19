@@ -226,9 +226,11 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
         if classified_event.is_deferred:
             run_log.events_deferred += 1
             result.deferred_events.append(classified_event)
-            # Update dedup entry status
+            # Update dedup entry status + severity (C4)
             h = compute_hash(classified_event.event.title, classified_event.event.source)
-            dedup_mgr.update_entry_status(h, classified_event.delivery_action)
+            dedup_mgr.update_entry_status(
+                h, classified_event.delivery_action, severity=classified_event.severity
+            )
             continue
 
         # Generate content for events to send now
@@ -249,15 +251,21 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             result.sent_events.append(classified_event)
             run_log.events_sent += 1
 
-            # Update dedup entry
+            # Update dedup entry (C4: include severity)
             h = compute_hash(classified_event.event.title, classified_event.event.source)
             dedup_mgr.update_entry_status(
                 h,
                 "sent",
                 delivered_at=datetime.now(timezone.utc).isoformat(),
+                severity=classified_event.severity,
             )
         except Exception as e:
             logger.error(f"Content generation failed for '{classified_event.event.title}': {e}")
+            # C3: Mark as generation_failed for retry in morning reprocessing
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
+            dedup_mgr.update_entry_status(
+                h, "generation_failed", severity=classified_event.severity
+            )
             run_log.errors.append(f"Generate: {e}")
 
     # Deliver generated content via Telegram
@@ -268,7 +276,7 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     dedup_mgr.cleanup_old_entries()
 
     # Persist dedup state back to BREAKING_LOG (A5)
-    await _persist_dedup_to_sheets(dedup_mgr)
+    await _persist_dedup_to_sheets(dedup_mgr, new_entries=dedup_result.entries_written)
 
     run_log.status = "success" if run_log.events_sent > 0 else "partial"
     return result
@@ -321,11 +329,13 @@ async def _load_dedup_from_sheets() -> DedupManager:
         return DedupManager()
 
 
-async def _persist_dedup_to_sheets(dedup_mgr: DedupManager) -> None:
+async def _persist_dedup_to_sheets(
+    dedup_mgr: DedupManager, new_entries: list | None = None
+) -> None:
     """Persist dedup entries back to BREAKING_LOG sheet (A5).
 
-    Uses delete-then-append but catches delete failure to prevent data loss.
-    If delete fails, falls back to append-only (may create duplicates but no data loss).
+    Uses clear-and-rewrite as primary strategy. If that fails, only appends
+    NEW entries (not all rows) to prevent duplicate rows in the sheet (B2).
     """
     try:
         from cic_daily_report.storage.sheets_client import SheetsClient
@@ -341,11 +351,18 @@ async def _persist_dedup_to_sheets(dedup_mgr: DedupManager) -> None:
             logger.info(f"Persisted {len(rows)} dedup entries to BREAKING_LOG (clean rewrite)")
             return  # done — no append needed
         except Exception as e:
-            logger.warning(f"BREAKING_LOG clear_and_rewrite failed, will append-only: {e}")
+            logger.warning(f"BREAKING_LOG clear_and_rewrite failed: {e}")
 
-        # Fallback: append-only (prevents data loss but may create duplicates)
-        await asyncio.to_thread(sheets.batch_append, "BREAKING_LOG", rows)
-        logger.info(f"Persisted {len(rows)} dedup entries to BREAKING_LOG (append-only fallback)")
+        # Fallback: only append NEW entries to prevent duplicates (B2)
+        if new_entries:
+            new_rows = [e.to_row() for e in new_entries]
+            await asyncio.to_thread(sheets.batch_append, "BREAKING_LOG", new_rows)
+            logger.info(
+                f"Appended {len(new_rows)} new entries to BREAKING_LOG (fallback, "
+                f"skipped {len(rows) - len(new_rows)} existing)"
+            )
+        else:
+            logger.warning("BREAKING_LOG: clear_and_rewrite failed and no new entries to append")
     except Exception as e:
         logger.warning(f"Failed to persist BREAKING_LOG: {e}")
 
@@ -402,9 +419,9 @@ async def _reprocess_deferred_events(
 ) -> None:
     """FR28: Reprocess deferred events when we're past the night window.
 
-    Uses the shared dedup_mgr instance (loaded once per pipeline run).
-    If current time is daytime (07:00-23:00 VN), delivers deferred_to_morning
-    events as a bundled morning alert.
+    C1 rewrite: Generates full Breaking News content via LLM for each deferred event
+    instead of sending plain text links. Uses split_message() for TG safety.
+    Also retries generation_failed events (C3, max 1 retry).
     """
     from cic_daily_report.breaking.severity_classifier import _is_night_mode
 
@@ -412,45 +429,84 @@ async def _reprocess_deferred_events(
     if _is_night_mode(now):
         return  # Still night — don't reprocess yet
 
+    # Collect deferred_to_morning + generation_failed (C3 retry)
+    morning_events = dedup_mgr.get_deferred_events("deferred_to_morning")
+    retry_events = dedup_mgr.get_deferred_events("generation_failed")
+    all_events = morning_events + retry_events
+
+    if not all_events:
+        return
+
+    logger.info(
+        f"FR28: Reprocessing {len(morning_events)} deferred + {len(retry_events)} failed events"
+    )
+
+    # Initialize LLM for content generation (Approach B)
+    from cic_daily_report.adapters.llm_adapter import LLMAdapter
+    from cic_daily_report.breaking.event_detector import BreakingEvent
+    from cic_daily_report.delivery.telegram_bot import TelegramBot, split_message
+
     try:
-        morning_events = dedup_mgr.get_deferred_events("deferred_to_morning")
-
-        if not morning_events:
-            return
-
-        logger.info(f"FR28: Found {len(morning_events)} deferred morning events to reprocess")
-
-        # Deliver bundled morning alert via Telegram
-        from cic_daily_report.delivery.telegram_bot import TelegramBot
-
-        bot = TelegramBot()
-
-        # Sort by severity (important first) for priority ordering
-        severity_order = {"critical": 0, "important": 1, "notable": 2, "": 3}
-        morning_events.sort(key=lambda e: severity_order.get(e.severity, 3))
-
-        lines = [f"\U0001f7e0 TIN ĐÃ HOÃN TỪ ĐÊM QUA ({len(morning_events)} tin)\n"]
-        for entry in morning_events:
-            severity_icon = {"critical": "\U0001f534", "important": "\U0001f7e0"}.get(
-                entry.severity, "\U0001f7e1"
-            )
-            line = f"{severity_icon} {entry.title} ({entry.source})"
-            if entry.url:
-                line += f"\n   \U0001f517 {entry.url}"
-            lines.append(line)
-
-        message = "\n".join(lines)
-        await bot.send_message(message)
-
-        # Update status to sent (persisted by main pipeline at end of run)
-        for entry in morning_events:
-            dedup_mgr.update_entry_status(entry.hash, "sent", delivered_at=now.isoformat())
-
-        run_log.events_sent += len(morning_events)
-        logger.info(f"FR28: Delivered {len(morning_events)} deferred morning events")
+        llm = LLMAdapter()
     except Exception as e:
-        logger.warning(f"Deferred event reprocessing failed (non-critical): {e}")
-        run_log.errors.append(f"Deferred reprocessing: {e}")
+        logger.warning(f"LLM init failed for deferred reprocessing: {e}")
+        llm = None
+
+    bot = TelegramBot()
+    severity_map = {
+        "critical": "\U0001f534",
+        "important": "\U0001f7e0",
+        "notable": "\U0001f7e1",
+    }
+    sent_count = 0
+
+    # Process each event individually (per-event try/except)
+    for entry in all_events:
+        try:
+            # Reconstruct BreakingEvent from DedupEntry metadata
+            event = BreakingEvent(
+                title=entry.title,
+                source=entry.source,
+                url=entry.url,
+                panic_score=0,
+            )
+
+            emoji = severity_map.get(entry.severity, "\U0001f7e1")
+
+            if llm is not None:
+                content = await asyncio.wait_for(
+                    generate_breaking_content(event, llm, severity=entry.severity or "important"),
+                    timeout=60,
+                )
+                message = f"{emoji} BREAKING NEWS\n\n{content.formatted}"
+            else:
+                # Fallback: plain text if LLM unavailable
+                message = (
+                    f"{emoji} BREAKING NEWS\n\n"
+                    f"{entry.title} ({entry.source})\n"
+                    f"\U0001f517 {entry.url}"
+                )
+
+            # Split for TG safety (A2)
+            parts = split_message("BREAKING", message)
+            for part in parts:
+                await bot.send_message(part.formatted)
+                await asyncio.sleep(1.0)
+
+            # Update status per event (not batch)
+            dedup_mgr.update_entry_status(entry.hash, "sent", delivered_at=now.isoformat())
+            sent_count += 1
+        except Exception as e:
+            logger.warning(f"Deferred reprocess failed for '{entry.title[:50]}': {e}")
+            if entry.status == "generation_failed":
+                # C3: second failure → permanently_failed
+                dedup_mgr.update_entry_status(entry.hash, "permanently_failed")
+            else:
+                dedup_mgr.update_entry_status(entry.hash, "generation_failed")
+
+    run_log.events_sent += sent_count
+    if sent_count > 0:
+        logger.info(f"FR28: Delivered {sent_count}/{len(all_events)} deferred events")
 
 
 # Match only fully-uppercase words 2-6 chars in ORIGINAL title (not uppercased)
@@ -557,15 +613,18 @@ def _format_recent_events(dedup_entries: list[DedupEntry], max_events: int = 5) 
 async def _deliver_breaking(result: BreakingPipelineResult) -> None:
     """Deliver breaking news content via Telegram Bot.
 
+    A1: Per-event try/except + split_message() for TG 4096 char safety.
     FR25: If image_url is available, send photo first with short caption,
     then send full text. Falls back to text-only if photo fails.
     """
-    from cic_daily_report.delivery.telegram_bot import TelegramBot
+    from cic_daily_report.delivery.telegram_bot import TelegramBot, split_message
 
     severity_map = {"critical": "\U0001f534", "important": "\U0001f7e0", "notable": "\U0001f7e1"}
-    try:
-        bot = TelegramBot()
-        for content in result.contents:
+    bot = TelegramBot()
+
+    for content in result.contents:
+        # Per-event try/except — one failure doesn't kill remaining (A1)
+        try:
             emoji = "\U0001f7e1"
             for evt in result.sent_events:
                 if evt.event.title == content.event.title:
@@ -582,13 +641,17 @@ async def _deliver_breaking(result: BreakingPipelineResult) -> None:
                     logger.warning(f"FR25 image failed (text-only fallback): {img_err}")
 
             message = f"{emoji} BREAKING NEWS\n\n{content.formatted}"
-            await bot.send_message(message)
+            # A1: split for TG 4096 char safety
+            parts = split_message("BREAKING", message)
+            for part in parts:
+                await bot.send_message(part.formatted)
+                await asyncio.sleep(0.5)
+
             logger.info(f"Breaking delivered: {content.event.title[:50]}...")
-            # Rate limit delay between messages (same as daily pipeline)
-            await asyncio.sleep(1.5)
-    except Exception as e:
-        logger.error(f"Breaking delivery failed: {e}")
-        result.run_log.errors.append(f"Delivery: {e}")
+            await asyncio.sleep(1.0)
+        except Exception as e:
+            logger.error(f"Breaking delivery failed for '{content.event.title[:50]}': {e}")
+            result.run_log.errors.append(f"Delivery: {e}")
 
 
 def _calc_duration(start_iso: str, end_iso: str) -> float:

@@ -97,8 +97,9 @@ class TestDetermineAction:
     def test_notable_day_send_now(self):
         assert _determine_action(NOTABLE, is_night=False) == "send_now"
 
-    def test_notable_night_deferred_daily(self):
-        assert _determine_action(NOTABLE, is_night=True) == "deferred_to_daily"
+    def test_notable_night_skipped(self):
+        """C2: Notable events at night are skipped (was deferred_to_daily, never consumed)."""
+        assert _determine_action(NOTABLE, is_night=True) == "skipped"
 
 
 class TestClassifyEvent:
@@ -113,10 +114,11 @@ class TestClassifyEvent:
         assert result.severity == IMPORTANT
         assert result.delivery_action == "deferred_to_morning"
 
-    def test_notable_night_deferred_daily(self):
+    def test_notable_night_skipped(self):
+        """C2: Notable events at night are now skipped."""
         result = classify_event(_event("Market shift", 30), now=_vn_time(2))
         assert result.severity == NOTABLE
-        assert result.delivery_action == "deferred_to_daily"
+        assert result.delivery_action == "skipped"
 
     def test_is_deferred_property(self):
         result = classify_event(_event("SEC news", 50), now=_vn_time(1))

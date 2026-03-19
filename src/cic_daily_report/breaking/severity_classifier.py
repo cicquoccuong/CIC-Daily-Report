@@ -211,7 +211,7 @@ def _determine_action(severity: str, is_night: bool) -> str:
 
     - 🔴 Critical: always send_now
     - 🟠 Important: deferred_to_morning during night
-    - 🟡 Notable: deferred_to_daily during night
+    - 🟡 Notable during night: skipped (C2 — deferred_to_daily was never consumed)
     """
     if severity == CRITICAL:
         return "send_now"
@@ -222,4 +222,4 @@ def _determine_action(severity: str, is_night: bool) -> str:
     if severity == IMPORTANT:
         return "deferred_to_morning"
 
-    return "deferred_to_daily"
+    return "skipped"

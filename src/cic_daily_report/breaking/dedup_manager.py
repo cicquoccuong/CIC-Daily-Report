@@ -105,9 +105,32 @@ def _is_similar_to_recent(
 class DedupManager:
     """Manages dedup state via BREAKING_LOG entries."""
 
+    # Status priority — higher = more progressed (used for dedup on load)
+    _STATUS_PRIORITY = {
+        "sent": 5,
+        "permanently_failed": 4,
+        "generation_failed": 3,
+        "deferred_to_morning": 2,
+        "deferred_to_daily": 2,
+        "skipped": 1,
+        "pending": 0,
+    }
+
     def __init__(self, existing_entries: list[DedupEntry] | None = None) -> None:
-        self._entries = existing_entries or []
-        self._hash_map: dict[str, DedupEntry] = {e.hash: e for e in self._entries}
+        raw = existing_entries or []
+        # Dedup by hash — keep entry with most-progressed status (B1)
+        best: dict[str, DedupEntry] = {}
+        for entry in raw:
+            existing = best.get(entry.hash)
+            if existing is None:
+                best[entry.hash] = entry
+            else:
+                new_pri = self._STATUS_PRIORITY.get(entry.status, 0)
+                old_pri = self._STATUS_PRIORITY.get(existing.status, 0)
+                if new_pri > old_pri:
+                    best[entry.hash] = entry
+        self._entries = list(best.values())
+        self._hash_map = best
 
     @property
     def entries(self) -> list[DedupEntry]:
@@ -212,14 +235,22 @@ class DedupManager:
             logger.info(f"Cleanup: removed {removed} old entries from BREAKING_LOG")
         return removed
 
-    def update_entry_status(self, hash_value: str, status: str, delivered_at: str = "") -> bool:
-        """Update status of an entry by hash."""
+    def update_entry_status(
+        self,
+        hash_value: str,
+        status: str,
+        delivered_at: str = "",
+        severity: str = "",
+    ) -> bool:
+        """Update status (and optionally severity) of an entry by hash."""
         entry = self._hash_map.get(hash_value)
         if not entry:
             return False
         entry.status = status
         if delivered_at:
             entry.delivered_at = delivered_at
+        if severity:
+            entry.severity = severity
         return True
 
     def get_deferred_events(self, status_filter: str = "deferred_to_morning") -> list[DedupEntry]:

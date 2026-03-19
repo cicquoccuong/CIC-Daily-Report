@@ -103,12 +103,12 @@ class TestFullBreakingFlow:
         assert classified.delivery_action == "deferred_to_morning"
         assert classified.is_deferred
 
-    async def test_night_mode_notable_deferred_daily(self):
-        """🟡 Notable events deferred to daily report during night."""
+    async def test_night_mode_notable_skipped(self):
+        """C2: Notable events skipped during night (was deferred_to_daily, never consumed)."""
         event = _event("Whale movement", "Blockchain.com", 30)
         classified = classify_event(event, now=_vn_time(3))
         assert classified.severity == NOTABLE
-        assert classified.delivery_action == "deferred_to_daily"
+        assert classified.delivery_action == "skipped"
 
     async def test_edge_case_2259_vn_not_night(self):
         """22:59 VN = NOT night mode, 🟠 sends immediately."""

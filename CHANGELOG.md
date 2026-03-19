@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.25.0] - 2026-03-19
+
+### Breaking Pipeline — Deferred Mechanism Fix (8 bugs, 3 clusters)
+
+#### Cluster A — Message Length (Bugs 1, 5, 9)
+- `_deliver_breaking()`: Per-event try/except + `split_message()` for TG 4096 char safety.
+  One oversized/failed message no longer kills delivery for remaining events.
+- `_reprocess_deferred_events()`: Same split_message() treatment for morning alerts.
+
+#### Cluster B — Dedup Persistence (Bugs 2, 8)
+- `DedupManager.__init__()`: Dedup entries by hash on load — keeps entry with most-progressed
+  status (sent > deferred > pending). Eliminates duplicate rows from BREAKING_LOG.
+- `_persist_dedup_to_sheets()`: Append-only fallback now only appends NEW entries (not all rows),
+  preventing duplicate row creation when clear_and_rewrite fails.
+
+#### Cluster C — Deferred Mechanism (Bugs 3, 4, 6, 7)
+- **C1**: Morning reprocessing rewritten — calls LLM to generate full Breaking News content
+  (Approach B), sends each event individually with proper format instead of plain text links.
+- **C2**: Removed `deferred_to_daily` (never consumed). Notable events during night → `skipped`.
+- **C3**: Content generation failure → `generation_failed` status (not stuck as "pending").
+  Morning reprocessing retries failed events once; second failure → `permanently_failed`.
+- **C4**: Severity now persisted in dedup entry when classifier runs, enabling proper sort
+  and display in morning alerts.
+
+#### Tests
+- 7 new tests (dedup on load, severity update, generation_failed retrieval, notable night skipped).
+- Total: 655 tests pass. Lint clean.
+
 ## [0.24.0] - 2026-03-18
 
 ### Data Source Expansion + Summary Generator Rewrite
