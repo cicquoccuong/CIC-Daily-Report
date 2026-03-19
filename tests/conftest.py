@@ -2,7 +2,21 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _zero_tier_cooldown():
+    """Disable inter-tier cooldown so tests never sleep in CI.
+
+    article_generator sets _TIER_COOLDOWN=60 when GITHUB_ACTIONS=true
+    (rate-limit safeguard). Without this patch, integration tests that
+    generate 5 tiers sleep 4×60s each → 28+ minutes of real delay.
+    """
+    with patch("cic_daily_report.generators.article_generator._TIER_COOLDOWN", 0):
+        yield
 
 
 @pytest.fixture
