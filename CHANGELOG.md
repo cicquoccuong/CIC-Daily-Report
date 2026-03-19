@@ -1,5 +1,113 @@
 # Changelog
 
+## [0.24.0] - 2026-03-18
+
+### Data Source Expansion + Summary Generator Rewrite
+
+#### New Collectors
+- **Coinalyze** (`collectors/coinalyze_data.py`): Derivatives data via Coinalyze API (OI, Funding
+  Rate, Liquidations, Long/Short Ratio) for BTC + ETH. Uses Binance USDT perpetuals (most liquid).
+  No geo-blocking from GitHub Actions. 40 req/min. Fallback: OKX → Binance → Bybit.
+- **CoinMetrics Community** (`collectors/coinmetrics_data.py`): On-chain fundamentals (NVT, MVRV,
+  Active Addresses, Hash Rate) for BTC + ETH. Replaces Glassnode (limited free tier).
+  No API key needed. Community tier only (SOPR, Exchange flows are PRO-only). Fallback: Glassnode.
+- **Whale Alert** (`collectors/whale_alert.py`): Large transaction tracker (≥$1M) across 20+
+  blockchains. New data type — aggregates whale flow direction (exchange in/out), generates
+  signal interpretation for LLM context. Paid plans only ($29.95/mo min) — optional,
+  pipeline works without key (returns empty summary).
+
+#### Pipeline Integration
+- `onchain_data.py`: New fallback chains — Coinalyze → OKX → Binance → Bybit (derivatives),
+  CoinMetrics → Glassnode (on-chain).
+- `daily_pipeline.py`: Whale Alert added as 8th parallel collector in Stage 1.
+  Whale data passed to tier articles (L3+) and summary generator.
+- `article_generator.py`: GenerationContext gains `whale_data` field. Tier articles (L3-L5)
+  include whale activity in LLM prompt.
+
+#### Summary Generator Rewrite
+- **Complete rewrite** of `summary_generator.py` — from 94-line bullet-point generator to
+  comprehensive 4-section market overview matching BIC Chat manual format:
+  - Section 1: ⭐ Tổng quan (causal analysis paragraphs)
+  - Section 2: 📊 Bảng chỉ số (metrics table with emoji markers)
+  - Section 3: 👉🏻 Đáng chú ý (VN news + upcoming macro events)
+  - Section 4: 📰 Tin tức nổi bật (5-8 articles with analysis)
+- Input: Receives full raw data (cleaned_news, market_data, onchain_data, sector_snapshot,
+  econ_calendar, metrics_interp, narratives, whale_data) — not just article excerpts.
+- Temperature reduced to 0.3 (data-driven), max_tokens increased to 4096.
+- Backward-compatible signature (old callers still work).
+
+#### Bug Fixes (post-research API verification)
+- **Coinalyze**: Symbol `.6` (non-existent) → `BTCUSDT_PERP.A` (Binance, confirmed).
+  Liquidation endpoint response parsing fixed (`history[].l/s` instead of `longLiquidations`).
+  Long/Short Ratio endpoint corrected to `/long-short-ratio-history` (no snapshot endpoint).
+  Interval `24h` → `daily`.
+- **CoinMetrics**: Removed PRO-only metrics (SOPR, Exchange Inflow/Outflow).
+  Fixed metric ID `SplyAct1d` → `AdrActCnt`.
+- **Whale Alert**: Free plan ~1h lookback (was incorrectly set to 24h).
+  Removed `currency` comma-join (API accepts single value only, filter client-side instead).
+- **article_generator.py**: `whale_data` was missing from `variables` dict — whale data
+  collected but never reached LLM prompts for tier articles. Fixed.
+  Also fixed prompt formatting: whale section now uses proper `=== WHALE ALERT ===` header.
+
+#### Tests
+- 55 new tests across 6 files (coinalyze, coinmetrics, whale_alert, summary_generator,
+  onchain_data, filter_data). Test patterns: graceful degradation, fallback chains,
+  data aggregation, prompt structure, whale_data tier filtering, edge cases.
+- Total: 648 tests pass. Lint clean.
+
+#### Environment Variables (new)
+- `COINALYZE_API_KEY` — free key from coinalyze.net (required for derivatives)
+- `WHALE_ALERT_API_KEY` — paid key from whale-alert.io (optional, $29.95/mo min)
+- CoinMetrics Community: no key needed
+
+## [0.23.0] - 2026-03-18
+
+### Pipeline Quality Overhaul (25 root causes, 5 phases)
+
+#### Phase 1 — Quick Wins (D1, E1, E2)
+- **D1**: Replace hardcoded numbers in L3/L4/L5 tier_context with placeholder templates
+  forcing LLM to use real data instead of echoing stale examples.
+- **E1**: Filler phrase detection — 7 regex patterns counted (not removed) by NQ05 filter,
+  exposed via `filler_count` field for quality gate.
+- **E2**: LLM temperature reduced 0.5→0.3 (both daily + breaking) to reduce hallucination.
+
+#### Phase 2 — Breaking News Context Enrichment (A1-A4)
+- **A1**: Trafilatura article body extraction (8s timeout, 1500 char cap) for breaking news.
+- **A2**: Market snapshot context injected into breaking prompt (BTC price/change, F&G).
+- **A3**: Recent events context (last 3 breaking alerts) injected for continuity.
+- **A4**: Rewritten breaking prompt template with "Nội dung cốt lõi" + "Bối cảnh & tác động".
+
+#### Phase 3 — Breaking News Classification & Dedup (B1-B4, F4)
+- **B1**: Price vs volume percentage distinction in severity classifier — volume % no longer
+  inflates severity (e.g., "volume up 50%" stays "normal", not "critical").
+- **B2**: Coin whitelist filter — non-CIC coins filtered out of breaking news.
+- **B4**: Added "crash" to DEFAULT_IMPORTANT_KEYWORDS.
+- **F4**: Similarity-based dedup (SequenceMatcher ≥0.70) catches near-duplicate headlines
+  with different wording within cooldown window.
+
+#### Phase 4 — Daily Pipeline Data Quality (F1-F7)
+- **F1**: Full article text passed to LLM (800 char cap) instead of 300-char summary.
+- **F2**: Top 5 RSS feeds marked `enrich=True` for trafilatura enrichment.
+- **F3**: 4 new RSS feeds added (CryptoNews, Bitcoinist, CryptoPotato, BlogTienAo).
+- **F5**: Macro article whitelist — Fed/CPI/DXY/interest rate articles bypass crypto filter.
+- **F6**: Data quality gate — pipeline aborts if <5 news AND no market data.
+- **F7**: Telegram truncation warning logged when message content is split.
+
+#### Phase 5 — Daily Report Anti-Repetition (C1-C3, E5)
+- **C1**: Rewritten `_summarize_tier_output()` with structured extraction (coins, numbers,
+  key sentences) for inter-tier context passing.
+- **C2**: Tier-specific analytical framing in metrics engine — L3 gets "NGUYÊN NHÂN" (causal),
+  L4 gets "RỦI RO" (risk/contradictions), L5 gets "KỊCH BẢN" (scenarios).
+- **C3**: Cross-tier 4-gram repetition detection — warns when same phrases appear in 3+ tiers.
+- **E5**: NQ05 phrase removal — removes only violating phrase (not entire sentence) for prose;
+  entire bullet removed for bullet points.
+
+### Test Coverage
+- 600 tests (up from 571), all passing
+- New test classes: TestFillerDetection, TestPhase5PhraseRemoval, TestPhase2ArticleEnrichment,
+  TestPhase2Helpers, TestPhase3CoinFilter, TestSimilarityDedup, TestPhase3Classification,
+  TestPhase4FeedEnhancements, TestCrossTierRepetition, plus updated inter-tier and metrics tests
+
 ## [0.22.0] - 2026-03-17
 
 ### Prompt Architecture Overhaul

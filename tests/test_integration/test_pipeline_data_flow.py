@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 
 class TestFilteredNewsExclusion:
     """Verify that articles with filtered=True are excluded from LLM input."""
@@ -52,3 +54,38 @@ class TestFilteredNewsExclusion:
         assert "BTC hits $100K" in news_text
         assert "ETH update" in news_text
         assert "SPAM article" not in news_text
+
+
+@dataclass
+class _MockArticle:
+    tier: str
+    content: str
+
+
+class TestCrossTierRepetition:
+    """Phase 5 C3: Cross-tier repetition detection."""
+
+    def test_repetition_detected(self):
+        """3 articles with same phrase → detected."""
+        from cic_daily_report.daily_pipeline import _check_cross_tier_repetition
+
+        common = "thị trường đang trong trạng thái phục hồi sau đợt giảm mạnh"
+        articles = [
+            _MockArticle("L1", f"BTC tăng 5%. {common}. Giá ổn định."),
+            _MockArticle("L3", f"Macro yếu. {common}. Funding Rate trung tính."),
+            _MockArticle("L5", f"Kịch bản base. {common}. Bullish nếu DXY giảm."),
+        ]
+        result = _check_cross_tier_repetition(articles)
+        assert result["repeated_count"] > 0
+
+    def test_no_repetition_clean(self):
+        """3 articles with different content → no repetition."""
+        from cic_daily_report.daily_pipeline import _check_cross_tier_repetition
+
+        articles = [
+            _MockArticle("L1", "BTC tăng 5% lên 75000 với volume cao. ETH giảm nhẹ."),
+            _MockArticle("L3", "Funding Rate +0.004% gần trung tính. DXY giảm về 99.8."),
+            _MockArticle("L5", "Base case Recovery. Bullish nếu Fed dovish. Bear nếu hawkish."),
+        ]
+        result = _check_cross_tier_repetition(articles)
+        assert result["repeated_count"] == 0

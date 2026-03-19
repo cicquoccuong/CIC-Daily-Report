@@ -145,6 +145,65 @@ class TestSemanticNQ05Patterns:
         assert result.violations_found == 0
 
 
+class TestPhase5PhraseRemoval:
+    """Phase 5 E5: NQ05 removes phrase, not entire sentence."""
+
+    def test_remove_phrase_keep_sentence(self):
+        """Violation phrase removed, rest of sentence preserved."""
+        content = "BTC tăng 15% và nên mua vào ngay." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        # "nên mua" removed, but "BTC tăng 15%" should remain
+        assert "nên mua" not in result.content
+        assert "BTC tăng 15%" in result.content
+
+    def test_remove_bullet_entirely(self):
+        """Bullet point with violation → entire bullet removed."""
+        content = "Tin tức:\n- Nên mua BTC ngay\n- ETH tăng 5%." + DISCLAIMER
+        result = check_and_fix(content)
+        assert "Nên mua" not in result.content
+        assert "ETH tăng 5%" in result.content
+
+
+class TestFillerDetection:
+    """Phase 1 E1: Filler phrase detection (count only, do NOT remove)."""
+
+    def test_filler_detection_single(self):
+        """Single filler phrase → filler_count=1, content unchanged."""
+        content = "BTC tăng 5% có thể ảnh hưởng đến thị trường." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.filler_count == 1
+        # Filler NOT removed — content preserved
+        assert "có thể ảnh hưởng đến" in result.content
+
+    def test_filler_detection_multiple(self):
+        """Multiple filler phrases → filler_count=3."""
+        content = (
+            "BTC tăng 5% có thể ảnh hưởng đến thị trường.\n"
+            "Điều này cho thấy xu hướng tích cực.\n"
+            "Tuy nhiên cần lưu ý rủi ro vĩ mô." + DISCLAIMER
+        )
+        result = check_and_fix(content)
+        assert result.filler_count == 3
+        # All fillers still present in content
+        assert "có thể ảnh hưởng đến" in result.content
+        assert "Điều này cho thấy" in result.content
+        assert "cần lưu ý" in result.content
+
+    def test_filler_detection_no_filler(self):
+        """Clean content → filler_count=0."""
+        content = "BTC tăng 5% lên $75,000 với volume $2.1B." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.filler_count == 0
+
+    def test_filler_flagged_for_review(self):
+        """Filler phrases show up in flagged_for_review."""
+        content = "Cần theo dõi thêm diễn biến thị trường." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.filler_count >= 1
+        assert any("Filler detected" in f for f in result.flagged_for_review)
+
+
 class TestBatchFilter:
     def test_filters_multiple(self):
         contents = [

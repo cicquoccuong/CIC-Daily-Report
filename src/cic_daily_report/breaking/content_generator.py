@@ -9,6 +9,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+import httpx
+
+try:
+    import trafilatura
+except ImportError:
+    trafilatura = None  # type: ignore[assignment]
+
 from cic_daily_report.breaking.event_detector import BreakingEvent
 from cic_daily_report.core.logger import get_logger
 from cic_daily_report.generators.article_generator import DISCLAIMER, NQ05_SYSTEM_PROMPT
@@ -23,25 +30,34 @@ _DISCLAIMER_RE = re.compile(
 )
 
 BREAKING_PROMPT_TEMPLATE = """\
-Viết bản tin BREAKING NEWS ngắn gọn bằng tiếng Việt.
+Viết bản tin BREAKING NEWS bằng tiếng Việt cho cộng đồng đầu tư crypto CIC.
 
 **Sự kiện:** {title}
 **Nguồn:** {source}
 **Link:** {url}
 {summary_section}
+{market_context}
+{recent_events}
+
 Yêu cầu TUYỆT ĐỐI:
-- Viết {word_target} từ — NGẮN GỌN, đi thẳng vào vấn đề
-- KHÔNG viết nước đôi ("có thể tăng hoặc giảm", "tuy nhiên cũng có thể...")
+- Viết {word_target} từ
 - KHÔNG bịa thêm dữ liệu, nguồn, hoặc con số không có ở trên
 - KHÔNG đưa ra khuyến nghị mua/bán
 - Dùng 'tài sản mã hóa' thay vì 'tiền điện tử'
-- ĐƯỢC PHÉP nêu tên cụ thể các tài sản (BTC, ETH, SOL...) khi liên quan đến sự kiện
-- CHỈ phân tích dựa trên thông tin sự kiện ở trên, KHÔNG thêm bối cảnh bịa
+- Dựa trên NỘI DUNG BÀI GỐC (nếu có), KHÔNG chỉ tiêu đề
 
-Cấu trúc BẮT BUỘC (CHỈ viết 3 phần này, KHÔNG thêm nguồn hay tuyên bố miễn trừ):
-1. **Tiêu đề** (1 dòng tiếng Việt, ngắn gọn, nêu rõ tên tài sản nếu có)
-2. **Chuyện gì xảy ra:** (2-3 câu — SỰ KIỆN cụ thể, dùng dữ liệu từ trên)
-3. **Tại sao quan trọng:** (2-3 câu — tác động trực tiếp đến thị trường)"""
+Cấu trúc (CHỈ viết 3 phần, KHÔNG thêm nguồn hay tuyên bố miễn trừ):
+
+1. **Tiêu đề** (1 dòng tiếng Việt, nêu rõ tên tài sản nếu có)
+
+2. **Nội dung cốt lõi:** (3-4 câu)
+   - Tóm tắt SỰ KIỆN + SỐ LIỆU quan trọng từ bài gốc
+   - Ai liên quan? Quy mô bao lớn? Con số cụ thể nào?
+
+3. **Bối cảnh & tác động:** (2-3 câu)
+   - Tin này nằm trong xu hướng gì? (liên kết tin gần đây nếu có)
+   - Ảnh hưởng CỤ THỂ gì đến thị trường/nhà đầu tư crypto?
+   - Nếu có data thị trường, nối với bối cảnh hiện tại"""
 
 RAW_DATA_TEMPLATE = """⚠️ AI không khả dụng — dữ liệu thô
 
@@ -69,11 +85,38 @@ class BreakingContent:
         return self.content
 
 
+_TRAFILATURA_TIMEOUT = 8  # seconds — fail fast, fallback to title-only
+
+
+async def _fetch_article_text(url: str, max_chars: int = 1500) -> str:
+    """Fetch and extract article body text via trafilatura.
+
+    Returns extracted text (max max_chars) or empty string on failure.
+    Timeout: 8s — breaking news must be fast.
+    """
+    if trafilatura is None:
+        return ""
+
+    try:
+        async with httpx.AsyncClient(timeout=_TRAFILATURA_TIMEOUT) as client:
+            resp = await client.get(url, follow_redirects=True)
+            resp.raise_for_status()
+
+        text = trafilatura.extract(resp.text, include_comments=False, include_tables=False)
+        if text:
+            return text[:max_chars]
+    except Exception as e:
+        logger.debug(f"Article extraction failed for {url}: {e}")
+    return ""
+
+
 async def generate_breaking_content(
     event: BreakingEvent,
     llm,
     severity: str = "notable",
     extra_banned_keywords: list[str] | None = None,
+    market_context: str = "",
+    recent_events: str = "",
 ) -> BreakingContent:
     """Generate breaking news content for a detected event.
 
@@ -82,6 +125,8 @@ async def generate_breaking_content(
         llm: LLM adapter instance (from Story 3.1).
         severity: Event severity ("critical", "important", "notable").
         extra_banned_keywords: Additional NQ05 banned keywords from config.
+        market_context: Brief market snapshot (BTC/ETH price, F&G, DXY).
+        recent_events: Recent breaking events for cross-reference.
 
     Returns:
         BreakingContent with AI-generated or raw-data content.
@@ -90,13 +135,23 @@ async def generate_breaking_content(
 
     # Build summary section from raw_data if available
     summary_text = event.raw_data.get("summary", "") if event.raw_data else ""
-    summary_section = f"**Tóm tắt nguồn:** {summary_text}\n" if summary_text else ""
+
+    # Fetch article body if no summary in raw_data
+    if not summary_text and event.url:
+        article_text = await _fetch_article_text(event.url)
+        if article_text:
+            summary_text = article_text
+            logger.info(f"Enriched breaking event with article text ({len(article_text)} chars)")
+
+    summary_section = f"**Nội dung bài gốc:**\n{summary_text}\n" if summary_text else ""
 
     prompt = BREAKING_PROMPT_TEMPLATE.format(
         title=event.title,
         source=event.source,
         url=event.url,
         summary_section=summary_section,
+        market_context=market_context,
+        recent_events=recent_events,
         word_target=word_target,
     )
 
@@ -104,7 +159,7 @@ async def generate_breaking_content(
         response = await llm.generate(
             prompt=prompt,
             max_tokens=2048,
-            temperature=0.5,
+            temperature=0.3,
             system_prompt=NQ05_SYSTEM_PROMPT,
         )
 

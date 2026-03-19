@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from cic_daily_report.breaking.dedup_manager import (
     DedupEntry,
     DedupManager,
+    _is_similar_to_recent,
     compute_hash,
 )
 from cic_daily_report.breaking.event_detector import BreakingEvent
@@ -193,3 +194,37 @@ class TestDedupManagerStatus:
         rows = mgr.all_rows()
         assert len(rows) == 1
         assert len(rows[0]) == 9
+
+
+class TestSimilarityDedup:
+    """Phase 3 F4: Similarity-based dedup beyond hash matching."""
+
+    def test_similar_title_detected(self):
+        """Near-duplicate titles should be caught."""
+        entries = [DedupEntry(hash="h1", title="PIPPIN crashes 49% after whale dump", source="S")]
+        assert _is_similar_to_recent("PIPPIN crashes 49% after large whale dump", entries)
+
+    def test_different_events_not_similar(self):
+        """Genuinely different events should NOT be flagged."""
+        entries = [DedupEntry(hash="h1", title="BTC drops 10% in flash crash", source="S")]
+        assert not _is_similar_to_recent("ETH surges 8% on ETF approval news", entries)
+
+    def test_similarity_integrated_in_check_and_filter(self):
+        """Similar title blocked even with different hash (different source)."""
+        existing = DedupEntry(
+            hash=compute_hash("PIPPIN crashes 49% in major dump", "CoinDesk"),
+            title="PIPPIN crashes 49% in major dump",
+            source="CoinDesk",
+            detected_at=datetime.now(timezone.utc).isoformat(),
+        )
+        mgr = DedupManager(existing_entries=[existing])
+        # Same event from different source — different hash but similar title
+        event = BreakingEvent(
+            title="PIPPIN crashes 49% in massive dump",
+            source="TheBlock",
+            url="https://x.com",
+            panic_score=70,
+        )
+        result = mgr.check_and_filter([event])
+        assert len(result.new_events) == 0
+        assert result.duplicates_skipped == 1

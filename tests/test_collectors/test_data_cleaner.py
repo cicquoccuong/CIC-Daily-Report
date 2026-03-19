@@ -183,6 +183,34 @@ class TestNonCryptoFilter:
         filtered = [a for a in result.articles if a.get("filtered")]
         assert len(filtered) == 1  # should be filtered (no crypto relevance)
 
+    def test_macro_fed_interest_rate_not_filtered(self):
+        """F5: Fed/interest rate macro articles should NOT be filtered."""
+        articles = [
+            {
+                "title": "Fed giữ lãi suất ổn định tại 4.50%",
+                "url": "https://news.com/fed",
+                "source_name": "VnEconomy",
+                "summary": "Cục Dự trữ Liên bang giữ lãi suất",
+            },
+        ]
+        result = clean_articles(articles)
+        filtered = [a for a in result.articles if a.get("filtered")]
+        assert len(filtered) == 0  # Should NOT be filtered
+
+    def test_non_crypto_non_macro_still_filtered(self):
+        """Non-crypto AND non-macro articles should still be filtered."""
+        articles = [
+            {
+                "title": "Taylor Swift concert draws 80,000 fans",
+                "url": "https://entertainment.com/1",
+                "source_name": "EntNews",
+                "summary": "The concert was a massive success",
+            },
+        ]
+        result = clean_articles(articles)
+        filtered = [a for a in result.articles if a.get("filtered")]
+        assert len(filtered) == 1
+
     def test_short_keyword_matches_standalone(self):
         """Short keywords like 'ETH' should match as standalone words."""
         articles = [

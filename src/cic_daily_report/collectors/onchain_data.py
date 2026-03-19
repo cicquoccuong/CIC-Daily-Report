@@ -36,26 +36,67 @@ class OnChainMetric:
 
 
 async def collect_onchain() -> list[OnChainMetric]:
-    """Collect on-chain + derivatives + FRED macro data."""
+    """Collect on-chain + derivatives + FRED macro data.
+
+    v0.24.0: Coinalyze (primary derivatives) + CoinMetrics (primary on-chain),
+    with Glassnode/OKX/Binance/Bybit as fallbacks.
+    """
     logger.info("Collecting on-chain & derivatives data")
 
+    # Phase 1: Collect from all sources in parallel
     tasks = [
-        _collect_glassnode(),
-        _collect_derivatives(),
+        _collect_coinalyze_or_fallback(),
+        _collect_coinmetrics_or_fallback(),
         _collect_fred(),
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     all_metrics: list[OnChainMetric] = []
+    source_names = ["Derivatives", "On-chain", "FRED"]
     for i, result in enumerate(results):
         if isinstance(result, Exception):
-            source_names = ["Glassnode", "Derivatives", "FRED"]
             logger.warning(f"{source_names[i]} failed: {result}")
         else:
             all_metrics.extend(result)
 
     logger.info(f"On-chain data collected: {len(all_metrics)} metrics")
     return all_metrics
+
+
+async def _collect_coinalyze_or_fallback() -> list[OnChainMetric]:
+    """Coinalyze → OKX → Binance → Bybit fallback chain for derivatives."""
+    try:
+        from cic_daily_report.collectors.coinalyze_data import (
+            collect_coinalyze_derivatives,
+        )
+
+        metrics = await collect_coinalyze_derivatives()
+        if metrics:
+            return metrics
+        logger.info("Coinalyze returned empty — falling back to exchange APIs")
+    except Exception as e:
+        logger.warning(f"Coinalyze failed: {e}")
+
+    # Fallback to existing exchange API chain
+    return await _collect_derivatives()
+
+
+async def _collect_coinmetrics_or_fallback() -> list[OnChainMetric]:
+    """CoinMetrics → Glassnode fallback chain for on-chain fundamentals."""
+    try:
+        from cic_daily_report.collectors.coinmetrics_data import (
+            collect_coinmetrics_onchain,
+        )
+
+        metrics = await collect_coinmetrics_onchain()
+        if metrics:
+            return metrics
+        logger.info("CoinMetrics returned empty — falling back to Glassnode")
+    except Exception as e:
+        logger.warning(f"CoinMetrics failed: {e}")
+
+    # Fallback to existing Glassnode
+    return await _collect_glassnode()
 
 
 async def _collect_glassnode() -> list[OnChainMetric]:
@@ -214,7 +255,6 @@ async def _derivatives_binance() -> list[OnChainMetric]:
             logger.debug(f"Binance takerBuySellVol: {e}")
 
     return metrics
-
 
 
 async def _derivatives_bybit() -> list[OnChainMetric]:

@@ -142,13 +142,18 @@ def split_message(tier_label: str, content: str) -> list[TelegramMessage]:
 
     # Hard fallback: if any part still exceeds max, chunk it
     final_parts: list[str] = []
+    truncated = False
     for part in parts:
         while len(part) > max_content:
+            truncated = True
             final_parts.append(part[:max_content])
             part = part[max_content:]
         if part.strip():
             final_parts.append(part.strip())
     parts = final_parts if final_parts else parts
+
+    if truncated:
+        logger.warning(f"Article [{tier_label}] truncated: content split into {len(parts)} parts")
 
     total = len(parts)
     return [

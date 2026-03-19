@@ -325,3 +325,126 @@ class TestFallbackChain:
         # Only "SEC" and "ban" keyword matches survive
         assert len(events) == 1
         assert "SEC" in events[0].matched_keywords or "ban" in events[0].matched_keywords
+
+
+class TestPhase2Helpers:
+    """Phase 2: Market snapshot and recent events formatting helpers."""
+
+    def test_format_market_snapshot(self):
+        """Market data → formatted string with BTC, ETH, F&G, DXY."""
+        from cic_daily_report.breaking_pipeline import _format_market_snapshot
+
+        market_data = [
+            MarketDataPoint(
+                symbol="BTC",
+                price=74589,
+                change_24h=0.5,
+                volume_24h=1e10,
+                market_cap=1e12,
+                data_type="crypto",
+                source="CoinLore",
+            ),
+            MarketDataPoint(
+                symbol="ETH",
+                price=2450,
+                change_24h=-1.2,
+                volume_24h=5e9,
+                market_cap=3e11,
+                data_type="crypto",
+                source="CoinLore",
+            ),
+            MarketDataPoint(
+                symbol="Fear_Greed",
+                price=26,
+                change_24h=0,
+                volume_24h=0,
+                market_cap=0,
+                data_type="index",
+                source="Alternative.me",
+            ),
+            MarketDataPoint(
+                symbol="DXY",
+                price=99.8,
+                change_24h=-0.3,
+                volume_24h=0,
+                market_cap=0,
+                data_type="index",
+                source="FairEconomy",
+            ),
+        ]
+        result = _format_market_snapshot(market_data)
+        assert "BTC: $74,589" in result
+        assert "ETH: $2,450" in result
+        assert "Fear & Greed: 26" in result
+        assert "DXY: 99.8" in result
+
+    def test_format_market_snapshot_empty(self):
+        from cic_daily_report.breaking_pipeline import _format_market_snapshot
+
+        assert _format_market_snapshot(None) == ""
+        assert _format_market_snapshot([]) == ""
+
+    def test_format_recent_events(self):
+        """10 entries → return top 5 most recent."""
+        from cic_daily_report.breaking_pipeline import _format_recent_events
+
+        entries = [
+            DedupEntry(
+                hash=f"h{i}",
+                title=f"Event {i}",
+                source="src",
+                severity="notable",
+                detected_at=f"2026-03-18T0{i}:00:00Z",
+            )
+            for i in range(10)
+        ]
+        result = _format_recent_events(entries)
+        assert "Tin Breaking gần đây" in result
+        # Top 5 most recent (by detected_at descending)
+        assert "Event 9" in result
+        assert "Event 5" in result
+        assert "Event 4" not in result  # 6th most recent, excluded
+
+    def test_format_recent_events_empty(self):
+        from cic_daily_report.breaking_pipeline import _format_recent_events
+
+        assert _format_recent_events([]) == ""
+
+
+class TestPhase3CoinFilter:
+    """Phase 3 B2: Coin whitelist filter."""
+
+    def test_filter_non_cic_coin(self):
+        """PIPPIN event → filtered out (not in CIC list)."""
+        from cic_daily_report.breaking_pipeline import _filter_non_cic_coins
+
+        events = [_event("PIPPIN crashes 49%", "CoinDesk")]
+        tracked = {"BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE"}
+        result = _filter_non_cic_coins(events, tracked)
+        assert len(result) == 0
+
+    def test_keep_cic_coin(self):
+        """BTC event → kept."""
+        from cic_daily_report.breaking_pipeline import _filter_non_cic_coins
+
+        events = [_event("BTC drops 5%", "CoinDesk")]
+        tracked = {"BTC", "ETH", "SOL"}
+        result = _filter_non_cic_coins(events, tracked)
+        assert len(result) == 1
+
+    def test_keep_macro_event(self):
+        """Non-coin event (regulatory/macro) → kept."""
+        from cic_daily_report.breaking_pipeline import _filter_non_cic_coins
+
+        events = [_event("Argentina bans Polymarket", "Reuters")]
+        tracked = {"BTC", "ETH", "SOL"}
+        result = _filter_non_cic_coins(events, tracked)
+        assert len(result) == 1  # No known coin symbol → always keep
+
+    def test_empty_whitelist_keeps_all(self):
+        """No whitelist → keep all events."""
+        from cic_daily_report.breaking_pipeline import _filter_non_cic_coins
+
+        events = [_event("PIPPIN crashes"), _event("BTC drops")]
+        result = _filter_non_cic_coins(events, set())
+        assert len(result) == 2

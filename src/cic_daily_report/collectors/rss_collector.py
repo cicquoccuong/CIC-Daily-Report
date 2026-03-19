@@ -43,6 +43,7 @@ class FeedConfig:
     language: str  # "vi" or "en"
     enabled: bool = True
     source_type: str = "news"  # "news" or "research"
+    enrich: bool = False  # Enable trafilatura text extraction for this feed
 
 
 # Default feed list — can be extended via config
@@ -54,16 +55,20 @@ DEFAULT_FEEDS: list[FeedConfig] = [
     FeedConfig("https://tapchibitcoin.io/feed", "TapChiBitcoin", "vi"),
     FeedConfig("https://vn.beincrypto.com/feed/", "BeInCrypto_VN", "vi", enabled=False),  # 403
     # English
-    FeedConfig("https://cointelegraph.com/rss", "CoinTelegraph", "en"),
-    FeedConfig("https://coindesk.com/arc/outboundfeeds/rss/", "CoinDesk", "en"),
-    FeedConfig("https://decrypt.co/feed", "Decrypt", "en"),
-    FeedConfig("https://theblock.co/rss.xml", "TheBlock", "en"),
+    FeedConfig("https://cointelegraph.com/rss", "CoinTelegraph", "en", enrich=True),
+    FeedConfig("https://coindesk.com/arc/outboundfeeds/rss/", "CoinDesk", "en", enrich=True),
+    FeedConfig("https://decrypt.co/feed", "Decrypt", "en", enrich=True),
+    FeedConfig("https://theblock.co/rss.xml", "TheBlock", "en", enrich=True),
     FeedConfig("https://cryptoslate.com/feed/", "CryptoSlate", "en"),
     FeedConfig("https://u.today/rss", "UToday", "en"),
     FeedConfig("https://ambcrypto.com/feed/", "AMBCrypto", "en"),
     FeedConfig("https://newsbtc.com/feed/", "NewsBTC", "en"),
     FeedConfig("https://www.ccn.com/feed/", "CCN", "en", enabled=False),  # 403
-    FeedConfig("https://blockworks.co/feed/", "Blockworks", "en"),
+    FeedConfig("https://blockworks.co/feed/", "Blockworks", "en", enrich=True),
+    FeedConfig("https://crypto.news/feed/", "CryptoNews", "en"),
+    FeedConfig("https://bitcoinist.com/feed/", "Bitcoinist", "en"),
+    FeedConfig("https://cryptopotato.com/feed/", "CryptoPotato", "en"),
+    FeedConfig("https://blogtienao.com/feed/", "BlogTienAo", "vi"),
     FeedConfig("https://dlnews.com/feed/", "DLNews", "en", enabled=False),  # 404
     FeedConfig(
         "https://feeds.reuters.com/reuters/businessNews",
@@ -162,10 +167,13 @@ async def collect_rss(
             articles.extend(result)
             succeeded += 1
 
-    # Enrich research articles with full text + og:image via trafilatura
-    research_articles = [a for a in articles if a.source_type == "research"]
-    if research_articles:
-        await _enrich_research_articles(research_articles)
+    # Enrich articles: research feeds (always) + feeds with enrich=True
+    enrich_sources = {f.source_name for f in feeds if f.enrich or f.source_type == "research"}
+    enrichable = [
+        a for a in articles if a.source_name in enrich_sources or a.source_type == "research"
+    ]
+    if enrichable:
+        await _enrich_research_articles(enrichable)
 
     logger.info(
         f"RSS collection done: {succeeded} feeds OK, {failed} failed, "

@@ -183,6 +183,34 @@ class TestWordBoundaryMatching:
         assert result == CRITICAL
 
 
+class TestPhase3Classification:
+    """Phase 3: Volume vs price %, crash keyword sync."""
+
+    def test_volume_pct_not_critical(self):
+        """B1: Volume percentage should NOT trigger severity."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("Zcash 108% trading volume surge", 40), cfg)
+        assert result == NOTABLE  # Volume %, not price
+
+    def test_price_drop_pct_critical(self):
+        """B1: Price drop 12% → critical."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("BTC drop 12% in flash crash", 40), cfg)
+        assert result == CRITICAL
+
+    def test_price_surge_pct_important(self):
+        """B1: Price surge 5% → important."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("ETH surge 5% on ETF news", 40), cfg)
+        assert result == IMPORTANT
+
+    def test_crash_keyword_important(self):
+        """B4: 'crash' keyword → important severity."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("Market crash fears grow", 40), cfg)
+        assert result == IMPORTANT
+
+
 class TestClassifyBatch:
     def test_classifies_all(self):
         events = [_event("Hack", 90), _event("Update", 30)]

@@ -315,11 +315,40 @@ def _filter_non_crypto(
             result.append(article)
             continue
 
-        is_relevant = _text_has_crypto_keyword(text, keywords_lower)
+        # Macro whitelist: articles about macro events relevant to crypto markets
+        _MACRO_WHITELIST = {
+            "fed",
+            "fomc",
+            "interest rate",
+            "lãi suất",
+            "inflation",
+            "lạm phát",
+            "cpi",
+            "gdp",
+            "tariff",
+            "thuế quan",
+            "treasury",
+            "bond",
+            "trái phiếu",
+            "dollar",
+            "dxy",
+            "gold",
+            "vàng",
+            "oil",
+            "dầu",
+            "sec",
+            "regulation",
+            "quy định",
+            "ban",
+            "cấm",
+        }
+        is_macro = any(kw in text for kw in _MACRO_WHITELIST)
+
+        is_relevant = is_macro or _text_has_crypto_keyword(text, keywords_lower)
         if not is_relevant:
             article["filtered"] = True
             filtered_count += 1
-            logger.debug(f"Non-crypto filtered: {article.get('title', '')[:60]}")
+            logger.info(f"Non-crypto filtered: {article.get('title', '')[:60]}")
 
         result.append(article)
 

@@ -149,3 +149,16 @@ development_status:
   # Template upgrade: L1(3) L2(3) L3(4) L4(4) L5(6) = 20 sections total
   # L4 TIER_MAX_TOKENS: 3072→4096
   # 440 tests pass (+14 new). Lint clean.
+
+  # Post-Launch: Pipeline Quality Overhaul (v0.23.0, 2026-03-18)
+  post-launch-quality-overhaul: done
+  # 25 root causes, 5 phases — all fixed
+  # 600 tests pass. Lint clean.
+
+  # Post-Launch: Data Source Expansion + Summary Rewrite (v0.24.0, 2026-03-18)
+  post-launch-data-expansion: done
+  # New collectors: Coinalyze (derivatives) + CoinMetrics Community (on-chain) + Whale Alert
+  # Fallback chains: Coinalyze→OKX→Binance→Bybit, CoinMetrics→Glassnode
+  # Summary generator: complete rewrite — 4-section BIC Chat format
+  # Pipeline integration: 8 parallel collectors, whale data in tier context
+  # 639 tests pass (+39 new). Lint clean.

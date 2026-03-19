@@ -158,30 +158,47 @@ class TestInterpretMetrics:
         l5_text = result.format_for_tier("L5")
         # L5 should have more content than L1
         assert len(l5_text) > len(l1_text)
-        # L1 should have sentiment but not derivatives
+        # L1 should have sentiment
         assert "SENTIMENT" in l1_text
-        # L5 should have everything
-        assert "DERIVATIVES" in l5_text
-        assert "TỔNG HỢP TÍN HIỆU" in l5_text
+        # L5 should have scenario framing
+        assert "KỊCH BẢN" in l5_text
 
-    def test_l3_includes_derivatives_and_macro(self):
+    def test_l3_includes_causal_analysis(self):
+        """Phase 5 C2: L3 gets 'WHY' framing — causal chain."""
         result = interpret_metrics(
             [_btc()],
             [_funding(0.0005)],
             {"Fear & Greed": 50, "DXY": 104.0},
         )
         l3_text = result.format_for_tier("L3")
-        assert "DERIVATIVES" in l3_text
-        assert "MACRO" in l3_text
+        assert "NGUYÊN NHÂN" in l3_text
+        assert "Macro" in l3_text
+        assert "Derivatives" in l3_text
 
-    def test_l4_includes_cross_signals(self):
+    def test_l4_includes_risk_analysis(self):
+        """Phase 5 C2: L4 gets 'RISK' framing — contradictions."""
         result = interpret_metrics(
             [_btc(change_24h=3.0)],
             [_funding(-0.0002)],
             {"Fear & Greed": 30},
         )
         l4_text = result.format_for_tier("L4")
-        assert "TÍN HIỆU" in l4_text
+        assert "RỦI RO" in l4_text
+        assert "MÂU THUẪN" in l4_text
+
+    def test_l3_not_risk_l4_not_causal(self):
+        """Each tier gets DIFFERENT framing — no overlap."""
+        result = interpret_metrics(
+            [_btc()],
+            [_funding(0.0005)],
+            {"Fear & Greed": 50, "DXY": 104.0},
+        )
+        l3_text = result.format_for_tier("L3")
+        l4_text = result.format_for_tier("L4")
+        assert "NGUYÊN NHÂN" in l3_text
+        assert "NGUYÊN NHÂN" not in l4_text
+        assert "RỦI RO" in l4_text
+        assert "RỦI RO" not in l3_text
 
     def test_derivatives_extreme_funding_rate(self):
         result = interpret_metrics(

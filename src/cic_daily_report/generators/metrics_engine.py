@@ -204,29 +204,40 @@ class MetricsInterpretation:
     def format_for_tier(self, tier: str) -> str:
         """Return tier-appropriate interpretation text.
 
-        L1-L2: regime + sentiment only
-        L3: + derivatives + macro
-        L4: + cross-signal conflicts
-        L5: all analysis
+        Each tier gets a DIFFERENT analytical framing from the same data:
+        L1-L2: regime + sentiment (simple overview)
+        L3: WHY — causal chain (macro → derivatives → conclusion)
+        L4: RISK — contradictions and warnings
+        L5: SCENARIOS — base/bull/bear from all signals
         """
-        parts = [self.regime.format_vi()]
+        parts = []
 
         if tier in ("L1", "L2"):
-            parts.append(f"\nSENTIMENT:\n{self.sentiment_analysis}")
+            parts.append(f"TRẠNG THÁI: {self.regime.format_vi()}")
+            parts.append(f"SENTIMENT: {self.sentiment_analysis}")
+
         elif tier == "L3":
-            parts.append(f"\nSENTIMENT:\n{self.sentiment_analysis}")
-            parts.append(f"\nDERIVATIVES:\n{self.derivatives_analysis}")
-            parts.append(f"\nMACRO:\n{self.macro_analysis}")
+            parts.append(f"TRẠNG THÁI: {self.regime.format_vi()}")
+            parts.append("PHÂN TÍCH NGUYÊN NHÂN (cho L3 — giải thích TẠI SAO):")
+            parts.append(f"  Macro: {self.macro_analysis}")
+            parts.append(f"  Derivatives: {self.derivatives_analysis}")
+            parts.append("  → Nối macro + derivatives thành chuỗi nhân-quả.")
+
         elif tier == "L4":
-            parts.append(f"\nDERIVATIVES:\n{self.derivatives_analysis}")
-            parts.append(f"\nMACRO:\n{self.macro_analysis}")
-            parts.append(f"\nTÍN HIỆU MÂU THUẪN:\n{self.cross_signal_summary}")
+            parts.append("PHÂN TÍCH RỦI RO (cho L4 — chỉ ra MÂU THUẪN):")
+            parts.append(f"  {self.cross_signal_summary}")
+            parts.append(f"  Derivatives: {self.derivatives_analysis}")
+            parts.append(f"  Macro: {self.macro_analysis}")
+            parts.append("  → Mâu thuẫn = rủi ro gì cho trader?")
+
         else:  # L5
-            parts.append(f"\nSENTIMENT:\n{self.sentiment_analysis}")
-            parts.append(f"\nDERIVATIVES:\n{self.derivatives_analysis}")
-            parts.append(f"\nMACRO:\n{self.macro_analysis}")
-            parts.append(f"\nVOLUME:\n{self.volume_analysis}")
-            parts.append(f"\nTỔNG HỢP TÍN HIỆU:\n{self.cross_signal_summary}")
+            parts.append("PHÂN TÍCH KỊCH BẢN (cho L5 — base/bull/bear):")
+            parts.append(f"  Regime: {self.regime.format_vi()}")
+            parts.append(f"  Signals: {self.cross_signal_summary}")
+            if self.volume_analysis:
+                parts.append(f"  Volume: {self.volume_analysis}")
+            parts.append(f"  Sentiment: {self.sentiment_analysis}")
+            parts.append("  → Xây dựng 3 kịch bản từ data trên.")
 
         return "\n".join(parts)
 

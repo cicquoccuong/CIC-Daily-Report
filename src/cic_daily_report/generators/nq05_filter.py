@@ -60,6 +60,7 @@ class FilterResult:
     flagged_for_review: list[str] = field(default_factory=list)
     disclaimer_present: bool = False
     passed: bool = True
+    filler_count: int = 0  # Count of detected filler phrases (not removed)
 
     @property
     def status(self) -> str:
@@ -69,6 +70,18 @@ class FilterResult:
             return "review"
         return "pass"
 
+
+# Filler phrases banned by system prompt — detected and COUNTED (not removed).
+# Used by quality gate to flag low-quality output.
+FILLER_PATTERNS = [
+    r"có thể ảnh hưởng đến",
+    r"cần theo dõi (?:thêm|chặt chẽ|sát sao)",
+    r"điều này cho thấy",
+    r"tuy nhiên cần lưu ý",
+    r"trong bối cảnh",
+    r"có thể tác động (?:trực tiếp|đến)",
+    r"có thể (?:tạo ra|dẫn đến) (?:sự )?(?:thay đổi|biến động)",
+]
 
 # Semantic patterns that imply NQ05 violations even without exact keyword match
 SEMANTIC_NQ05_PATTERNS = [
@@ -81,22 +94,25 @@ SEMANTIC_NQ05_PATTERNS = [
 
 
 def _remove_sentences_with_pattern(text: str, pattern: re.Pattern) -> str:
-    """Remove entire sentences/bullet points containing a pattern match.
+    """Remove the violating phrase from text, keeping the rest of the sentence.
 
-    Handles both prose sentences (ending with .) and bullet points (lines starting with -).
+    For bullet points: remove entire bullet (bullets are short, removing phrase leaves gibberish).
+    For prose: remove only the matching phrase + clean up punctuation.
     """
     lines = text.split("\n")
     cleaned_lines = []
     for line in lines:
         if pattern.search(line):
             # For bullet points, remove the whole line
-            if line.strip().startswith("-") or line.strip().startswith("•"):
+            if line.strip().startswith(("-", "•")):
                 continue
-            # For prose, remove individual sentences containing the pattern
-            sentences = re.split(r"(?<=[.!?])\s+", line)
-            kept = [s for s in sentences if not pattern.search(s)]
-            if kept:
-                cleaned_lines.append(" ".join(kept))
+            # For prose: remove only the matching phrase, keep the rest
+            cleaned_line = pattern.sub("", line)
+            # Clean up double spaces, orphaned punctuation
+            cleaned_line = re.sub(r"\s{2,}", " ", cleaned_line)
+            cleaned_line = re.sub(r"\s+([,.])", r"\1", cleaned_line)
+            if cleaned_line.strip():
+                cleaned_lines.append(cleaned_line)
         else:
             cleaned_lines.append(line)
     return "\n".join(cleaned_lines)
@@ -165,6 +181,18 @@ def check_and_fix(
         result.content = cjk_pattern.sub("", result.content)
         result.auto_fixed += len(cjk_matches)
         logger.warning(f"Removed {len(cjk_matches)} CJK character sequences from content")
+
+    # Step 1e: Detect filler phrases (WARN only, do NOT remove)
+    filler_count = 0
+    for pattern_str in FILLER_PATTERNS:
+        pattern = re.compile(pattern_str, re.IGNORECASE)
+        matches = pattern.findall(result.content)
+        if matches:
+            filler_count += len(matches)
+            result.flagged_for_review.append(
+                f"Filler detected (not removed): '{pattern_str}' ({len(matches)}x)"
+            )
+    result.filler_count = filler_count
 
     # Step 2: Fix terminology
     for wrong, correct in TERMINOLOGY_FIXES.items():

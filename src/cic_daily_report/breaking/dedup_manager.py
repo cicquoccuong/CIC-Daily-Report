@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 
 from cic_daily_report.breaking.event_detector import BreakingEvent
 from cic_daily_report.core.logger import get_logger
@@ -82,6 +83,25 @@ def compute_hash(title: str, source: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+SIMILARITY_THRESHOLD = 0.70
+
+
+def _is_similar_to_recent(
+    title: str,
+    recent_entries: list[DedupEntry],
+    threshold: float = SIMILARITY_THRESHOLD,
+) -> bool:
+    """Check if title is similar to any recent entry (beyond hash match)."""
+    title_lower = title.strip().lower()
+    for entry in recent_entries:
+        existing_lower = entry.title.strip().lower()
+        ratio = SequenceMatcher(None, title_lower, existing_lower).ratio()
+        if ratio >= threshold:
+            logger.info(f"Similarity dedup: '{title[:50]}' ~ '{entry.title[:50]}' ({ratio:.2f})")
+            return True
+    return False
+
+
 class DedupManager:
     """Manages dedup state via BREAKING_LOG entries."""
 
@@ -116,6 +136,14 @@ class DedupManager:
                 logger.info(f"Dedup: skipped duplicate event '{event.title}'")
                 continue
 
+            # Similarity check — catch near-duplicates with different wording
+            # Only check against entries within cooldown window
+            recent_entries = [e for e in self._entries if not self._is_cooldown_expired(e, now)]
+            if _is_similar_to_recent(event.title, recent_entries):
+                result.duplicates_skipped += 1
+                logger.info(f"Dedup: skipped similar event '{event.title}'")
+                continue
+
             # New event — add to entries
             entry = DedupEntry(
                 hash=h,
@@ -140,19 +168,22 @@ class DedupManager:
         existing = self._hash_map.get(hash_value)
         if not existing:
             return False
+        return not self._is_cooldown_expired(existing, now)
 
-        if not existing.detected_at:
-            return True  # Hash exists but no timestamp — treat as duplicate
+    def _is_cooldown_expired(self, entry: DedupEntry, now: datetime) -> bool:
+        """Check if an entry's cooldown has expired."""
+        if not entry.detected_at:
+            return False  # No timestamp — treat as within cooldown
 
         try:
-            detected = datetime.fromisoformat(existing.detected_at)
+            detected = datetime.fromisoformat(entry.detected_at)
             # Ensure timezone-aware to avoid TypeError on subtraction
             if detected.tzinfo is None:
                 detected = detected.replace(tzinfo=timezone.utc)
             age = now - detected
-            return age < timedelta(hours=COOLDOWN_HOURS)
+            return age >= timedelta(hours=COOLDOWN_HOURS)
         except (ValueError, TypeError):
-            return True  # Can't parse timestamp — treat as duplicate
+            return False  # Can't parse timestamp — treat as within cooldown
 
     def cleanup_old_entries(self) -> int:
         """Remove entries older than CLEANUP_DAYS. Returns count removed."""

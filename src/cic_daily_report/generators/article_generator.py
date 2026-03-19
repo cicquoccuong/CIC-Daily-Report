@@ -106,6 +106,7 @@ class GenerationContext:
     narratives_text: str = ""  # v0.21.0: detected narratives from news
     sector_data: str = ""  # v0.21.0: sector/DeFi data from CoinGecko + DefiLlama
     data_quality_notes: str = ""  # v0.21.0: quality warnings for LLM
+    whale_data: str = ""  # v0.24.0: whale transaction summary from Whale Alert
 
 
 async def generate_tier_articles(
@@ -171,6 +172,7 @@ async def generate_tier_articles(
             "previous_tiers": prev_context,
             "narratives": filtered["narratives"],
             "sector_data": filtered["sector_data"],
+            "whale_data": filtered["whale_data"],
         }
 
         # Try generation with 1 retry on 429 rate limit errors
@@ -225,6 +227,7 @@ def _filter_data_for_tier(
         "economic_events": context.economic_events,
         "narratives": context.narratives_text,
         "sector_data": context.sector_data,
+        "whale_data": context.whale_data,
     }
 
     if tier == "L1":
@@ -241,11 +244,13 @@ def _filter_data_for_tier(
         full["economic_events"] = ""  # L1 doesn't analyze macro events
         full["sector_data"] = ""  # L1 doesn't analyze sectors
         full["narratives"] = ""  # L1 just reports, doesn't need narrative context
+        full["whale_data"] = ""  # L1 doesn't analyze whale activity
 
     elif tier == "L2":
         # Altcoin overview: full market + sector, no on-chain details
         full["onchain_data"] = ""  # L2 focuses on coins, not derivatives
         full["economic_events"] = ""  # macro is for L3+
+        full["whale_data"] = ""  # L2 focuses on altcoins, not whale flow
 
     elif tier == "L3":
         # Deep analysis: full market + on-chain + macro, less news (already in L1/L2)
@@ -298,7 +303,13 @@ async def _generate_single_article(
         full_prompt += f"=== TIN TỨC (nguồn: RSS feeds) ===\n{news}\n\n"
     onchain = variables.get("onchain_data") or ""
     if onchain:
-        full_prompt += f"=== DỮ LIỆU ON-CHAIN & DERIVATIVES (nguồn: OKX) ===\n{onchain}\n\n"
+        full_prompt += (
+            f"=== DỮ LIỆU ON-CHAIN & DERIVATIVES "
+            f"(nguồn: Coinalyze, CoinMetrics, OKX) ===\n{onchain}\n\n"
+        )
+    whale = variables.get("whale_data", "")
+    if whale and "Không có dữ liệu" not in whale:
+        full_prompt += f"=== WHALE ALERT (nguồn: Whale Alert) ===\n{whale}\n\n"
     sector = variables.get("sector_data", "")
     if sector:
         full_prompt += f"{sector}\n\n"
@@ -364,7 +375,7 @@ async def _generate_single_article(
         prompt=full_prompt,
         system_prompt=NQ05_SYSTEM_PROMPT,
         max_tokens=TIER_MAX_TOKENS.get(tier, 4096),
-        temperature=0.5,
+        temperature=0.3,
     )
 
     content = response.text.strip()
@@ -476,41 +487,29 @@ _TIER_FOCUS = {
 
 
 def _summarize_tier_output(tier: str, content: str) -> str:
-    """Create a concise summary of a tier's output for inter-tier context.
+    """Create structured summary of tier's key data points for dedup.
 
-    Extracts section titles and first sentence of each section to give
-    the next tier a sense of what was already covered — without sending
-    the full content (which would bloat the prompt).
+    Extracts specific data points (numbers, coins, key conclusions) so the
+    next tier knows exactly what was already covered — preventing repetition.
     """
     import re
 
     focus = _TIER_FOCUS.get(tier, "")
-    lines = content.split("\n")
 
-    # Extract section headers and their first substantive line
-    sections: list[str] = []
-    for i, line in enumerate(lines):
-        if line.startswith("## "):
-            header = line.lstrip("# ").strip()
-            # Find first non-empty line after header
-            for j in range(i + 1, min(i + 5, len(lines))):
-                candidate = lines[j].strip()
-                if candidate and not candidate.startswith("#"):
-                    # Take first 120 chars
-                    snippet = candidate[:120]
-                    if len(candidate) > 120:
-                        snippet += "..."
-                    sections.append(f"  - {header}: {snippet}")
-                    break
-            else:
-                sections.append(f"  - {header}")
+    # Extract data points mentioned (numbers, percentages, coin names)
+    numbers = re.findall(r"[\$€]?[\d,]+\.?\d*[%KMB]?", content)
+    coins = re.findall(r"\b(?:BTC|ETH|SOL|BNB|XRP|ADA|DOGE|AVAX|TRX|LINK)\b", content)
 
-    summary_parts = [f"[{tier}] ({focus}):"]
-    if sections:
-        summary_parts.extend(sections[:6])  # max 6 sections
-    else:
-        # Fallback: first 200 chars of content
-        preview = re.sub(r"\s+", " ", content[:200]).strip()
-        summary_parts.append(f"  Nội dung: {preview}...")
+    # Extract key conclusions (sentences with strong verbs)
+    sentences = re.split(r"[.!?\n]", content)
+    key_sentences = [s.strip() for s in sentences if 30 < len(s.strip()) < 200][:5]
 
-    return "\n".join(summary_parts)
+    parts = [f"[{tier}] ({focus}):"]
+    if coins:
+        parts.append(f"  Coins đã phân tích: {', '.join(sorted(set(coins)))}")
+    if numbers:
+        parts.append(f"  Số liệu đã dùng: {', '.join(numbers[:10])}")
+    for s in key_sentences[:3]:
+        parts.append(f"  - {s[:200]}")
+
+    return "\n".join(parts)

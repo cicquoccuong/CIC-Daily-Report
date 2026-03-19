@@ -166,6 +166,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     from cic_daily_report.collectors.rss_collector import collect_rss
     from cic_daily_report.collectors.sector_data import SectorSnapshot, collect_sector_data
     from cic_daily_report.collectors.telegram_scraper import collect_telegram
+    from cic_daily_report.collectors.whale_alert import WhaleAlertSummary, collect_whale_alerts
     from cic_daily_report.generators.article_generator import (
         GenerationContext,
         generate_tier_articles,
@@ -200,6 +201,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         collect_telegram(),
         collect_economic_calendar(),
         collect_sector_data(),
+        collect_whale_alerts(),
         return_exceptions=True,
     )
 
@@ -213,6 +215,9 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     econ_calendar = results[5] if not isinstance(results[5], Exception) else CalendarResult()
     sector_snapshot: SectorSnapshot = (
         results[6] if not isinstance(results[6], Exception) else SectorSnapshot([], 0.0, [])
+    )
+    whale_data: WhaleAlertSummary = (
+        results[7] if not isinstance(results[7], Exception) else WhaleAlertSummary()
     )
 
     for r in results:
@@ -229,6 +234,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
                 "url": a.url,
                 "source_name": a.source_name,
                 "summary": a.summary,
+                "full_text": getattr(a, "full_text", ""),
                 "source_type": getattr(a, "source_type", "news"),
                 "og_image": getattr(a, "og_image", None),
             }
@@ -256,6 +262,16 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     clean_result = clean_articles(all_news)
     cleaned_news = [a for a in clean_result.articles if not a.get("filtered", False)]
 
+    # Data quality gate: minimum viable data check
+    min_news = 5
+    has_market = bool(market_data)
+    if len(cleaned_news) < min_news and not has_market:
+        logger.error(f"Data quality FAIL: {len(cleaned_news)} news, market={has_market}")
+        raise RuntimeError(
+            f"Insufficient data for report: {len(cleaned_news)} news articles "
+            f"(min {min_news}), market_data={'yes' if has_market else 'no'}"
+        )
+
     # Split news into crypto vs macro categories for LLM context
     crypto_items = []
     macro_items = []
@@ -264,9 +280,9 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         url = a.get("url", "")
         if url:
             line += f"\n  Link: {url}"
-        summary = a.get("summary", "")
-        if summary:
-            line += f"\n  Tóm tắt: {summary[:300]}"
+        text_for_llm = a.get("full_text", "") or a.get("summary", "")
+        if text_for_llm:
+            line += f"\n  Nội dung: {text_for_llm[:800]}"
         if a.get("conflict"):
             line += "\n  ⚠️ [FR12] Nhiều nguồn đưa tin khác nhau — cần đối chiếu cẩn thận"
         if a.get("news_type") == "macro":
@@ -425,10 +441,10 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         "3. Tin tức quan trọng nhất mà người mới CẦN BIẾT? "
         "(tóm 1-2 tin, giải thích TẠI SAO)\n\n"
         "VÍ DỤ OUTPUT TỐT (tham khảo style, KHÔNG copy):\n"
-        "\"Thị trường crypto sáng nay khởi sắc — trạng thái "
+        '"Thị trường crypto sáng nay khởi sắc — trạng thái '
         "PHỤC HỒI. BTC tăng **2.8%** lên $74,834, ETH **+6.2%**. "
         "F&G=28 (Fear) nhưng đã cải thiện. Tin nổi bật: "
-        "Hàn Quốc phạt Bithumb $24M — giám sát mạnh tay hơn.\"\n\n"
+        'Hàn Quốc phạt Bithumb $24M — giám sát mạnh tay hơn."\n\n'
         "KHÔNG: thuật ngữ phức tạp (funding rate, OI...) | on-chain/macro | quá 2 coins\n"
     )
     tier_context["L2"] = (
@@ -443,10 +459,10 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         "YÊU CẦU: Nhóm coins theo SECTOR (DeFi, L1, L2, AI, Meme, RWA...). "
         "Nhắc tối thiểu 10/19 coins trong danh sách.\n\n"
         "VÍ DỤ OUTPUT TỐT:\n"
-        "\"📈 Sector dẫn đầu: Meme (+5.5%), DeFi (+3.4%), Layer 1 (+3.5%). "
+        '"📈 Sector dẫn đầu: Meme (+5.5%), DeFi (+3.4%), Layer 1 (+3.5%). '
         "Đáng chú ý: XRP bứt phá **+8.1%** với volume $3.7B — narrative "
         "XRP ETF đang nóng lại. Nhóm AI (FET, RENDER) tăng nhẹ 1-2%. "
-        "BTC Dominance 56.8% — altcoins đang lấy lại momentum.\"\n\n"
+        'BTC Dominance 56.8% — altcoins đang lấy lại momentum."\n\n'
         "KHÔNG: lặp L1 | on-chain/derivatives | bịa support/resistance\n"
     )
     tier_context["L3"] = (
@@ -459,12 +475,11 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         "   → Diễn giải bằng ngôn ngữ tự nhiên, NỐI với macro. KHÔNG copy Metrics Engine.\n"
         "3. Tổng hợp: macro + derivatives + sentiment → câu chuyện LOGIC là gì?\n\n"
         "VÍ DỤ OUTPUT TỐT:\n"
-        "\"DXY giảm về **99.87** — USD yếu đi tạo điều kiện thuận lợi cho crypto. "
-        "Cùng lúc, Funding Rate **+0.004%** (gần trung tính) cho thấy thị trường phái sinh "
-        "không quá lạc quan dù giá đang hồi. Đây là dấu hiệu phục hồi CÓ KIỀM CHẾ — "
-        "khác với đợt pump tháng trước khi FR lên 0.05%. "
-        "Sự kiện quan trọng: Fed công bố lãi suất ngày 19/03, "
-        "dự báo giữ 3.75% — nếu đúng, DXY có thể tiếp tục giảm.\"\n\n"
+        '"DXY [giá trị từ data] — USD [tăng/giảm] tạo [tác động] cho crypto. '
+        "Cùng lúc, Funding Rate [giá trị từ Metrics Engine] cho thấy thị trường phái sinh "
+        "[diễn giải]. Đây là dấu hiệu [kết luận từ chuỗi nhân-quả macro→derivatives]. "
+        "[Sự kiện macro quan trọng nhất tuần] — phân tích tác động lên DXY → crypto. "
+        'Nối với Funding Rate để đánh giá tâm lý thị trường phái sinh."\n\n'
         "KHÔNG: giá coin (đã ở L2) | rủi ro/scenario (để L4-L5) | bịa MVRV/SOPR\n"
     )
     tier_context["L4"] = (
@@ -479,11 +494,11 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         "3. Sự kiện vĩ mô nào SẮP TỚI có thể gây volatility? (từ lịch kinh tế)\n"
         "4. Red flags: chỉ số nào ở vùng NGUY HIỂM?\n\n"
         "VÍ DỤ OUTPUT TỐT:\n"
-        "\"⚠️ **Tín hiệu mâu thuẫn**: Giá BTC +2.8% nhưng F&G vẫn 28 (Fear) — "
-        "price action tăng mà sentiment KHÔNG theo. Lần gần nhất xảy ra tình huống này "
-        "(01/2024) BTC sideway 2 tuần rồi giảm 8%. "
-        "Rủi ro lớn nhất tuần này: Fed meeting 19/03 — nếu bất ngờ hawkish, "
-        "DXY tăng mạnh sẽ tạo áp lực bán đột ngột.\"\n\n"
+        '"⚠️ **Tín hiệu mâu thuẫn**: [chỉ số A] vs [chỉ số B] — '
+        "[diễn giải mâu thuẫn]. Lần gần nhất xảy ra tình huống tương tự "
+        "[tham khảo lịch sử nếu có trong data]. "
+        "Rủi ro lớn nhất: [sự kiện từ lịch kinh tế] — nếu kết quả bất ngờ, "
+        'DXY tăng → áp lực bán. Kèm cross-signal nào ủng hộ/phản bác."\n\n'
         "KHÔNG: lặp L1-L3 | % phân bổ (NQ05) | mua/bán | bịa liquidation/whale data\n"
     )
     tier_context["L5"] = (
@@ -501,17 +516,23 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         "   (dùng cross_signal_summary từ Metrics Engine)\n"
         "4. Timeline: sự kiện nào trong 7 ngày tới có thể THAY ĐỔI bức tranh?\n\n"
         "VÍ DỤ OUTPUT TỐT:\n"
-        "\"🔍 **Base case (Recovery, medium confidence)**: BTC sideway $73K-$77K chờ FOMC. "
-        "DXY yếu + FR trung tính ủng hộ kịch bản này. "
-        "**Bullish trigger**: Fed dovish 19/03 + DXY <99 → BTC test $80K. "
-        "**Bearish trigger**: Fed hawkish + DXY >101 → risk-off, BTC về $70K. "
-        "Dòng tiền: DeFi TVL $100.8B ổn định, Meme sector dẫn đầu (+5.5%) — "
-        "tiền đang chảy vào speculative assets, tín hiệu risk-on ngắn hạn.\"\n\n"
+        '"🔍 **Base case ([regime từ Metrics Engine], [confidence])**: '
+        "[mô tả kỳ vọng dựa trên signals]. "
+        "[Nối 2-3 signals ủng hộ kịch bản này]. "
+        "**Bullish trigger**: [điều kiện cụ thể từ data + lịch kinh tế]. "
+        "**Bearish trigger**: [rủi ro từ L4 + ngưỡng cụ thể]. "
+        "Dòng tiền: [sector data + TVL từ DefiLlama + narrative nổi bật] — "
+        '[kết luận về risk appetite hiện tại]."\n\n'
         "KHÔNG: lặp L1-L4 | bịa correlation/MVRV/whale | mua/bán/phân bổ (NQ05)\n"
     )
 
     # Format economic calendar events for LLM context (FR60)
     economic_events_text = econ_calendar.format_for_llm()
+
+    # v0.24.0: Whale Alert data for LLM context
+    whale_text = whale_data.format_for_llm()
+    if whale_data.total_count > 0:
+        logger.info(f"Whale data: {whale_data.total_count} transactions for LLM context")
 
     # v0.19.0: Load recent breaking news context for pipeline integration
     recent_breaking_text = await _load_recent_breaking_context()
@@ -530,6 +551,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         narratives_text=narratives_text,  # v0.21.0: Narrative Detection
         sector_data=sector_text,  # v0.21.0: Sector + DeFi data (Phase 2)
         data_quality_notes=quality.format_for_llm(),  # v0.21.0: Quality warnings
+        whale_data=whale_text,  # v0.24.0: Whale Alert transactions
     )
 
     generated = []
@@ -557,11 +579,27 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
                 f"[{article.tier}] Missing Tóm lược section — FR14 dual-layer may be incomplete"
             )
 
-    # Generate BIC Chat summary (FR15)
+    # Post-generation: cross-tier repetition check (log only)
+    if len(generated) >= 3:
+        _check_cross_tier_repetition(generated)
+
+    # Generate BIC Chat summary (FR15, v0.24.0: full data context)
     summary = None
     if generated:
         try:
-            summary = await generate_bic_summary(llm, generated, key_metrics)
+            summary = await generate_bic_summary(
+                llm=llm,
+                articles=generated,
+                key_metrics=key_metrics,
+                cleaned_news=cleaned_news,
+                market_data=market_data,
+                onchain_data=onchain_data,
+                sector_snapshot=sector_snapshot,
+                econ_calendar=econ_calendar,
+                metrics_interp=metrics_interp,
+                narratives_text=narratives_text,
+                whale_data=whale_data,
+            )
         except Exception as e:
             logger.error(f"Summary generation failed: {e}")
             errors.append(e)
@@ -618,6 +656,35 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
 
     logger.info(f"Pipeline stages complete: {len(articles_out)} articles ready")
     return articles_out, errors
+
+
+def _check_cross_tier_repetition(articles: list) -> dict:
+    """Check for repeated phrases across tier articles (log only).
+
+    Uses 4-gram analysis to detect phrases appearing in 3+ tiers.
+    """
+    from collections import Counter
+
+    tier_phrases: dict[str, set[str]] = {}
+    for article in articles:
+        words = article.content.lower().split()
+        ngrams = {" ".join(words[i : i + 4]) for i in range(len(words) - 3)}
+        tier_phrases[article.tier] = ngrams
+
+    # Find phrases appearing in 3+ tiers
+    all_phrases: Counter = Counter()
+    for phrases in tier_phrases.values():
+        for p in phrases:
+            all_phrases[p] += 1
+
+    repeated = {p: c for p, c in all_phrases.items() if c >= 3}
+
+    if repeated:
+        logger.warning(f"Cross-tier repetition: {len(repeated)} phrases in 3+ tiers")
+        for phrase, count in list(repeated.items())[:5]:
+            logger.warning(f"  '{phrase}' in {count} tiers")
+
+    return {"repeated_count": len(repeated), "total_phrases": len(all_phrases)}
 
 
 async def _load_recent_breaking_context() -> str:

@@ -144,6 +144,40 @@ class TestFilterDataL5:
         assert "News headline 19" in result["news_summary"]
 
 
+class TestFilterDataWhaleData:
+    """Whale data: excluded from L1/L2, included in L3+."""
+
+    def test_l1_no_whale_data(self):
+        ctx = _make_context()
+        ctx.whale_data = "WHALE ACTIVITY (1h): 5 giao dịch lớn"
+        result = _filter_data_for_tier("L1", ctx, _METRICS_TABLE)
+        assert result["whale_data"] == ""
+
+    def test_l2_no_whale_data(self):
+        ctx = _make_context()
+        ctx.whale_data = "WHALE ACTIVITY (1h): 5 giao dịch lớn"
+        result = _filter_data_for_tier("L2", ctx, _METRICS_TABLE)
+        assert result["whale_data"] == ""
+
+    def test_l3_has_whale_data(self):
+        ctx = _make_context()
+        ctx.whale_data = "WHALE ACTIVITY (1h): 5 giao dịch lớn"
+        result = _filter_data_for_tier("L3", ctx, _METRICS_TABLE)
+        assert "WHALE ACTIVITY" in result["whale_data"]
+
+    def test_l4_has_whale_data(self):
+        ctx = _make_context()
+        ctx.whale_data = "WHALE ACTIVITY (1h): 5 giao dịch lớn"
+        result = _filter_data_for_tier("L4", ctx, _METRICS_TABLE)
+        assert "WHALE ACTIVITY" in result["whale_data"]
+
+    def test_l5_has_whale_data(self):
+        ctx = _make_context()
+        ctx.whale_data = "WHALE ACTIVITY (1h): 5 giao dịch lớn"
+        result = _filter_data_for_tier("L5", ctx, _METRICS_TABLE)
+        assert "WHALE ACTIVITY" in result["whale_data"]
+
+
 class TestFilterDataEdgeCases:
     def test_empty_context(self):
         """All empty data should not crash."""

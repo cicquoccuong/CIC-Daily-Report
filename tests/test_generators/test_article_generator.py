@@ -224,6 +224,40 @@ class TestGenerateTierArticles:
         assert "KHÔNG khuyến nghị" in sys_prompt  # v0.22.0: rewritten system prompt
 
 
+class TestPhase1QuickWins:
+    """Phase 1 tests: D1 (no hardcoded numbers), E2 (temperature=0.3)."""
+
+    def test_tier_context_no_hardcoded_numbers(self):
+        """D1: Tier context L3-L5 must not contain hardcoded data that conflicts with API."""
+        import inspect
+
+        import cic_daily_report.daily_pipeline as dp
+
+        source = inspect.getsource(dp)
+        # Old hardcoded values must be gone
+        assert "3.75%" not in source, "Hardcoded Fed rate 3.75% still in tier context"
+        assert "sideway $73K-$77K" not in source, "Hardcoded BTC range still in tier context"
+        assert "Fed meeting 19/03" not in source, "Hardcoded Fed date still in tier context"
+        assert "Fed dovish 19/03" not in source, "Hardcoded Fed scenario still in tier context"
+        assert "DXY <99" not in source, "Hardcoded DXY threshold still in tier context"
+
+    async def test_temperature_daily_is_0_3(self):
+        """E2: article_generator must use temperature=0.3."""
+        templates = _make_templates("L1")
+        context = _make_context()
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=100, model="m")
+        )
+
+        await generate_tier_articles(mock_llm, templates, context)
+
+        call_kwargs = mock_llm.generate.call_args
+        temperature = call_kwargs.kwargs.get("temperature")
+        assert temperature == 0.3, f"Expected temperature=0.3, got {temperature}"
+
+
 class TestAntiHallucinationGuardrails:
     """v0.19.0: NQ05_SYSTEM_PROMPT anti-hallucination changes."""
 

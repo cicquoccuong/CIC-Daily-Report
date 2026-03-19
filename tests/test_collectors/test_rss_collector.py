@@ -134,3 +134,32 @@ class TestCollectRss:
         # Good feed should succeed even though bad feed failed
         assert len(articles) == 1
         assert articles[0].source_name == "Good"
+
+
+class TestPhase4FeedEnhancements:
+    """Phase 4: New feeds, enrich flag, feed config."""
+
+    def test_new_feeds_active(self):
+        """F3: 4 new feeds added and enabled."""
+        names = {f.source_name for f in DEFAULT_FEEDS if f.enabled}
+        assert "CryptoNews" in names
+        assert "Bitcoinist" in names
+        assert "CryptoPotato" in names
+        assert "BlogTienAo" in names
+
+    def test_enriched_feeds_flagged(self):
+        """F2: Top 5 news feeds have enrich=True."""
+        enriched = [f for f in DEFAULT_FEEDS if f.enrich]
+        enriched_names = {f.source_name for f in enriched}
+        assert "CoinTelegraph" in enriched_names
+        assert "CoinDesk" in enriched_names
+        assert "TheBlock" in enriched_names
+        assert "Decrypt" in enriched_names
+        assert "Blockworks" in enriched_names
+
+    def test_feed_config_has_enrich_field(self):
+        """FeedConfig dataclass has enrich field."""
+        feed = FeedConfig("https://test.com/rss", "Test", "en", enrich=True)
+        assert feed.enrich is True
+        default = FeedConfig("https://test.com/rss", "Test", "en")
+        assert default.enrich is False

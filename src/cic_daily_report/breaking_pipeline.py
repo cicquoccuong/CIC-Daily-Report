@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -177,6 +178,17 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
         run_log.status = "no_events"
         return result
 
+    # Stage 1d: Filter non-CIC coins (keep tracked coins + non-coin events)
+    try:
+        tracked_coins = await _load_tracked_coins()
+        if tracked_coins:
+            before = len(events)
+            events = _filter_non_cic_coins(events, tracked_coins)
+            if len(events) < before:
+                logger.info(f"Coin filter: {before - len(events)} non-CIC events removed")
+    except Exception as e:
+        logger.debug(f"Coin filter skipped: {e}")
+
     # Stage 2: Dedup — using pre-loaded dedup_mgr from BREAKING_LOG (A5)
     dedup_result = dedup_mgr.check_and_filter(events)
     run_log.events_new = len(dedup_result.new_events)
@@ -188,6 +200,18 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
 
     # Stage 3: Classify
     classified = classify_batch(dedup_result.new_events)
+
+    # Stage 3b: Build enrichment context for content generation
+    market_snapshot = ""
+    try:
+        from cic_daily_report.collectors.market_data import collect_market_data
+
+        market_data = await asyncio.wait_for(collect_market_data(), timeout=30)
+        market_snapshot = _format_market_snapshot(market_data)
+    except Exception as e:
+        logger.debug(f"Market context for breaking skipped: {e}")
+
+    recent_events_text = _format_recent_events(dedup_mgr.entries)
 
     # Stage 4: Generate content + deliver based on classification
     from cic_daily_report.adapters.llm_adapter import LLMAdapter
@@ -216,6 +240,8 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
                     classified_event.event,
                     llm,
                     severity=classified_event.severity,
+                    market_context=market_snapshot,
+                    recent_events=recent_events_text,
                 ),
                 timeout=60,  # 60s per event to prevent blocking
             )
@@ -246,6 +272,25 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
 
     run_log.status = "success" if run_log.events_sent > 0 else "partial"
     return result
+
+
+async def _load_tracked_coins() -> set[str]:
+    """Load CIC tracked coin symbols from DANH_SACH_COIN sheet."""
+    try:
+        from cic_daily_report.storage.sheets_client import SheetsClient
+
+        sheets = SheetsClient()
+        rows = await asyncio.to_thread(sheets.read_all, "DANH_SACH_COIN")
+        coins = set()
+        for row in rows:
+            symbol = str(row.get("Symbol", "") or row.get("Coin", "")).strip().upper()
+            if symbol:
+                coins.add(symbol)
+        logger.info(f"Loaded {len(coins)} tracked coins from DANH_SACH_COIN")
+        return coins
+    except Exception as e:
+        logger.warning(f"Failed to load tracked coins: {e}")
+        return set()
 
 
 async def _load_dedup_from_sheets() -> DedupManager:
@@ -406,6 +451,107 @@ async def _reprocess_deferred_events(
     except Exception as e:
         logger.warning(f"Deferred event reprocessing failed (non-critical): {e}")
         run_log.errors.append(f"Deferred reprocessing: {e}")
+
+
+# Match only fully-uppercase words 2-6 chars in ORIGINAL title (not uppercased)
+# Real coin tickers are written in uppercase in news titles (BTC, ETH, PIPPIN)
+_COIN_PATTERN = re.compile(r"\b([A-Z]{2,6})\b")
+
+
+def _extract_coins_from_title(title: str, known_coins: set[str]) -> set[str]:
+    """Extract known coin symbols from title.
+
+    Uses ORIGINAL case (not uppercased) to avoid false positives —
+    real coin tickers are written in uppercase in news titles.
+    """
+    candidates = set(_COIN_PATTERN.findall(title))
+    return candidates & known_coins
+
+
+_FALSE_POSITIVE_SYMBOLS = {
+    "SEC",
+    "ETF",
+    "CEO",
+    "CFO",
+    "CTO",
+    "IPO",
+    "FBI",
+    "DOJ",
+    "NFT",
+    "API",
+    "THE",
+    "FOR",
+    "AND",
+    "NOT",
+    "HAS",
+    "NEW",
+    "ALL",
+    "USD",
+    "EUR",
+    "GBP",
+    "JPY",
+    "VND",
+    "VN",
+    "US",
+    "UK",
+    "EU",
+    "AI",
+}
+
+
+def _filter_non_cic_coins(events: list, tracked_coins: set[str]) -> list:
+    """Filter out events about coins not tracked by CIC.
+
+    Keeps: events about tracked coins + non-coin-specific events (regulatory, macro).
+    Filters: events mentioning coin-like symbols not in tracked_coins.
+    """
+    if not tracked_coins:
+        return events  # No whitelist available — keep all
+
+    filtered = []
+    for event in events:
+        tracked_in_title = _extract_coins_from_title(event.title, tracked_coins)
+        # Check for any coin-like symbols in ORIGINAL case (not uppercased)
+        all_candidates = set(_COIN_PATTERN.findall(event.title)) - _FALSE_POSITIVE_SYMBOLS
+        untracked_coins = all_candidates - tracked_coins
+
+        if tracked_in_title:
+            # Has tracked coins → keep
+            filtered.append(event)
+        elif untracked_coins:
+            # Has coin-like symbols but NONE tracked → likely about non-CIC coin
+            logger.info(f"Filtered non-CIC coin event: {event.title}")
+        else:
+            # No coin symbols at all → macro/regulatory → keep
+            filtered.append(event)
+    return filtered
+
+
+def _format_market_snapshot(market_data: list | None) -> str:
+    """Format brief market context for breaking news prompt."""
+    if not market_data:
+        return ""
+    lines = []
+    for dp in market_data:
+        if dp.symbol in ("BTC", "ETH"):
+            lines.append(f"{dp.symbol}: ${dp.price:,.0f} ({dp.change_24h:+.1f}%)")
+    for dp in market_data:
+        if dp.symbol == "Fear_Greed":
+            lines.append(f"Fear & Greed: {int(dp.price)}")
+        elif dp.symbol == "DXY":
+            lines.append(f"DXY: {dp.price:.1f}")
+    return "Bối cảnh thị trường hiện tại: " + " | ".join(lines) if lines else ""
+
+
+def _format_recent_events(dedup_entries: list[DedupEntry], max_events: int = 5) -> str:
+    """Format recent breaking events for context injection."""
+    recent = sorted(dedup_entries, key=lambda e: e.detected_at, reverse=True)[:max_events]
+    if not recent:
+        return ""
+    lines = ["Tin Breaking gần đây (để liên kết nếu liên quan):"]
+    for entry in recent:
+        lines.append(f"- {entry.title} ({entry.source}, {entry.severity})")
+    return "\n".join(lines)
 
 
 async def _deliver_breaking(result: BreakingPipelineResult) -> None:

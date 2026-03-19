@@ -1,11 +1,12 @@
 """Tests for breaking/content_generator.py — all mocked."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from cic_daily_report.adapters.llm_adapter import LLMResponse
 from cic_daily_report.breaking.content_generator import (
     _DISCLAIMER_RE,
     BreakingContent,
+    _fetch_article_text,
     _raw_data_fallback,
     generate_breaking_content,
 )
@@ -95,6 +96,118 @@ class TestGenerateBreakingContent:
         llm.generate = AsyncMock(side_effect=Exception("fail"))
         result = await generate_breaking_content(_event(), llm)
         assert "CoinDesk" in result.content
+
+
+class TestPhase2ArticleEnrichment:
+    """Phase 2: Article text extraction and enrichment for breaking news."""
+
+    async def test_fetch_article_text_success(self):
+        """Mock httpx + trafilatura → return extracted text."""
+        mock_resp = AsyncMock()
+        mock_resp.text = "<html><body>Article body text here with details</body></html>"
+        mock_resp.raise_for_status = lambda: None
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        extracted = "Extracted article body text " * 50  # ~1400 chars
+
+        with (
+            patch(
+                "cic_daily_report.breaking.content_generator.httpx.AsyncClient",
+                return_value=mock_client,
+            ),
+            patch("cic_daily_report.breaking.content_generator.trafilatura") as mock_traf,
+        ):
+            mock_traf.extract.return_value = extracted
+            result = await _fetch_article_text("https://example.com/article")
+
+        assert len(result) > 0
+        assert len(result) <= 1500
+
+    @patch("cic_daily_report.breaking.content_generator.httpx.AsyncClient")
+    async def test_fetch_article_text_timeout(self, mock_client_cls):
+        """Timeout → return empty string (graceful)."""
+        import httpx
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("timeout"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        result = await _fetch_article_text("https://example.com/slow")
+        assert result == ""
+
+    async def test_breaking_with_article_body(self):
+        """Event enriched with article body → prompt contains 'Nội dung bài gốc'."""
+        llm = _mock_llm()
+        event = _event()
+
+        with patch(
+            "cic_daily_report.breaking.content_generator._fetch_article_text",
+            return_value="Chi tiết bài viết gốc về sự kiện hack sàn giao dịch lớn",
+        ):
+            await generate_breaking_content(event, llm)
+
+        call_kwargs = llm.generate.call_args
+        prompt = call_kwargs.kwargs.get("prompt", "") or call_kwargs.args[0]
+        assert "Nội dung bài gốc" in prompt
+
+    async def test_breaking_with_market_context(self):
+        """market_context passed → prompt contains market data."""
+        llm = _mock_llm()
+        await generate_breaking_content(
+            _event(), llm, market_context="Bối cảnh thị trường hiện tại: BTC: $74,589 (+0.0%)"
+        )
+        call_kwargs = llm.generate.call_args
+        prompt = call_kwargs.kwargs.get("prompt", "") or call_kwargs.args[0]
+        assert "BTC: $74,589" in prompt
+
+    async def test_breaking_with_recent_events(self):
+        """recent_events passed → prompt contains recent breaking news."""
+        recent = (
+            "Tin Breaking gần đây (để liên kết nếu liên quan):\n"
+            "- Event 1 (CoinDesk, critical)\n"
+            "- Event 2 (TheBlock, important)\n"
+            "- Event 3 (CoinTelegraph, notable)"
+        )
+        llm = _mock_llm()
+        await generate_breaking_content(_event(), llm, recent_events=recent)
+        call_kwargs = llm.generate.call_args
+        prompt = call_kwargs.kwargs.get("prompt", "") or call_kwargs.args[0]
+        assert "Tin Breaking gần đây" in prompt
+        assert "Event 1" in prompt
+
+    async def test_breaking_without_enrichment(self):
+        """All enrichment fails → fallback to title-only (backward compatible)."""
+        llm = _mock_llm()
+        event = _event()
+        event.raw_data = {}  # No summary
+
+        with patch(
+            "cic_daily_report.breaking.content_generator._fetch_article_text",
+            return_value="",  # trafilatura fails
+        ):
+            result = await generate_breaking_content(event, llm)
+
+        assert result.ai_generated
+        call_kwargs = llm.generate.call_args
+        prompt = call_kwargs.kwargs.get("prompt", "") or call_kwargs.args[0]
+        assert "Nội dung bài gốc" not in prompt
+
+
+class TestPhase1Temperature:
+    """Phase 1 E2: Breaking content generator must use temperature=0.3."""
+
+    async def test_temperature_breaking_is_0_3(self):
+        llm = _mock_llm()
+        await generate_breaking_content(_event(), llm)
+        call_kwargs = llm.generate.call_args
+        temperature = call_kwargs.kwargs.get("temperature")
+        assert temperature == 0.3, f"Expected temperature=0.3, got {temperature}"
 
 
 class TestRawDataFallback:

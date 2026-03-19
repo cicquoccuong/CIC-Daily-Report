@@ -43,6 +43,7 @@ DEFAULT_CRITICAL_KEYWORDS = [
 ]
 
 DEFAULT_IMPORTANT_KEYWORDS = [
+    "crash",  # Synced from event_detector DEFAULT_KEYWORD_TRIGGERS
     "partnership",
     "liquidation",
     "liquidated",
@@ -154,13 +155,33 @@ def _determine_severity(event: BreakingEvent, config: ClassificationConfig) -> s
         return CRITICAL
 
     # Check price-movement percentage in title (e.g. "drops 3.5%", "surges 10%")
+    # Only apply for PRICE movements — volume/OI/TVL percentages are not severity signals
     pct_match = re.search(r"(\d+(?:\.\d+)?)\s*%", event.title)
     if pct_match:
         pct_value = float(pct_match.group(1))
-        if pct_value >= 10:
-            return CRITICAL
-        if pct_value >= 3:
-            return IMPORTANT
+
+        _VOLUME_KEYWORDS = {"volume", "trading volume", "open interest", "oi", "tvl"}
+        _PRICE_KEYWORDS = {
+            "drop",
+            "crash",
+            "fall",
+            "plunge",
+            "surge",
+            "soar",
+            "gain",
+            "rise",
+            "jump",
+        }
+
+        is_volume = any(kw in title_lower for kw in _VOLUME_KEYWORDS)
+        is_price = any(kw in title_lower for kw in _PRICE_KEYWORDS)
+
+        if is_price and not is_volume:
+            if pct_value >= 10:
+                return CRITICAL
+            if pct_value >= 3:
+                return IMPORTANT
+        # Volume % or ambiguous → do NOT use percentage for severity
 
     # Check important keywords (word-boundary matching)
     for kw in config.important_keywords:
