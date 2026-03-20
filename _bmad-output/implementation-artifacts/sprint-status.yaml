@@ -162,3 +162,9 @@ development_status:
   # Summary generator: complete rewrite — 4-section BIC Chat format
   # Pipeline integration: 8 parallel collectors, whale data in tier context
   # 639 tests pass (+39 new). Lint clean.
+
+  # P2-A: CIC Market Insight Research Article (v0.27.0, 2026-03-20)
+  p2a-research-article: done
+  # New: research_data.py (5 free sources) + research_generator.py (8-section article)
+  # Review QA: quality gate, ETF 5-day trend, prompt rewrites, NQ05 single-layer, run log fix
+  # 681 tests pass (+42 new). Lint clean.

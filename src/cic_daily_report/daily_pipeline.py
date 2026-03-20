@@ -51,10 +51,12 @@ async def _run_pipeline() -> str:
     articles: list[dict[str, str]] = []
 
     try:
-        articles, errors = await asyncio.wait_for(
+        articles, errors, llm_used, research_wc = await asyncio.wait_for(
             _execute_stages(),
             timeout=PIPELINE_TIMEOUT_SEC,
         )
+        run_log["llm_used"] = llm_used
+        run_log["research_word_count"] = research_wc
     except asyncio.TimeoutError:
         logger.error("Pipeline timeout — delivering partial content")
         run_log["status"] = "timeout"
@@ -152,10 +154,10 @@ def _format_onchain_value(metric_name: str, value: float) -> str:
     return f"{value:.4f}"
 
 
-async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
+async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str, int]:
     """Run all pipeline stages: collect → generate → NQ05 filter.
 
-    Returns (articles_as_dicts, non_fatal_errors).
+    Returns (articles_as_dicts, non_fatal_errors, llm_models_used, research_word_count).
     """
     from cic_daily_report.adapters.llm_adapter import LLMAdapter
     from cic_daily_report.collectors.cryptopanic_client import collect_cryptopanic
@@ -163,6 +165,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     from cic_daily_report.collectors.economic_calendar import collect_economic_calendar
     from cic_daily_report.collectors.market_data import collect_market_data
     from cic_daily_report.collectors.onchain_data import collect_onchain
+    from cic_daily_report.collectors.research_data import ResearchData, collect_research_data
     from cic_daily_report.collectors.rss_collector import collect_rss
     from cic_daily_report.collectors.sector_data import SectorSnapshot, collect_sector_data
     from cic_daily_report.collectors.telegram_scraper import collect_telegram
@@ -178,6 +181,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         interpret_metrics,
     )
     from cic_daily_report.generators.nq05_filter import check_and_fix
+    from cic_daily_report.generators.research_generator import generate_research_article
     from cic_daily_report.generators.summary_generator import generate_bic_summary
     from cic_daily_report.generators.template_engine import load_templates
     from cic_daily_report.storage.config_loader import ConfigLoader
@@ -202,6 +206,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         collect_economic_calendar(),
         collect_sector_data(),
         collect_whale_alerts(),
+        collect_research_data(),
         return_exceptions=True,
     )
 
@@ -218,6 +223,9 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
     )
     whale_data: WhaleAlertSummary = (
         results[7] if not isinstance(results[7], Exception) else WhaleAlertSummary()
+    )
+    research_data: ResearchData = (
+        results[8] if not isinstance(results[8], Exception) else ResearchData()
     )
 
     for r in results:
@@ -644,6 +652,26 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
             logger.error(f"Summary generation failed: {e}")
             errors.append(e)
 
+    # Generate CIC Market Insight research article (P2-A: BIC Group L1)
+    research_article = None
+    if generated:
+        try:
+            research_article = await generate_research_article(
+                llm=llm,
+                context=context,
+                research_data=research_data,
+            )
+            if research_article:
+                logger.info(
+                    f"Research article: {research_article.word_count} words "
+                    f"via {research_article.llm_used}"
+                )
+            else:
+                logger.warning("Research article skipped: content too short for paid members")
+        except Exception as e:
+            logger.error(f"Research article generation failed: {e}")
+            errors.append(e)
+
     # --- Stage 3: NQ05 Post-filter (QĐ4 Layer 2) ---
     logger.info("Stage 3: NQ05 Post-filter")
 
@@ -686,6 +714,19 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
             }
         )
 
+    if research_article:
+        # Research article already NQ05-filtered in generator; apply Layer 2 post-filter
+        filtered = check_and_fix(research_article.content)
+        content = _append_source_references(filtered.content, source_url_map)
+        articles_out.append(
+            {
+                "tier": "Research",
+                "content": content,
+                "source_urls": source_urls,
+                "image_urls": image_urls,
+            }
+        )
+
     # --- Write generated content to Sheets (A4) ---
     try:
         sheets_w2 = SheetsClient()
@@ -694,8 +735,14 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
         logger.warning(f"Generated content write failed (non-critical): {e}")
         errors.append(e)
 
+    # Collect LLM models used for run log
+    llm_models = sorted({a.llm_used for a in generated})
+    if research_article:
+        llm_models = sorted(set(llm_models) | {research_article.llm_used})
+
+    research_wc = research_article.word_count if research_article else 0
     logger.info(f"Pipeline stages complete: {len(articles_out)} articles ready")
-    return articles_out, errors
+    return articles_out, errors, ", ".join(llm_models), research_wc
 
 
 def _check_cross_tier_repetition(articles: list) -> dict:
@@ -824,7 +871,7 @@ async def _write_generated_content(
                 now,
                 "daily_report",
                 article.get("tier", ""),
-                article.get("content", "")[:8000],  # truncate for Sheets cell limit
+                article.get("content", "")[:45000],  # truncate for Sheets cell limit (50K max)
                 "",  # LLM sử dụng
                 "pending",
                 "",  # Ghi chú
@@ -889,6 +936,7 @@ async def _write_run_log(run_log: dict) -> None:
             run_log.get("llm_used", ""),
             "; ".join(run_log.get("errors", [])),
             f"daily | {run_log.get('tiers_delivered', 0)} tiers"
+            f" | research: {run_log.get('research_word_count', 0)}w"
             f" | {run_log.get('delivery_method', '')}",
         ]
         await asyncio.to_thread(sheets.batch_append, "NHAT_KY_PIPELINE", [row])
@@ -1002,12 +1050,12 @@ async def _send_test_confirmation(
 
 
 def _append_source_references(content: str, source_url_map: dict[str, str]) -> str:
-    """Append plain-text source reference footer (FR19 + FR30 copy-paste ready).
+    """Append hyperlinked source reference footer (FR19 + FR30).
 
-    Instead of injecting <a href> HTML (which breaks copy-paste to BIC Group),
-    appends a "Nguồn tham khảo" section with source names and URLs.
+    Appends a "Nguồn tham khảo" section with clickable hyperlinks.
     Only includes sources whose names actually appear in the content.
     """
+    import html as _html
     import re as _re
 
     mentioned: list[tuple[str, str]] = []
@@ -1026,7 +1074,8 @@ def _append_source_references(content: str, source_url_map: dict[str, str]) -> s
 
     footer = "\n\n📎 Nguồn tham khảo:\n"
     for name, url in mentioned[:5]:  # Limit to 5 sources to keep it concise
-        footer += f"• {name}: {url}\n"
+        safe_name = _html.escape(name)
+        footer += f'• <a href="{url}">{safe_name}</a>\n'
     return content + footer
 
 

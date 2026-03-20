@@ -480,12 +480,13 @@ async def _reprocess_deferred_events(
                 )
                 message = f"{emoji} BREAKING NEWS\n\n{content.formatted}"
             else:
-                # Fallback: plain text if LLM unavailable
-                message = (
-                    f"{emoji} BREAKING NEWS\n\n"
-                    f"{entry.title} ({entry.source})\n"
-                    f"\U0001f517 {entry.url}"
+                # Fallback: raw data with hyperlink if LLM unavailable
+                from cic_daily_report.breaking.content_generator import (
+                    _raw_data_fallback,
                 )
+
+                fallback = _raw_data_fallback(event)
+                message = f"{emoji} BREAKING NEWS\n\n{fallback.formatted}"
 
             # Split for TG safety (A2)
             parts = split_message("BREAKING", message)

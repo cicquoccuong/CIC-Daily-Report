@@ -62,8 +62,7 @@ Cấu trúc (CHỈ viết 3 phần, KHÔNG thêm nguồn hay tuyên bố miễn 
 RAW_DATA_TEMPLATE = """⚠️ AI không khả dụng — dữ liệu thô
 
 📰 {title}
-📌 Nguồn: {source}
-🔗 {url}
+🔗 {source_link}
 
 {disclaimer}"""
 
@@ -83,6 +82,16 @@ class BreakingContent:
     def formatted(self) -> str:
         """Format for Telegram delivery: emoji + headline + content."""
         return self.content
+
+
+def _format_source_link(source: str, url: str) -> str:
+    """Format source as Telegram HTML hyperlink (PA E)."""
+    import html as _html
+
+    safe_source = _html.escape(source)
+    if url:
+        return f'<a href="{url}">Nguồn: {safe_source} ↗</a>'
+    return f"Nguồn: {safe_source}"
 
 
 _TRAFILATURA_TIMEOUT = 8  # seconds — fail fast, fallback to title-only
@@ -174,10 +183,9 @@ async def generate_breaking_content(
 
         logger.info(f"Breaking content generated: {word_count} words via {model_used}")
 
-        # Append source link + standard disclaimer
-        content_with_disclaimer = (
-            clean_content + f"\n\n🔗 Nguồn: {event.source} — {event.url}" + DISCLAIMER
-        )
+        # Append source hyperlink + standard disclaimer
+        source_html = _format_source_link(event.source, event.url)
+        content_with_disclaimer = clean_content + f"\n\n🔗 {source_html}" + DISCLAIMER
 
         return BreakingContent(
             event=event,
@@ -197,8 +205,7 @@ def _raw_data_fallback(event: BreakingEvent) -> BreakingContent:
     """Fallback: send raw event data when all LLMs fail."""
     content = RAW_DATA_TEMPLATE.format(
         title=event.title,
-        source=event.source,
-        url=event.url,
+        source_link=_format_source_link(event.source, event.url),
         disclaimer=DISCLAIMER,
     )
 

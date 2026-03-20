@@ -215,9 +215,9 @@ class TestRawDataFallback:
         result = _raw_data_fallback(_event())
         assert "Major exchange hack" in result.content
 
-    def test_includes_url(self):
+    def test_includes_source_hyperlink(self):
         result = _raw_data_fallback(_event())
-        assert "https://coindesk.com/hack" in result.content
+        assert '<a href="https://coindesk.com/hack">Nguồn: CoinDesk ↗</a>' in result.content
 
     def test_not_ai_generated(self):
         result = _raw_data_fallback(_event())
@@ -247,15 +247,15 @@ class TestFR25ImageUrl:
 class TestSourceUrlInContent:
     """AI-generated content must include clickable source URL."""
 
-    async def test_ai_content_includes_source_url(self):
+    async def test_ai_content_includes_source_hyperlink(self):
         llm = _mock_llm()
         result = await generate_breaking_content(_event(), llm)
-        assert "https://coindesk.com/hack" in result.content
+        assert '<a href="https://coindesk.com/hack">Nguồn: CoinDesk ↗</a>' in result.content
 
-    async def test_ai_content_includes_source_name_with_url(self):
+    async def test_ai_content_has_source_link_emoji(self):
         llm = _mock_llm()
         result = await generate_breaking_content(_event(), llm)
-        assert "🔗 Nguồn: CoinDesk — https://coindesk.com/hack" in result.content
+        assert "🔗 <a href=" in result.content
 
 
 class TestDisclaimerDedup:

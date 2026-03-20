@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.27.0] - 2026-03-20
+
+### P2-A: CIC Market Insight Research Article (BIC Group L1)
+
+New feature: generates a >2500-word deep analysis research article for BIC Group L1 paid members.
+Series name: "CIC Market Insight — Ngày DD/MM/YYYY"
+
+#### New Files
+- **`collectors/research_data.py`**: Research-specific data collector with 5 free sources:
+  - BGeometrics: MVRV Z-Score, NUPL, SOPR, Puell Multiple (15 req/day, no key)
+  - btcetffundflow.com: Spot Bitcoin ETF daily flows for 13 ETFs (scraping __NEXT_DATA__)
+  - DefiLlama Stablecoins: USDT/USDC supply + 1d/7d/30d flow changes (no key)
+  - Blockchain.com: Miner Revenue, Difficulty, Hash Rate (no key)
+  - Binance Spot: Pi Cycle Top indicator (calculated from 111SMA & 350SMA×2)
+- **`generators/research_generator.py`**: Research article generator with:
+  - 8-section article structure (Overview, Alerts, On-chain, Stablecoin/ETF, Derivatives, Macro, Summary Table, Conclusion)
+  - Research-grade NQ05-compliant system prompt
+  - 8192 max tokens for >2500 word output
+  - NQ05 compliance: prompt-level + pipeline Stage 3 post-filter (consistent with tier articles)
+
+#### Pipeline Integration (daily_pipeline.py)
+- Stage 1: `collect_research_data()` added to parallel data collection
+- Stage 2: `generate_research_article()` runs after BIC Chat summary
+- Stage 3: Research article passes through NQ05 post-filter (same as tier articles)
+- Stage 4: Delivered as tier="Research" alongside existing articles
+
+#### Data Stack (all verified free, no credit card required)
+| Source | Data | API Calls/Day |
+|--------|------|---------------|
+| BGeometrics | MVRV-Z, NUPL, SOPR, Puell | 4 |
+| btcetffundflow.com | ETF flows (13 ETFs) | 1 |
+| DefiLlama | Stablecoin supply/flow | 1 |
+| Blockchain.com | Miner Revenue, Difficulty | 1 |
+| Binance Spot | Pi Cycle (calculated) | 1 |
+| + Existing pipeline | Market, On-chain, Derivatives, Sector, News | ~30 |
+
+#### Tests
+- `tests/test_collectors/test_research_data.py`: 15 tests covering all 5 data sources + format + edge cases
+- `tests/test_generators/test_research_generator.py`: 11 tests covering context, prompt, NQ05, generation + quality gate
+
+#### Review Fixes (post-implementation QA)
+- **Quality gate**: `generate_research_article()` returns `None` when content <800 words (pipeline skips gracefully); warns when <1500 words
+- **NQ05 single-layer**: Removed duplicate `check_and_fix()` from generator — NQ05 post-filter now only in pipeline Stage 3 (consistent with tier articles)
+- **Stablecoin data consistency**: `circulating.peggedUSD` used as single source of truth for market cap (not mixing with `chainCirculating`)
+- **ETF 5-day trend**: Added `recent_total_flows` to `ETFFlowData` — LLM receives 5-day flow trend for analysis, not just latest day
+- **Section 7 rewrite**: Changed from "So sánh hôm nay vs hôm qua" (requires yesterday's data) to "Bảng tổng hợp chỉ số chính" (summary table)
+- **Removed bond yield**: Prompt no longer requires US Bond 10Y/2Y yield data (no source available)
+- **Missing data handling**: Added "XỬ LÝ THIẾU DỮ LIỆU" instructions to prompt — LLM skips sections without data instead of fabricating
+- **Stablecoin zero change**: Fixed Python falsy bug — `change_1d=0.0` now formats as "+0" instead of showing "N/A"
+- **Sheets truncation**: Increased content limit from 8,000 to 45,000 chars (research articles ~12-15K chars, Sheets cell limit 50K)
+- **Run log tracking**: `_execute_stages()` returns research word count; NHAT_KY_PIPELINE notes field shows `research: Nw` for traceability
+- **Source hyperlinks (PA E)**: Breaking news `🔗 <a href="url">Nguồn: Source ↗</a>` — full clickable hyperlink in Telegram, replacing plain-text URL
+- **Deferred event fallback**: Reuses `_raw_data_fallback()` with HTML hyperlinks instead of separate plain-text template
+
 ## [0.26.0] - 2026-03-20
 
 ### Content Quality — Investor-Focused Insight Upgrade (Phase 1)
