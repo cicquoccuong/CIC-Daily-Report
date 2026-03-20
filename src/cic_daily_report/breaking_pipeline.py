@@ -558,25 +558,65 @@ _FALSE_POSITIVE_SYMBOLS = {
 def _filter_non_cic_coins(events: list, tracked_coins: set[str]) -> list:
     """Filter out events about coins not tracked by CIC.
 
+    v0.26.0: Enhanced with parenthetical coin detection (e.g., "River (RIVER)")
+    and macro-event keyword whitelist. Small unknown coins are now consistently
+    filtered even when their symbols aren't uppercase in the title.
+
     Keeps: events about tracked coins + non-coin-specific events (regulatory, macro).
     Filters: events mentioning coin-like symbols not in tracked_coins.
     """
     if not tracked_coins:
         return events  # No whitelist available — keep all
 
+    # v0.26.0: Keywords indicating macro/regulatory events (always keep)
+    macro_keywords = {
+        "fed",
+        "sec",
+        "regulation",
+        "ban",
+        "law",
+        "legal",
+        "court",
+        "congress",
+        "senate",
+        "etf",
+        "policy",
+        "inflation",
+        "rate",
+        "treasury",
+        "sanctions",
+        "compliance",
+        "framework",
+        "bill",
+    }
+
     filtered = []
     for event in events:
-        tracked_in_title = _extract_coins_from_title(event.title, tracked_coins)
+        title = event.title
+        tracked_in_title = _extract_coins_from_title(title, tracked_coins)
         # Check for any coin-like symbols in ORIGINAL case (not uppercased)
-        all_candidates = set(_COIN_PATTERN.findall(event.title)) - _FALSE_POSITIVE_SYMBOLS
+        all_candidates = set(_COIN_PATTERN.findall(title)) - _FALSE_POSITIVE_SYMBOLS
+
+        # v0.26.0: Also detect "Name (SYMBOL)" pattern for mixed-case titles
+        # e.g., "River (RIVER) Soars 50%" — RIVER is detected by regex,
+        # but also detect patterns like "Solana (SOL)" where name is mixed-case
+        paren_coins = set(re.findall(r"\(([A-Z]{2,10})\)", title)) - _FALSE_POSITIVE_SYMBOLS
+        all_candidates = all_candidates | paren_coins
+
         untracked_coins = all_candidates - tracked_coins
 
         if tracked_in_title:
             # Has tracked coins → keep
             filtered.append(event)
         elif untracked_coins:
-            # Has coin-like symbols but NONE tracked → likely about non-CIC coin
-            logger.info(f"Filtered non-CIC coin event: {event.title}")
+            # Has coin-like symbols but NONE tracked → check if macro event
+            title_lower = title.lower()
+            is_macro = any(kw in title_lower for kw in macro_keywords)
+            if is_macro:
+                filtered.append(event)
+                logger.info(f"Kept macro event with untracked coins: {title}")
+            else:
+                logger.info(f"Filtered non-CIC coin event: {title} (untracked: {untracked_coins})")
         else:
             # No coin symbols at all → macro/regulatory → keep
             filtered.append(event)

@@ -36,18 +36,25 @@ DISCLAIMER = (
     "Hãy tự nghiên cứu (DYOR) trước khi đưa ra quyết định đầu tư."
 )
 
-# NQ05 prompt-layer instructions (QĐ4 Layer 1) — v0.22.0: rewritten for Gemini system_instruction
+# NQ05 prompt-layer instructions (QĐ4 Layer 1) — v0.26.0: investor-focused + anti-filler
 NQ05_SYSTEM_PROMPT = (
-    "VAI TRÒ: Bạn là nhà phân tích thị trường tài sản mã hóa cho cộng đồng CIC. "
-    "Bạn kết hợp góc nhìn nhà phân tích (data-driven, logic nhân-quả) "
-    "và nhà đầu tư (ý nghĩa thực tế cho người đọc).\n\n"
+    "VAI TRÒ: Bạn là nhà phân tích thị trường tài sản mã hóa cho cộng đồng CIC "
+    "(Crypto Inner Circle). Thành viên CIC là NHÀ ĐẦU TƯ CHIẾN LƯỢC (không phải trader) "
+    "— họ tích lũy dài hạn, dùng chiến lược ADCA, và đánh giá thị trường theo chu kỳ "
+    "(Đông-Xuân-Hè-Thu). Họ bận rộn và chỉ đọc khi nội dung có GIÁ TRỊ thật sự.\n\n"
     "QUY TRÌNH PHÂN TÍCH (tuân thủ theo thứ tự):\n"
     "1. TỔNG HỢP: Đọc toàn bộ dữ liệu, xác định 3-5 điểm quan trọng nhất\n"
-    "2. TÌM PATTERN: Chỉ số nào liên quan nhau? Đồng thuận hay mâu thuẫn?\n"
-    "3. DIỄN GIẢI: Mỗi con số NGHĨA LÀ GÌ cho nhà đầu tư? So với hôm qua/tuần trước?\n"
-    "4. TRÌNH BÀY: Kể câu chuyện thị trường — KHÔNG liệt kê số liệu rời rạc\n\n"
+    "2. TÌM MÂU THUẪN: Chỉ số nào XUNG ĐỘT nhau? (VD: F&G thấp nhưng Funding Rate dương "
+    "= retail sợ nhưng pro traders vẫn lạc quan — đây là insight có giá trị)\n"
+    "3. DIỄN GIẢI cho NHÀ ĐẦU TƯ: Mỗi con số → ảnh hưởng gì đến người đang TÍCH LŨY dài hạn?\n"
+    "4. KẾT NỐI NHÂN-QUẢ: Nối ít nhất 2 sự kiện/chỉ số thành chuỗi tác động logic\n"
+    "5. TRÌNH BÀY: Kể câu chuyện thị trường — KHÔNG liệt kê số liệu rời rạc\n\n"
     "PHONG CÁCH: Chuyên nghiệp, rõ ràng, gần gũi. "
     "Thuật ngữ tài chính chính xác. Viết tiếng Việt tự nhiên.\n\n"
+    "YÊU CẦU INSIGHT BẮT BUỘC (mỗi bài viết PHẢI có ÍT NHẤT):\n"
+    "✓ 1 câu liên kết NHÂN-QUẢ giữa 2+ chỉ số (A xảy ra → B bị ảnh hưởng VÌ C)\n"
+    "✓ 1 điều BẤT THƯỜNG hoặc MÂU THUẪN rút ra từ data (nếu tất cả bình thường → nói rõ)\n"
+    "✓ 0 câu chỉ lặp lại số liệu mà không giải thích ý nghĩa\n\n"
     "NQ05 COMPLIANCE (Nghị quyết 05/2025/NQ-CP — BẮT BUỘC):\n"
     "- KHÔNG khuyến nghị mua/bán/giữ bất kỳ tài sản nào\n"
     "- KHÔNG dùng: 'nên mua', 'nên bán', 'khuyến nghị', 'chắc chắn tăng/giảm'\n"
@@ -59,10 +66,12 @@ NQ05_SYSTEM_PROMPT = (
     "- KHÔNG cite: Bloomberg, CryptoQuant, TradingView, Santiment, IntoTheBlock.\n\n"
     "CỤM TỪ CẤM (filler — TUYỆT ĐỐI KHÔNG viết):\n"
     "× 'có thể ảnh hưởng đến' → thay bằng nêu CỤ THỂ ảnh hưởng gì\n"
-    "× 'cần theo dõi thêm' → thay bằng nêu theo dõi CÁI GÌ, KHI NÀO\n"
-    "× 'điều này cho thấy' → thay bằng kết luận trực tiếp\n"
+    "× 'cần theo dõi thêm' → thay bằng nêu theo dõi CÁI GÌ, ngưỡng nào, KHI NÀO\n"
+    "× 'điều này cho thấy' rồi lặp lại data → thay bằng INFERENCE mới từ data\n"
     "× 'trong bối cảnh' → bỏ, vào thẳng nội dung\n"
     "× 'tuy nhiên cần lưu ý' → nêu thẳng rủi ro cụ thể\n"
+    "× 'Điều này có thể ảnh hưởng đến sự tự tin của nhà đầu tư' → nêu rõ ảnh hưởng gì\n"
+    "× 'Sự kiện này có thể liên quan đến' → nêu rõ liên quan thế nào\n"
 )
 
 TIERS = ["L1", "L2", "L3", "L4", "L5"]
@@ -73,6 +82,17 @@ TIER_MAX_TOKENS = {
     "L3": 4096,
     "L4": 4096,
     "L5": 6144,
+}
+
+# v0.26.0: Tier-specific temperature — analytical tiers get slightly higher temp
+# for more creative causal reasoning and insight generation.
+# L1-L2: 0.3 (factual, concise) | L3-L4: 0.4 (causal analysis) | L5: 0.45 (strategic)
+TIER_TEMPERATURE = {
+    "L1": 0.3,
+    "L2": 0.3,
+    "L3": 0.4,
+    "L4": 0.4,
+    "L5": 0.45,
 }
 
 
@@ -145,13 +165,23 @@ async def generate_tier_articles(
             except Exception:
                 pass  # fallback to old interpretation_notes
 
-        # v0.21.0: Build inter-tier context (what previous tiers already covered)
+        # v0.26.0: Build inter-tier context — L5 gets FULLER context for synthesis
         prev_context = ""
         if previous_tiers_summary:
-            prev_context = (
-                "⚠️ CÁC TIER TRƯỚC ĐÃ VIẾT (KHÔNG được lặp lại nội dung này):\n"
-                + "\n".join(previous_tiers_summary)
-            )
+            if tier == "L5":
+                # L5 Master Investors need to SYNTHESIZE all previous tiers,
+                # so give them richer summaries (not just dedup hints)
+                prev_context = (
+                    "=== NỘI DUNG CÁC TIER TRƯỚC (dùng để TỔNG HỢP, không lặp lại) ===\n"
+                    "Bạn đang viết cho Master Investor — họ ĐÃ ĐỌC tất cả nội dung dưới đây.\n"
+                    "Nhiệm vụ: TỔNG HỢP thành bức tranh chiến lược MỚI, không lặp.\n\n"
+                    + "\n".join(previous_tiers_summary)
+                )
+            else:
+                prev_context = (
+                    "⚠️ CÁC TIER TRƯỚC ĐÃ VIẾT (KHÔNG được lặp lại nội dung này):\n"
+                    + "\n".join(previous_tiers_summary)
+                )
 
         # v0.21.0 Phase 3: Tier-specific data filtering — less noise for lower tiers
         filtered = _filter_data_for_tier(tier, context, metrics_table)
@@ -375,7 +405,7 @@ async def _generate_single_article(
         prompt=full_prompt,
         system_prompt=NQ05_SYSTEM_PROMPT,
         max_tokens=TIER_MAX_TOKENS.get(tier, 4096),
-        temperature=0.3,
+        temperature=TIER_TEMPERATURE.get(tier, 0.3),
     )
 
     content = response.text.strip()
@@ -487,10 +517,12 @@ _TIER_FOCUS = {
 
 
 def _summarize_tier_output(tier: str, content: str) -> str:
-    """Create structured summary of tier's key data points for dedup.
+    """Create structured summary of tier's key data points for dedup and synthesis.
 
+    v0.26.0: Enhanced to provide richer context for L5 synthesis.
     Extracts specific data points (numbers, coins, key conclusions) so the
-    next tier knows exactly what was already covered — preventing repetition.
+    next tier knows exactly what was already covered — preventing repetition
+    while enabling L5 to synthesize a complete strategic picture.
     """
     import re
 
@@ -500,16 +532,17 @@ def _summarize_tier_output(tier: str, content: str) -> str:
     numbers = re.findall(r"[\$€]?[\d,]+\.?\d*[%KMB]?", content)
     coins = re.findall(r"\b(?:BTC|ETH|SOL|BNB|XRP|ADA|DOGE|AVAX|TRX|LINK)\b", content)
 
-    # Extract key conclusions (sentences with strong verbs)
+    # Extract key conclusions (sentences with strong verbs or insight markers)
     sentences = re.split(r"[.!?\n]", content)
-    key_sentences = [s.strip() for s in sentences if 30 < len(s.strip()) < 200][:5]
+    key_sentences = [s.strip() for s in sentences if 30 < len(s.strip()) < 200][:7]
 
     parts = [f"[{tier}] ({focus}):"]
     if coins:
         parts.append(f"  Coins đã phân tích: {', '.join(sorted(set(coins)))}")
     if numbers:
         parts.append(f"  Số liệu đã dùng: {', '.join(numbers[:10])}")
-    for s in key_sentences[:3]:
+    # v0.26.0: Include more key sentences for richer synthesis by L5
+    for s in key_sentences[:5]:
         parts.append(f"  - {s[:200]}")
 
     return "\n".join(parts)

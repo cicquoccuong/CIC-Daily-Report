@@ -243,7 +243,8 @@ class TestInterpretMetrics:
             [],
             {"Fear & Greed": 25, "DXY": 106.0},
         )
-        assert "MÂU THUẪN" in result.cross_signal_summary
+        # v0.26.0: renamed from "MÂU THUẪN" to "TRÁI CHIỀU" for general conflicts
+        assert "TRÁI CHIỀU" in result.cross_signal_summary
 
     def test_cross_signals_agreement_bull(self):
         """All bullish signals → agreement."""

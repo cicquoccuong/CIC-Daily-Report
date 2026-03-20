@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.26.0] - 2026-03-20
+
+### Content Quality — Investor-Focused Insight Upgrade (Phase 1)
+
+#### 1. Tier Context Rewrite (daily_pipeline.py)
+- All 5 tier_context prompts rewritten with **investor persona** matching CIC member profiles:
+  - L1: Beginner investor (BTC/ETH, 10-30M VND, ADCA strategy)
+  - L2: Bluechip diversifier (19 coins, 30-60M VND, sector allocation)
+  - L3: Experienced mid-cap investor (50+ coins, 60-150M VND, causal analysis)
+  - L4: DeFi/infrastructure specialist (100+ coins, 150-300M VND, risk assessment)
+  - L5: Master investor (full portfolio, >300M VND, strategic + seasonal cycle)
+- Each tier now asks questions relevant to **long-term investors**, not traders
+- Example prompts updated to demonstrate insight-driven analysis
+
+#### 2. NQ05 System Prompt Upgrade (article_generator.py)
+- Added CIC community context (ADCA strategy, 4-season cycle, busy investors)
+- **Mandatory insight requirements**: each article MUST contain:
+  - 1+ causal link between 2+ indicators
+  - 1+ anomaly or contradiction from data
+  - 0 sentences that merely restate numbers without interpretation
+- Added 2 more banned filler phrases commonly seen in output
+- Analysis process now includes explicit "find contradictions" step
+
+#### 3. Metrics Engine Enhancement (metrics_engine.py)
+- `_analyze_cross_signals()`: New **specific contradiction detection**:
+  - Retail vs Pro: F&G extreme + Funding Rate opposite direction
+  - Macro vs Sentiment: DXY direction vs F&G direction conflict
+  - Price vs Volume: divergence detection (bull trap warning)
+- Each contradiction includes **interpretation + risk implication**
+- `format_for_tier()`: Tier-specific framing enhanced:
+  - L1-L2: Added investor-relevant context for accumulation guidance
+  - L3: Now receives cross-signal contradictions (not just L4)
+  - L4: Risk framing specific to DeFi/infrastructure portfolios
+  - L5: Added **seasonal cycle context** (Winter/Spring/Summer/Fall)
+
+#### 4. Breaking News Filter (breaking_pipeline.py)
+- `_filter_non_cic_coins()`: Added parenthetical coin detection `(SYMBOL)`
+- Added macro-event keyword whitelist (regulation/legal events always kept)
+- Untracked coins with macro keywords → kept; pure altcoin pumps → filtered
+
+#### 5. Tier-Specific Temperature (article_generator.py)
+- L1-L2: 0.3 (factual, concise)
+- L3-L4: 0.4 (allows more creative causal reasoning)
+- L5: 0.45 (strategic synthesis)
+
+#### 6. Enhanced Inter-Tier Context (article_generator.py)
+- L5 receives **richer summaries** from L1-L4 with synthesis instructions
+- `_summarize_tier_output()`: Extracts 5 key sentences (up from 3) for L5
+
+#### Tests
+- 1 test updated for renamed cross-signal conflict header
+- Total: 655 tests pass. Lint clean.
+
 ## [0.25.0] - 2026-03-19
 
 ### Breaking Pipeline — Deferred Mechanism Fix (8 bugs, 3 clusters)

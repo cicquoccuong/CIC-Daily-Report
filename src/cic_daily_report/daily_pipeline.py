@@ -429,100 +429,140 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception]]:
 
     # Build per-tier analysis context — each tier answers a DIFFERENT question.
     # Members see ALL lower tiers (L5 sees L4→L1), so content MUST NOT repeat.
+    #
+    # v0.26.0: Rewritten with INVESTOR persona (not trader) matching CIC philosophy.
+    # CIC members are long-term strategic investors using ADCA strategy, NOT traders.
+    # Each Level corresponds to a specific member group with different asset scope
+    # and investment capital. Content must be relevant to their investment horizon.
     tier_context: dict[str, str] = {}
     tier_context["L1"] = (
-        "Tier L1 — 'Sáng nay thị trường crypto thế nào?'\n"
-        "ĐỐI TƯỢNG: Người mới, đọc 30 giây hiểu xong.\n"
+        "Tier L1 — 'Thị trường hôm nay có gì BẤT THƯỜNG không?'\n"
+        "ĐỐI TƯỢNG: Nhà đầu tư MỚI, chỉ hold BTC & ETH, vốn 10-30 triệu. "
+        "Họ bận rộn, chỉ đọc 30 giây. Họ dùng chiến lược tích lũy dài hạn (ADCA), "
+        "KHÔNG phải trader lướt sóng.\n"
         "GIỌNG VĂN: Thân thiện, dễ hiểu, như kể cho bạn bè.\n\n"
         "TRẢ LỜI 3 CÂU HỎI NÀY (dùng data ở trên):\n"
-        "1. Sáng nay thị trường có gì KHÁC? "
-        "(dùng Market Regime từ Metrics Engine)\n"
-        "2. BTC và ETH đang ở đâu? Tăng hay giảm bao nhiêu?\n"
-        "3. Tin tức quan trọng nhất mà người mới CẦN BIẾT? "
-        "(tóm 1-2 tin, giải thích TẠI SAO)\n\n"
+        "1. Hôm nay có gì KHÁC BIỆT hay BẤT THƯỜNG không? "
+        "(dùng Market Regime từ Metrics Engine — nếu không có gì đặc biệt, nói rõ)\n"
+        "2. BTC và ETH đang ở đâu? Biến động này có ý nghĩa gì cho người đang "
+        "TÍCH LŨY dài hạn? (VD: giảm nhẹ 1-2% = bình thường, không cần lo)\n"
+        "3. MỘT tin tức duy nhất quan trọng nhất hôm nay — giải thích TẠI SAO "
+        "người hold BTC/ETH nên biết tin này\n\n"
         "VÍ DỤ OUTPUT TỐT (tham khảo style, KHÔNG copy):\n"
-        '"Thị trường crypto sáng nay khởi sắc — trạng thái '
-        "PHỤC HỒI. BTC tăng **2.8%** lên $74,834, ETH **+6.2%**. "
-        "F&G=28 (Fear) nhưng đã cải thiện. Tin nổi bật: "
-        'Hàn Quốc phạt Bithumb $24M — giám sát mạnh tay hơn."\n\n'
-        "KHÔNG: thuật ngữ phức tạp (funding rate, OI...) | on-chain/macro | quá 2 coins\n"
+        '"Thị trường hôm nay không có gì bất thường — BTC giảm nhẹ **1.4%** về '
+        "$70,524, ETH giảm **3.6%**. Đây là mức dao động bình thường trong giai đoạn "
+        "tích lũy. Điều đáng chú ý: F&G=11 (hoảng loạn cực độ) — lịch sử cho thấy "
+        "đây thường là vùng mà nhà đầu tư dài hạn tích lũy được giá tốt. "
+        "Tin nổi bật: Fed giữ nguyên lãi suất — "
+        'môi trường lãi suất ổn định hỗ trợ tài sản rủi ro."\n\n'
+        "KHÔNG: thuật ngữ phức tạp (funding rate, OI...) | on-chain/macro | quá 2 coins | "
+        "gợi ý mua/bán\n"
     )
     tier_context["L2"] = (
-        "Tier L2 — 'Coins và sectors nào đáng chú ý hôm nay?'\n"
-        "ĐỐI TƯỢNG: Có altcoin, muốn biết tổng quan.\n"
+        "Tier L2 — 'Các bluechip đáng chú ý và dòng tiền đang chảy đi đâu?'\n"
+        "ĐỐI TƯỢNG: Nhà đầu tư muốn đa dạng hóa sang bluechip, vốn 30-60 triệu. "
+        "Họ hold BTC/ETH + các mã lớn (SOL, BNB, XRP, ADA, DOT, LINK...). "
+        "Chiến lược: phân bổ danh mục theo mức rủi ro.\n"
         "⚠️ Member ĐÃ ĐỌC L1 — KHÔNG lặp BTC/ETH/F&G.\n\n"
         "TRẢ LỜI 4 CÂU HỎI NÀY:\n"
         "1. Sector nào DẪN ĐẦU hôm nay? (dùng CoinGecko sector data: market_cap_change_24h)\n"
-        "2. Coins nào BIẾN ĐỘNG MẠNH nhất (>3%)? TẠI SAO? (nối với narrative nếu có)\n"
-        "3. BTC Dominance + Altcoin Season → tiền đang chảy vào đâu?\n"
+        "   → Nối với xu hướng: sector này dẫn đầu vì LÝ DO gì?\n"
+        "2. Trong danh sách coins theo dõi, coin nào BIẾN ĐỘNG MẠNH nhất (>3%)? "
+        "TẠI SAO? (nối với narrative nếu có)\n"
+        "3. BTC Dominance + Altcoin Season → tiền đang chảy VÀO hay RA khỏi altcoin? "
+        "Xu hướng này thuận lợi hay bất lợi cho người đang giữ danh mục bluechip?\n"
         "4. USDT/VND rate hôm nay có gì đặc biệt?\n\n"
         "YÊU CẦU: Nhóm coins theo SECTOR (DeFi, L1, L2, AI, Meme, RWA...). "
         "Nhắc tối thiểu 10/19 coins trong danh sách.\n\n"
         "VÍ DỤ OUTPUT TỐT:\n"
-        '"📈 Sector dẫn đầu: Meme (+5.5%), DeFi (+3.4%), Layer 1 (+3.5%). '
-        "Đáng chú ý: XRP bứt phá **+8.1%** với volume $3.7B — narrative "
-        "XRP ETF đang nóng lại. Nhóm AI (FET, RENDER) tăng nhẹ 1-2%. "
-        'BTC Dominance 56.8% — altcoins đang lấy lại momentum."\n\n'
+        '"📈 Sector dẫn đầu: Layer 1 (+3.5%) — dòng tiền quay lại các blockchain nền tảng '
+        "sau giai đoạn ưu tiên BTC. Đáng chú ý: XRP bứt phá **+8.1%** (narrative ETF đang nóng), "
+        "SOL **+3.2%** nhờ TVL DeFi tăng. BTC Dominance 56.8% — altcoins đang dần lấy lại "
+        'momentum, có lợi cho danh mục đa dạng hóa."\n\n'
         "KHÔNG: lặp L1 | on-chain/derivatives | bịa support/resistance\n"
     )
     tier_context["L3"] = (
-        "Tier L3 — 'TẠI SAO thị trường diễn biến như vậy?'\n"
-        "ĐỐI TƯỢNG: Trader có kinh nghiệm, muốn hiểu nguyên nhân.\n"
-        "⚠️ Member ĐÃ ĐỌC L1+L2 — KHÔNG lặp giá coin.\n\n"
+        "Tier L3 — 'TẠI SAO thị trường di chuyển thế này? Nguyên nhân gốc rễ?'\n"
+        "ĐỐI TƯỢNG: Nhà đầu tư KINH NGHIỆM, danh mục mid-cap (>50 mã), vốn 60-150 triệu. "
+        "Họ cần hiểu nguyên nhân sâu xa, không chỉ biết giá lên/xuống. "
+        "Họ chấp nhận rủi ro cao hơn, cần thông tin để đánh giá sector nào đáng theo dõi.\n"
+        "⚠️ Member ĐÃ ĐỌC L1+L2 — KHÔNG lặp giá coin, KHÔNG lặp sector đã nêu ở L2.\n\n"
         "TRẢ LỜI 3 CÂU HỎI NÀY:\n"
-        "1. DXY, Gold, lịch kinh tế → TÁC ĐỘNG thế nào đến crypto? (chuỗi nhân-quả)\n"
-        "2. Derivatives đang nói gì? (dùng Metrics Engine: Funding Rate, OI đã tính sẵn)\n"
-        "   → Diễn giải bằng ngôn ngữ tự nhiên, NỐI với macro. KHÔNG copy Metrics Engine.\n"
-        "3. Tổng hợp: macro + derivatives + sentiment → câu chuyện LOGIC là gì?\n\n"
+        "1. CHUỖI NHÂN-QUẢ: DXY → USD → Gold → Crypto — mối liên hệ hôm nay là gì? "
+        "(dùng data macro thực tế, nối thành câu chuyện logic)\n"
+        "2. Derivatives đang kể câu chuyện gì? (dùng Metrics Engine: Funding Rate, OI) "
+        "→ Diễn giải: dân chuyên nghiệp (derivatives) đang nghĩ KHÁC hay GIỐNG retail (F&G)? "
+        "Nếu KHÁC → đây là mâu thuẫn đáng chú ý.\n"
+        "3. Tổng hợp: macro + derivatives + sentiment → câu chuyện LOGIC nhất quán là gì? "
+        "Nếu các tín hiệu mâu thuẫn nhau, chỉ rõ mâu thuẫn đó.\n\n"
         "VÍ DỤ OUTPUT TỐT:\n"
-        '"DXY [giá trị từ data] — USD [tăng/giảm] tạo [tác động] cho crypto. '
-        "Cùng lúc, Funding Rate [giá trị từ Metrics Engine] cho thấy thị trường phái sinh "
-        "[diễn giải]. Đây là dấu hiệu [kết luận từ chuỗi nhân-quả macro→derivatives]. "
-        "[Sự kiện macro quan trọng nhất tuần] — phân tích tác động lên DXY → crypto. "
-        'Nối với Funding Rate để đánh giá tâm lý thị trường phái sinh."\n\n'
+        '"DXY = 99.4 (USD yếu) — bình thường đây là tín hiệu tích cực cho crypto vì dòng tiền '
+        "tìm tài sản thay thế. NHƯNG F&G = 11 (hoảng loạn cực độ) cho thấy retail đang bán tháo, "
+        "trong khi Funding Rate = 0.06% (dương) nghĩa là dân derivatives VẪN đang đặt cược tăng. "
+        "Mâu thuẫn này cho thấy: retail hoảng loạn, nhưng dân chuyên nghiệp chưa từ bỏ — "
+        "đây thường là đặc điểm của giai đoạn tích lũy cuối cùng "
+        'trước khi thị trường phục hồi."\n\n'
         "KHÔNG: giá coin (đã ở L2) | rủi ro/scenario (để L4-L5) | bịa MVRV/SOPR\n"
     )
     tier_context["L4"] = (
-        "Tier L4 — 'Rủi ro LỚN NHẤT hiện tại là gì?'\n"
-        "ĐỐI TƯỢNG: Trader có position, cần đánh giá rủi ro.\n"
-        "GIỌNG VĂN: Nghiêm túc, cảnh báo cụ thể.\n"
-        "⚠️ Member ĐÃ ĐỌC L1→L3 — KHÔNG lặp macro/on-chain.\n\n"
+        "Tier L4 — 'Rủi ro nào cần chú ý cho danh mục DeFi/hạ tầng?'\n"
+        "ĐỐI TƯỢNG: Nhà đầu tư CHUYÊN SÂU DeFi & hạ tầng, vốn 150-300 triệu. "
+        "Họ hold >100 mã bao gồm AAVE, UNI, CRV, GMX, PENDLE, LDO, ENS... "
+        "Họ cần đánh giá rủi ro CỤ THỂ cho các sector DeFi, L2, AI, Gaming.\n"
+        "GIỌNG VĂN: Nghiêm túc, cảnh báo cụ thể, data-driven.\n"
+        "⚠️ Member ĐÃ ĐỌC L1→L3 — KHÔNG lặp macro/on-chain đã phân tích.\n\n"
         "TRẢ LỜI 4 CÂU HỎI NÀY:\n"
         "1. Chỉ số nào đang MÂU THUẪN nhau? (dùng cross-signal từ Metrics Engine)\n"
-        "   → Giải thích: mâu thuẫn đó = rủi ro GÌ cho trader?\n"
-        "2. Sector nào đang YẾU NHẤT? (CoinGecko market_cap_change_24h âm, DefiLlama TVL giảm)\n"
+        "   → Giải thích: mâu thuẫn đó = rủi ro GÌ cho người đang giữ danh mục DeFi/hạ tầng?\n"
+        "2. Sector nào đang YẾU NHẤT? Sector nào đang MẠNH NHẤT? "
+        "(CoinGecko market_cap_change + DefiLlama TVL)\n"
+        "   → Dòng tiền đang ROTATE từ đâu sang đâu trong hệ sinh thái DeFi?\n"
         "3. Sự kiện vĩ mô nào SẮP TỚI có thể gây volatility? (từ lịch kinh tế)\n"
-        "4. Red flags: chỉ số nào ở vùng NGUY HIỂM?\n\n"
+        "   → Nếu kết quả bất ngờ, sector nào bị ảnh hưởng NHIỀU NHẤT?\n"
+        "4. Red flags: chỉ số nào ở vùng NGUY HIỂM? "
+        "Funding Rate cực đoan + F&G cực đoan cùng lúc = tín hiệu gì?\n\n"
         "VÍ DỤ OUTPUT TỐT:\n"
-        '"⚠️ **Tín hiệu mâu thuẫn**: [chỉ số A] vs [chỉ số B] — '
-        "[diễn giải mâu thuẫn]. Lần gần nhất xảy ra tình huống tương tự "
-        "[tham khảo lịch sử nếu có trong data]. "
-        "Rủi ro lớn nhất: [sự kiện từ lịch kinh tế] — nếu kết quả bất ngờ, "
-        'DXY tăng → áp lực bán. Kèm cross-signal nào ủng hộ/phản bác."\n\n'
+        '"⚠️ **Tín hiệu mâu thuẫn**: F&G=11 (retail hoảng loạn) vs Funding Rate=0.06% '
+        "(derivatives vẫn lạc quan) — nếu giá giảm thêm, rủi ro cascade liquidation ở "
+        "derivatives sẽ kéo theo token DeFi giảm mạnh hơn (DeFi sector đã -2.3% hôm nay). "
+        "Sector yếu nhất: DeFi (TVL giảm, market cap -2.3%). "
+        "Sector mạnh nhất: AI & Big Data (+1.1%). "
+        "Dòng tiền đang rotate từ DeFi truyền thống sang AI-related tokens. "
+        "Sự kiện sắp tới: PPI report — nếu PPI cao hơn dự báo "
+        '→ DXY tăng → áp lực bán DeFi tokens."\n\n'
         "KHÔNG: lặp L1-L3 | % phân bổ (NQ05) | mua/bán | bịa liquidation/whale data\n"
     )
     tier_context["L5"] = (
-        "Tier L5 — 'Bức tranh tổng thể và các kịch bản?'\n"
-        "ĐỐI TƯỢNG: Master members, tư duy chiến lược.\n"
-        "GIỌNG VĂN: Formal, framework-based.\n"
-        "⚠️ Member ĐÃ ĐỌC L1→L4 — CHỈ viết nội dung MỚI.\n\n"
+        "Tier L5 — 'Bức tranh tổng thể: chúng ta đang ở đâu trong chu kỳ?'\n"
+        "ĐỐI TƯỢNG: MASTER INVESTOR, vốn >300 triệu, danh mục TOÀN BỘ thị trường "
+        "(bao gồm cả mã đầu cơ cao). Họ cần tầm nhìn CHIẾN LƯỢC dài hạn — "
+        "không phải giá ngày hôm nay mà là XU HƯỚNG tuần/tháng. "
+        "Họ hiểu mô hình 4 mùa (Đông-Xuân-Hè-Thu) và cần biết tín hiệu để "
+        "quyết định chiến lược tích lũy hay chốt lời.\n"
+        "GIỌNG VĂN: Formal, framework-based, strategic thinking.\n"
+        "⚠️ Member ĐÃ ĐỌC L1→L4 — CHỈ viết nội dung MỚI, tầm nhìn RỘNG hơn.\n\n"
         "TRẢ LỜI 4 CÂU HỎI NÀY:\n"
-        "1. SCENARIO ANALYSIS (dùng Market Regime + confidence từ Metrics Engine):\n"
-        "   - Base case: regime hiện tại → kỳ vọng gì?\n"
-        "   - Bullish case: nếu [điều kiện cụ thể] → scenario?\n"
-        "   - Bearish case: nếu [rủi ro từ L4] → hậu quả?\n"
-        "2. Dòng tiền đang CHẢY ĐI ĐÂU? (CoinGecko sectors + DefiLlama TVL + narratives)\n"
-        "3. Tín hiệu TỔNG HỢP: macro + derivatives + sentiment đang ĐỒNG THUẬN hay MÂU THUẪN?\n"
+        "1. SCENARIO ANALYSIS (dùng Market Regime + confidence + tất cả signals):\n"
+        "   - Base case: regime hiện tại + tín hiệu chính → kỳ vọng 2-4 tuần tới?\n"
+        "   - Bullish trigger: điều kiện CỤ THỂ nào (sự kiện, ngưỡng giá, chỉ số) "
+        "sẽ xác nhận chuyển sang giai đoạn tích cực?\n"
+        "   - Bearish trigger: điều kiện nào sẽ xác nhận xu hướng giảm sâu hơn?\n"
+        "2. Dòng tiền đang ROTATE đi đâu? (CoinGecko sectors + DefiLlama TVL + narratives)\n"
+        "   → Sector nào đang hút tiền, sector nào đang mất tiền? Xu hướng này "
+        "phù hợp với giai đoạn nào trong chu kỳ thị trường?\n"
+        "3. Tín hiệu TỔNG HỢP: tất cả chỉ số đang ĐỒNG THUẬN hay MÂU THUẪN?\n"
         "   (dùng cross_signal_summary từ Metrics Engine)\n"
-        "4. Timeline: sự kiện nào trong 7 ngày tới có thể THAY ĐỔI bức tranh?\n\n"
+        "   → Nếu đồng thuận: mức độ tin cậy? Nếu mâu thuẫn: ai đúng, ai sai?\n"
+        "4. Timeline: sự kiện nào trong 7 ngày tới có thể THAY ĐỔI bức tranh? "
+        "Nếu không có sự kiện lớn, nói rõ 'tuần tới yên tĩnh'.\n\n"
         "VÍ DỤ OUTPUT TỐT:\n"
-        '"🔍 **Base case ([regime từ Metrics Engine], [confidence])**: '
-        "[mô tả kỳ vọng dựa trên signals]. "
-        "[Nối 2-3 signals ủng hộ kịch bản này]. "
-        "**Bullish trigger**: [điều kiện cụ thể từ data + lịch kinh tế]. "
-        "**Bearish trigger**: [rủi ro từ L4 + ngưỡng cụ thể]. "
-        "Dòng tiền: [sector data + TVL từ DefiLlama + narrative nổi bật] — "
-        '[kết luận về risk appetite hiện tại]."\n\n'
+        '"🔍 **Base case (Suy giảm, tin cậy trung bình)**: Thị trường đang trong giai đoạn '
+        "điều chỉnh — F&G=11 + BTC -1.4% + DeFi -2.3%. Tuy nhiên, DXY yếu (99.4) + "
+        "Funding Rate dương cho thấy đây chưa phải capitulation. Dòng tiền đang rotate "
+        "từ DeFi sang AI & Big Data — phù hợp với xu hướng narrative mới. "
+        "**Bullish trigger**: F&G vượt 25 + BTC giữ trên $68K + volume tăng. "
+        "**Bearish trigger**: BTC mất $65K + DXY vượt 102. "
+        'Tuần tới: PPI report là sự kiện chính — kết quả sẽ ảnh hưởng kỳ vọng lãi suất."\n\n'
         "KHÔNG: lặp L1-L4 | bịa correlation/MVRV/whale | mua/bán/phân bổ (NQ05)\n"
     )
 

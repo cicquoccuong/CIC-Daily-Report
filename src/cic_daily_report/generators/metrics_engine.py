@@ -204,40 +204,65 @@ class MetricsInterpretation:
     def format_for_tier(self, tier: str) -> str:
         """Return tier-appropriate interpretation text.
 
+        v0.26.0: Enhanced with investor-focused framing and seasonal context.
         Each tier gets a DIFFERENT analytical framing from the same data:
-        L1-L2: regime + sentiment (simple overview)
-        L3: WHY — causal chain (macro → derivatives → conclusion)
-        L4: RISK — contradictions and warnings
-        L5: SCENARIOS — base/bull/bear from all signals
+        L1-L2: regime + sentiment + what it means for accumulation
+        L3: WHY — causal chain (macro → derivatives → conclusion) + contradictions
+        L4: RISK — specific contradictions + sector rotation + DeFi impact
+        L5: SCENARIOS — base/bull/bear + seasonal positioning + money flow
         """
         parts = []
 
         if tier in ("L1", "L2"):
             parts.append(f"TRẠNG THÁI: {self.regime.format_vi()}")
             parts.append(f"SENTIMENT: {self.sentiment_analysis}")
+            # v0.26.0: Add investor-relevant context
+            parts.append(
+                "GÓC NHÌN NHÀ ĐẦU TƯ: Nếu trạng thái bình thường → nói rõ "
+                "'không có gì bất thường'. Nếu F&G cực đoan → giải thích "
+                "ý nghĩa cho người đang tích lũy dài hạn."
+            )
 
         elif tier == "L3":
             parts.append(f"TRẠNG THÁI: {self.regime.format_vi()}")
             parts.append("PHÂN TÍCH NGUYÊN NHÂN (cho L3 — giải thích TẠI SAO):")
             parts.append(f"  Macro: {self.macro_analysis}")
             parts.append(f"  Derivatives: {self.derivatives_analysis}")
-            parts.append("  → Nối macro + derivatives thành chuỗi nhân-quả.")
+            # v0.26.0: Add cross-signal for L3 (not just L4)
+            if "MÂU THUẪN" in self.cross_signal_summary:
+                parts.append(f"  Mâu thuẫn phát hiện: {self.cross_signal_summary}")
+            parts.append(
+                "  → NHIỆM VỤ: Nối macro + derivatives thành chuỗi nhân-quả. "
+                "Nếu retail (F&G) và pro (Funding Rate) đang KHÁC CHIỀU → "
+                "đây là insight quan trọng nhất, giải thích tại sao."
+            )
 
         elif tier == "L4":
-            parts.append("PHÂN TÍCH RỦI RO (cho L4 — chỉ ra MÂU THUẪN):")
+            parts.append("PHÂN TÍCH RỦI RO (cho L4 — MÂU THUẪN + tác động DeFi/hạ tầng):")
             parts.append(f"  {self.cross_signal_summary}")
             parts.append(f"  Derivatives: {self.derivatives_analysis}")
             parts.append(f"  Macro: {self.macro_analysis}")
-            parts.append("  → Mâu thuẫn = rủi ro gì cho trader?")
+            parts.append(
+                "  → NHIỆM VỤ: Mỗi mâu thuẫn → nêu rủi ro CỤ THỂ cho danh mục DeFi/hạ tầng. "
+                "Nếu Funding Rate cao + F&G thấp → rủi ro cascade liquidation ảnh hưởng "
+                "token DeFi như thế nào?"
+            )
 
         else:  # L5
-            parts.append("PHÂN TÍCH KỊCH BẢN (cho L5 — base/bull/bear):")
+            parts.append("PHÂN TÍCH KỊCH BẢN (cho L5 — CHIẾN LƯỢC + chu kỳ thị trường):")
             parts.append(f"  Regime: {self.regime.format_vi()}")
             parts.append(f"  Signals: {self.cross_signal_summary}")
             if self.volume_analysis:
                 parts.append(f"  Volume: {self.volume_analysis}")
             parts.append(f"  Sentiment: {self.sentiment_analysis}")
-            parts.append("  → Xây dựng 3 kịch bản từ data trên.")
+            # v0.26.0: Seasonal cycle context for L5 Master Investors
+            parts.append(
+                "  GÓC NHÌN CHU KỲ: Dựa trên các tín hiệu trên, thị trường đang ở "
+                "giai đoạn nào trong chu kỳ 4 mùa? (Đông=tích lũy, Xuân=khởi sắc, "
+                "Hè=hưng phấn, Thu=suy giảm). Master investors cần biết mình đang ở đâu "
+                "để quyết định chiến lược: tích lũy thêm hay bắt đầu chốt lời."
+            )
+            parts.append("  → NHIỆM VỤ: Xây dựng 3 kịch bản + nhận định giai đoạn chu kỳ.")
 
         return "\n".join(parts)
 
@@ -451,9 +476,20 @@ def _analyze_cross_signals(
     onchain_data: list[OnChainMetric],
     key_metrics: dict[str, object],
 ) -> str:
-    """Identify agreement or conflict between signal types."""
+    """Identify agreement or conflict between signal types.
+
+    v0.26.0: Enhanced with specific contradiction detection and investor-relevant
+    interpretation. Identifies retail-vs-pro divergence, macro-vs-sentiment conflicts,
+    and provides actionable context for long-term investors.
+    """
     bullish: list[str] = []
     bearish: list[str] = []
+    contradictions: list[str] = []
+
+    # --- Collect raw signals ---
+    fg_val = None
+    fr_val = None
+    dxy_val = None
 
     # Price action
     for p in market_data:
@@ -466,6 +502,7 @@ def _analyze_cross_signals(
     # Sentiment
     fg = key_metrics.get("Fear & Greed")
     if isinstance(fg, int):
+        fg_val = fg
         if fg >= 55:
             bullish.append(f"Sentiment tích cực (F&G={fg})")
         elif fg <= 40:
@@ -475,6 +512,7 @@ def _analyze_cross_signals(
     for m in onchain_data:
         if m.metric_name == "BTC_Funding_Rate":
             fr = m.value * 100
+            fr_val = fr
             if fr > 0.01:
                 bullish.append(f"Funding Rate dương ({fr:.4f}%)")
             elif fr < -0.01:
@@ -483,33 +521,87 @@ def _analyze_cross_signals(
     # DXY (inverse)
     dxy = key_metrics.get("DXY")
     if isinstance(dxy, (int, float)):
+        dxy_val = dxy
         if dxy <= 100:
             bullish.append(f"USD yếu (DXY={dxy:.1f})")
         elif dxy >= 105:
             bearish.append(f"USD mạnh (DXY={dxy:.1f})")
 
-    # Build summary
+    # --- Detect SPECIFIC contradictions (v0.26.0) ---
+
+    # Contradiction 1: Retail panic vs Pro optimism
+    if fg_val is not None and fr_val is not None:
+        if fg_val <= 20 and fr_val > 0.01:
+            contradictions.append(
+                f"🔍 RETAIL vs PRO: F&G={fg_val} (retail hoảng loạn) NHƯNG "
+                f"Funding Rate={fr_val:.4f}% (derivatives traders vẫn đặt cược tăng). "
+                "Ý nghĩa: dân chuyên nghiệp chưa từ bỏ vị thế long — "
+                "nếu đúng, đây có thể là giai đoạn tích lũy cuối. "
+                "Rủi ro: nếu giá tiếp tục giảm, cascade liquidation từ long positions."
+            )
+        elif fg_val >= 75 and fr_val < -0.01:
+            contradictions.append(
+                f"🔍 RETAIL vs PRO: F&G={fg_val} (retail tham lam) NHƯNG "
+                f"Funding Rate={fr_val:.4f}% (derivatives traders đặt cược giảm). "
+                "Ý nghĩa: dân chuyên nghiệp đang phòng thủ trong khi retail hưng phấn — "
+                "đây thường là tín hiệu phân phối, cần thận trọng."
+            )
+
+    # Contradiction 2: Macro bullish vs Sentiment bearish (or vice versa)
+    if dxy_val is not None and fg_val is not None:
+        if dxy_val <= 100 and fg_val <= 25:
+            contradictions.append(
+                f"🔍 MACRO vs SENTIMENT: DXY={dxy_val:.1f} (USD yếu, thường hỗ trợ crypto) "
+                f"NHƯNG F&G={fg_val} (hoảng loạn). "
+                "Ý nghĩa: điều kiện macro thuận lợi nhưng tâm lý thị trường chưa phản ánh — "
+                "thường xảy ra ở cuối giai đoạn điều chỉnh, trước khi sentiment bắt kịp macro."
+            )
+        elif dxy_val >= 105 and fg_val >= 70:
+            contradictions.append(
+                f"🔍 MACRO vs SENTIMENT: DXY={dxy_val:.1f} (USD mạnh, áp lực giảm crypto) "
+                f"NHƯNG F&G={fg_val} (tham lam). "
+                "Ý nghĩa: tâm lý hưng phấn bất chấp macro bất lợi — "
+                "rủi ro điều chỉnh cao khi macro tác động muộn."
+            )
+
+    # Contradiction 3: Price vs Volume divergence
+    for p in market_data:
+        if p.symbol == "BTC" and p.data_type == "crypto" and p.volume_24h > 0:
+            if p.change_24h >= 3 and p.volume_24h < 20e9:
+                contradictions.append(
+                    f"🔍 GIÁ vs VOLUME: BTC tăng {p.change_24h:+.1f}% nhưng volume thấp "
+                    f"(${p.volume_24h / 1e9:.1f}B). Tăng giá thiếu xác nhận volume — "
+                    "rủi ro bẫy tăng (bull trap)."
+                )
+
+    # --- Build enhanced summary ---
+    parts: list[str] = []
+
+    if contradictions:
+        parts.append("⚠️ MÂU THUẪN ĐÁNG CHÚ Ý:")
+        parts.extend(f"  {c}" for c in contradictions)
+        parts.append("")
+
     if bullish and bearish:
-        return (
-            f"⚠️ TÍN HIỆU MÂU THUẪN:\n"
-            f"  Tín hiệu tăng: {', '.join(bullish)}\n"
-            f"  Tín hiệu giảm: {', '.join(bearish)}\n"
-            f"  → Thị trường đang trong trạng thái KHÔNG RÕ RÀNG. "
-            f"Cần thận trọng và theo dõi thêm."
-        )
+        parts.append("TÍN HIỆU TRÁI CHIỀU:")
+        parts.append(f"  Tín hiệu tăng: {', '.join(bullish)}")
+        parts.append(f"  Tín hiệu giảm: {', '.join(bearish)}")
+        if not contradictions:
+            parts.append(
+                "  → Thị trường đang trong trạng thái KHÔNG RÕ RÀNG — "
+                "nhà đầu tư dài hạn nên giữ chiến lược hiện tại, "
+                "không phản ứng với biến động ngắn hạn."
+            )
     elif bullish:
-        return (
-            f"✅ TÍN HIỆU ĐỒNG THUẬN TĂNG:\n"
-            f"  {', '.join(bullish)}\n"
-            f"  → Các chỉ số đang hướng cùng chiều tích cực."
-        )
+        parts.append(f"✅ TÍN HIỆU ĐỒNG THUẬN TĂNG: {', '.join(bullish)}")
+        parts.append("  → Các chỉ số đang hướng cùng chiều tích cực.")
     elif bearish:
-        return (
-            f"🔻 TÍN HIỆU ĐỒNG THUẬN GIẢM:\n"
-            f"  {', '.join(bearish)}\n"
-            f"  → Các chỉ số đang hướng cùng chiều tiêu cực."
-        )
-    return "Không đủ dữ liệu để đánh giá tương quan tín hiệu."
+        parts.append(f"🔻 TÍN HIỆU ĐỒNG THUẬN GIẢM: {', '.join(bearish)}")
+        parts.append("  → Các chỉ số đang hướng cùng chiều tiêu cực.")
+    else:
+        parts.append("Không đủ dữ liệu để đánh giá tương quan tín hiệu.")
+
+    return "\n".join(parts) if parts else "Không đủ dữ liệu để đánh giá tương quan tín hiệu."
 
 
 # ---------------------------------------------------------------------------
