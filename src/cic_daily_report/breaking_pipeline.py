@@ -211,6 +211,10 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     run_log.events_detected = len(events)
 
     if not events:
+        # v0.29.1 (BUG 2): Persist dedup before early return — deferred reprocess
+        # at Stage 0 may have updated statuses that need saving.
+        if run_log.events_sent > 0:
+            await _persist_dedup_to_sheets(dedup_mgr)
         run_log.status = "no_events"
         return result
 
@@ -231,6 +235,9 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     result.dedup_entries = dedup_result.entries_written
 
     if not dedup_result.new_events:
+        # v0.29.1 (BUG 2): Persist dedup before early return.
+        if run_log.events_sent > 0:
+            await _persist_dedup_to_sheets(dedup_mgr)
         run_log.status = "no_events"
         return result
 
@@ -298,6 +305,7 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     else:
         # Stage 4: Generate + deliver individually
         for i, classified_event in enumerate(send_now):
+            content = None  # v0.29.1 (BUG 5): track generation vs delivery failure
             try:
                 if llm is None or llm.circuit_open:
                     raise RuntimeError("LLM unavailable — circuit open")
@@ -312,12 +320,14 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
                     ),
                     timeout=60,
                 )
-                result.contents.append(content)
-                result.sent_events.append(classified_event)
-                run_log.events_sent += 1
 
                 # Deliver immediately (not batched)
                 await _deliver_single_breaking(content, classified_event)
+
+                # v0.29.1 (BUG 4): Count AFTER successful delivery, not before.
+                result.contents.append(content)
+                result.sent_events.append(classified_event)
+                run_log.events_sent += 1
 
                 # A5: Incremental dedup persist after each successful send
                 h = compute_hash(classified_event.event.title, classified_event.event.source)
@@ -335,13 +345,12 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
                     await asyncio.sleep(INTER_EVENT_DELAY)
 
             except Exception as e:
-                logger.error(f"Content generation failed for '{classified_event.event.title}': {e}")
-                # A4: Mark as generation_failed for retry (not raw fallback)
+                logger.error(f"Event failed for '{classified_event.event.title}': {e}")
+                # v0.29.1 (BUG 5): Distinguish generation vs delivery failure
                 h = compute_hash(classified_event.event.title, classified_event.event.source)
-                dedup_mgr.update_entry_status(
-                    h, "generation_failed", severity=classified_event.severity
-                )
-                run_log.errors.append(f"Generate: {e}")
+                status = "delivery_failed" if content is not None else "generation_failed"
+                dedup_mgr.update_entry_status(h, status, severity=classified_event.severity)
+                run_log.errors.append(f"{'Deliver' if content else 'Generate'}: {e}")
 
     # Cleanup old entries
     dedup_mgr.cleanup_old_entries()
@@ -524,7 +533,7 @@ async def _reprocess_deferred_events(
     - A6: Sorts by severity (critical first)
     - A8: Limits to MAX_DEFERRED_PER_RUN events
     - B2: 30s delay between events
-    Also retries generation_failed + deferred_overflow events (C3, max 1 retry).
+    Also retries generation_failed + delivery_failed + deferred_overflow events (C3, max 1 retry).
     """
     from cic_daily_report.breaking.severity_classifier import _is_night_mode
 
@@ -532,11 +541,12 @@ async def _reprocess_deferred_events(
     if _is_night_mode(now):
         return  # Still night — don't reprocess yet
 
-    # Collect deferred_to_morning + generation_failed (C3) + overflow (B1)
+    # Collect deferred_to_morning + generation_failed (C3) + delivery_failed + overflow (B1)
     morning_events = dedup_mgr.get_deferred_events("deferred_to_morning")
     retry_events = dedup_mgr.get_deferred_events("generation_failed")
+    delivery_retry_events = dedup_mgr.get_deferred_events("delivery_failed")  # v0.29.1 (BUG 5)
     overflow_events = dedup_mgr.get_deferred_events("deferred_overflow")
-    all_events = morning_events + retry_events + overflow_events
+    all_events = morning_events + retry_events + delivery_retry_events + overflow_events
 
     if not all_events:
         return
@@ -551,7 +561,8 @@ async def _reprocess_deferred_events(
 
     logger.info(
         f"FR28: Reprocessing {len(morning_events)} deferred + "
-        f"{len(retry_events)} failed + {len(overflow_events)} overflow events"
+        f"{len(retry_events)} gen_failed + {len(delivery_retry_events)} del_failed + "
+        f"{len(overflow_events)} overflow events"
     )
 
     from cic_daily_report.delivery.telegram_bot import TelegramBot, split_message
@@ -610,7 +621,7 @@ async def _reprocess_deferred_events(
 
         except Exception as e:
             logger.warning(f"Deferred reprocess failed for '{entry.title[:50]}': {e}")
-            if entry.status == "generation_failed":
+            if entry.status in ("generation_failed", "delivery_failed"):
                 # C3: second failure → permanently_failed
                 dedup_mgr.update_entry_status(entry.hash, "permanently_failed")
             else:
@@ -619,6 +630,12 @@ async def _reprocess_deferred_events(
     run_log.events_sent += sent_count
     if sent_count > 0:
         logger.info(f"FR28: Delivered {sent_count}/{len(all_events)} deferred events")
+
+    # v0.29.1 (BUG 1): Persist dedup status after deferred reprocessing.
+    # Without this, status changes (sent/failed) are lost if pipeline exits
+    # before the final persist — causing deferred events to be re-sent next run.
+    if all_events:
+        await _persist_dedup_to_sheets(dedup_mgr)
 
 
 # Match only fully-uppercase words 2-6 chars in ORIGINAL title (not uppercased)
@@ -814,13 +831,12 @@ async def _generate_and_deliver_digest(
     logger.info(f"B5: Digest mode — {len(send_now)} events in single summary")
 
     events_for_digest = [c.event for c in send_now]
+    digest_content = None  # v0.29.1 (BUG 5): track generation vs delivery failure
     try:
         digest_content = await asyncio.wait_for(
             generate_digest_content(events_for_digest, llm, market_context=market_snapshot),
             timeout=90,
         )
-        result.contents.append(digest_content)
-        run_log.events_sent += len(send_now)
 
         # Deliver digest
         bot = TelegramBot()
@@ -829,6 +845,10 @@ async def _generate_and_deliver_digest(
         for part in parts:
             await bot.send_message(part.formatted)
             await asyncio.sleep(0.5)
+
+        # v0.29.1 (BUG 6): Count AFTER successful delivery, not before.
+        result.contents.append(digest_content)
+        run_log.events_sent += len(send_now)
 
         # Mark all events as sent
         for classified_event in send_now:
@@ -846,14 +866,13 @@ async def _generate_and_deliver_digest(
         logger.info(f"B5: Digest delivered for {len(send_now)} events")
 
     except Exception as e:
-        logger.error(f"Digest generation failed: {e}")
+        logger.error(f"Digest failed: {e}")
         run_log.errors.append(f"Digest: {e}")
-        # Mark all as generation_failed
+        # v0.29.1 (BUG 5): Distinguish generation vs delivery failure
+        status = "delivery_failed" if digest_content is not None else "generation_failed"
         for classified_event in send_now:
             h = compute_hash(classified_event.event.title, classified_event.event.source)
-            dedup_mgr.update_entry_status(
-                h, "generation_failed", severity=classified_event.severity
-            )
+            dedup_mgr.update_entry_status(h, status, severity=classified_event.severity)
 
 
 def _calc_duration(start_iso: str, end_iso: str) -> float:

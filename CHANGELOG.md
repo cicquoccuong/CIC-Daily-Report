@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.29.1] - 2026-03-21
+
+### Bug Fixes — Content Quality & Pipeline Reliability (7 bugs + 1 improvement)
+
+Post-release review of v0.29.0 found 7 bugs across content generation and pipeline flow.
+
+#### P0: Content Quality
+- **(BUG 7) NQ05 filler removal → WARN-only**: Reverted filler phrase removal (v0.28.0)
+  back to warn-only. The 7 filler patterns (`có thể ảnh hưởng đến`, `trong bối cảnh`,
+  `điều này cho thấy`, etc.) are structural Vietnamese grammar — removing them from prose
+  destroyed sentence structure, producing unreadable breaking news. Filler reduction now
+  handled via improved LLM prompt instructions instead.
+- **NQ05 sentence-level removal**: `_remove_sentences_with_pattern()` now removes entire
+  *sentences* containing NQ05 violations (banned keywords, allocation patterns, semantic
+  patterns) instead of just the matching phrase. Prevents broken grammar when violations
+  are structural parts of sentences. Multi-sentence lines keep clean sentences intact.
+
+#### P1: Pipeline Flow
+- **(BUG 1) Deferred reprocess persist**: `_reprocess_deferred_events()` now persists dedup
+  status to Sheets after reprocessing. Without this, status changes were lost if pipeline
+  exited before final persist — causing deferred events to be re-sent next run.
+- **(BUG 2) Early return persist**: Both early-return paths (`if not events` / `if not
+  dedup_result.new_events`) now persist dedup state when deferred events were sent.
+- **(BUG 4) Individual path count-after-delivery**: `events_sent` and `sent_events.append()`
+  moved AFTER successful `_deliver_single_breaking()`. Previously counted before delivery —
+  if Telegram failed, counts were inflated and run log showed false success.
+- **(BUG 6) Digest path count-after-delivery**: Same fix for digest mode — `events_sent +=
+  len(send_now)` moved after all Telegram sends complete.
+
+#### P2: Status Tracking
+- **(BUG 3) `_STATUS_PRIORITY` completeness**: Added `sent_digest` (5), `delivery_failed`
+  (4), and `deferred_overflow` (2) to `DedupManager._STATUS_PRIORITY`. Missing entries
+  defaulted to priority 0, causing incorrect hash collision resolution.
+- **(BUG 5) `delivery_failed` status**: Distinguish delivery failure from generation failure.
+  If content was generated successfully but Telegram send failed, status is now
+  `delivery_failed` (not `generation_failed`). `_reprocess_deferred_events()` also retries
+  `delivery_failed` entries.
+
 ## [0.29.0] - 2026-03-21
 
 ### Breaking Pipeline Reliability Overhaul (12 issues / 5 root-cause layers / 15 fixes)

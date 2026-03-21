@@ -60,7 +60,7 @@ class FilterResult:
     flagged_for_review: list[str] = field(default_factory=list)
     disclaimer_present: bool = False
     passed: bool = True
-    filler_count: int = 0  # Count of filler phrases detected and removed (v0.28.0)
+    filler_count: int = 0  # Count of filler phrases detected (v0.29.1: warn-only, not removed)
 
     @property
     def status(self) -> str:
@@ -71,8 +71,9 @@ class FilterResult:
         return "pass"
 
 
-# Filler phrases banned by system prompt — detected and REMOVED (v0.28.0).
-# Previously WARN-only, but fillers consistently degraded article quality.
+# Filler phrases discouraged by system prompt — detected and WARNED (v0.29.1).
+# v0.28.0 upgraded to REMOVE, but removing structural Vietnamese grammar (verbs,
+# prepositions) from prose destroyed sentence structure. Reverted to WARN-only.
 FILLER_PATTERNS = [
     r"có thể ảnh hưởng đến",
     r"cần theo dõi (?:thêm|chặt chẽ|sát sao)",
@@ -102,25 +103,29 @@ SEMANTIC_NQ05_PATTERNS = [
 
 
 def _remove_sentences_with_pattern(text: str, pattern: re.Pattern) -> str:
-    """Remove the violating phrase from text, keeping the rest of the sentence.
+    """Remove sentences containing the violating pattern from text.
 
-    For bullet points: remove entire bullet (bullets are short, removing phrase leaves gibberish).
-    For prose: remove only the matching phrase + clean up punctuation.
+    For bullet points: remove entire bullet line.
+    For prose: split into sentences, remove only sentence(s) containing the match,
+    keep the rest. v0.29.1: Changed from phrase-only removal to sentence-level
+    removal — removing just a phrase from prose often destroys grammar.
     """
     lines = text.split("\n")
     cleaned_lines = []
     for line in lines:
         if pattern.search(line):
             # For bullet points, remove the whole line
-            if line.strip().startswith(("-", "•")):
+            if line.strip().startswith(("-", "•", "*")):
                 continue
-            # For prose: remove only the matching phrase, keep the rest
-            cleaned_line = pattern.sub("", line)
-            # Clean up double spaces, orphaned punctuation
-            cleaned_line = re.sub(r"\s{2,}", " ", cleaned_line)
-            cleaned_line = re.sub(r"\s+([,.])", r"\1", cleaned_line)
-            if cleaned_line.strip():
-                cleaned_lines.append(cleaned_line)
+            # For prose: split into sentences, remove only violating ones
+            sentences = re.split(r"(?<=[.!?])\s+", line)
+            kept = [s for s in sentences if not pattern.search(s)]
+            if kept:
+                cleaned_line = " ".join(kept)
+                cleaned_line = re.sub(r"\s{2,}", " ", cleaned_line)
+                if cleaned_line.strip():
+                    cleaned_lines.append(cleaned_line)
+            # If all sentences match → entire line removed (no append)
         else:
             cleaned_lines.append(line)
     return "\n".join(cleaned_lines)
@@ -190,16 +195,18 @@ def check_and_fix(
         result.auto_fixed += len(cjk_matches)
         logger.warning(f"Removed {len(cjk_matches)} CJK character sequences from content")
 
-    # Step 1e: Detect and REMOVE filler phrases (v0.28.0: upgraded from WARN to REMOVE)
+    # Step 1e: Detect filler phrases — WARN-only, do NOT remove.
+    # v0.29.1: Reverted from REMOVE (v0.28.0) back to WARN because these patterns
+    # are structural Vietnamese grammar (verbs, prepositions) — removing them from
+    # prose sentences destroys sentence structure, producing unreadable text.
+    # Filler reduction is handled via LLM prompt instructions instead.
     filler_count = 0
     for pattern_str in FILLER_PATTERNS:
         pattern = re.compile(pattern_str, re.IGNORECASE)
         matches = pattern.findall(result.content)
         if matches:
             filler_count += len(matches)
-            result.content = _remove_sentences_with_pattern(result.content, pattern)
-            result.auto_fixed += len(matches)
-            result.flagged_for_review.append(f"Filler removed: '{pattern_str}' ({len(matches)}x)")
+            logger.info(f"NQ05 filler detected (kept): '{pattern_str}' ({len(matches)}x)")
     result.filler_count = filler_count
 
     # Step 2: Fix terminology

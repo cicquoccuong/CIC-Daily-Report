@@ -525,3 +525,44 @@ class TestPhase3CoinFilter:
         tracked = {"BTC", "ETH", "XRP", "SOL"}
         result = _filter_non_cic_coins(events, tracked)
         assert len(result) == 1  # Ripple → XRP is tracked
+
+
+class TestV0291StatusPriority:
+    """v0.29.1 (BUG 3): _STATUS_PRIORITY includes all v0.29.0 statuses."""
+
+    def test_deferred_overflow_in_priority(self):
+        mgr = DedupManager()
+        assert "deferred_overflow" in mgr._STATUS_PRIORITY
+
+    def test_sent_digest_in_priority(self):
+        mgr = DedupManager()
+        assert "sent_digest" in mgr._STATUS_PRIORITY
+
+    def test_delivery_failed_in_priority(self):
+        mgr = DedupManager()
+        assert "delivery_failed" in mgr._STATUS_PRIORITY
+
+    def test_sent_digest_same_priority_as_sent(self):
+        mgr = DedupManager()
+        assert mgr._STATUS_PRIORITY["sent_digest"] == mgr._STATUS_PRIORITY["sent"]
+
+    def test_delivery_failed_higher_than_generation_failed(self):
+        mgr = DedupManager()
+        assert mgr._STATUS_PRIORITY["delivery_failed"] > mgr._STATUS_PRIORITY["generation_failed"]
+
+
+class TestV0291DeliveryFailedReprocess:
+    """v0.29.1 (BUG 5): delivery_failed events are reprocessed."""
+
+    def test_delivery_failed_fetched_for_reprocess(self):
+        """delivery_failed entries returned by get_deferred_events."""
+        entry = DedupEntry(
+            hash="abc123",
+            title="Test",
+            source="S",
+            status="delivery_failed",
+        )
+        mgr = DedupManager(existing_entries=[entry])
+        result = mgr.get_deferred_events("delivery_failed")
+        assert len(result) == 1
+        assert result[0].hash == "abc123"

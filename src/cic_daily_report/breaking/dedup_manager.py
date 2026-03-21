@@ -175,10 +175,14 @@ class DedupManager:
     """Manages dedup state via BREAKING_LOG entries."""
 
     # Status priority — higher = more progressed (used for dedup on load)
+    # v0.29.1 (BUG 3): Added sent_digest, delivery_failed, deferred_overflow
     _STATUS_PRIORITY = {
         "sent": 5,
+        "sent_digest": 5,
         "permanently_failed": 4,
+        "delivery_failed": 4,
         "generation_failed": 3,
+        "deferred_overflow": 2,
         "deferred_to_morning": 2,
         "deferred_to_daily": 2,
         "skipped": 1,

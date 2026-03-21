@@ -145,16 +145,29 @@ class TestSemanticNQ05Patterns:
         assert result.violations_found == 0
 
 
-class TestPhase5PhraseRemoval:
-    """Phase 5 E5: NQ05 removes phrase, not entire sentence."""
+class TestSentenceLevelRemoval:
+    """v0.29.1: NQ05 removes entire SENTENCE containing violation (not just phrase).
 
-    def test_remove_phrase_keep_sentence(self):
-        """Violation phrase removed, rest of sentence preserved."""
+    Phrase-only removal (pre-v0.29.1) destroyed sentence structure by leaving
+    subject/object without verbs. Sentence-level removal keeps grammar intact.
+    """
+
+    def test_single_sentence_with_violation_removed_entirely(self):
+        """One sentence containing violation → entire sentence removed."""
         content = "BTC tăng 15% và nên mua vào ngay." + DISCLAIMER
         result = check_and_fix(content)
         assert result.violations_found >= 1
-        # "nên mua" removed, but "BTC tăng 15%" should remain
         assert "nên mua" not in result.content
+        # Entire sentence removed (not just phrase) — prevents broken grammar
+        assert "BTC tăng 15%" not in result.content
+
+    def test_multi_sentence_keeps_clean_sentence(self):
+        """Two sentences on same line — only violating sentence removed."""
+        content = "BTC tăng 15% lên $75,000. Nhà đầu tư nên cân nhắc mua vào." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "nên cân nhắc" not in result.content
+        # Clean sentence preserved
         assert "BTC tăng 15%" in result.content
 
     def test_remove_bullet_entirely(self):
@@ -164,20 +177,32 @@ class TestPhase5PhraseRemoval:
         assert "Nên mua" not in result.content
         assert "ETH tăng 5%" in result.content
 
+    def test_all_sentences_violating_removes_line(self):
+        """All sentences on a line have violations → entire line removed."""
+        content = "Nên mua BTC ngay. Cơ hội tốt để tích lũy SOL." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 2
+        assert "BTC" not in result.content.split("---")[0]  # Before disclaimer
+
 
 class TestFillerDetection:
-    """v0.28.0: Filler phrases are now REMOVED (upgraded from count-only)."""
+    """v0.29.1: Filler phrases are WARN-only (reverted from REMOVE in v0.28.0).
 
-    def test_filler_removal_single(self):
-        """Single filler phrase → filler_count=1, filler REMOVED from content."""
+    Removing filler phrases from prose destroys Vietnamese sentence structure
+    because these patterns are structural grammar (verbs, prepositions).
+    Filler reduction is now handled via LLM prompt instructions instead.
+    """
+
+    def test_filler_detected_but_kept(self):
+        """Single filler phrase → filler_count=1, content UNCHANGED."""
         content = "BTC tăng 5% có thể ảnh hưởng đến thị trường." + DISCLAIMER
         result = check_and_fix(content)
         assert result.filler_count == 1
-        # v0.28.0: Filler REMOVED
-        assert "có thể ảnh hưởng đến" not in result.content
+        # v0.29.1: Filler KEPT (warn-only)
+        assert "có thể ảnh hưởng đến" in result.content
 
-    def test_filler_removal_multiple(self):
-        """Multiple filler phrases → filler_count=3, all removed."""
+    def test_filler_count_multiple(self):
+        """Multiple filler phrases → filler_count=3, all KEPT."""
         content = (
             "BTC tăng 5% có thể ảnh hưởng đến thị trường.\n"
             "Điều này cho thấy xu hướng tích cực.\n"
@@ -185,10 +210,10 @@ class TestFillerDetection:
         )
         result = check_and_fix(content)
         assert result.filler_count == 3
-        # v0.28.0: All fillers removed
-        assert "có thể ảnh hưởng đến" not in result.content
-        assert "Điều này cho thấy" not in result.content
-        assert "cần lưu ý" not in result.content
+        # v0.29.1: All fillers KEPT
+        assert "có thể ảnh hưởng đến" in result.content
+        assert "Điều này cho thấy" in result.content
+        assert "cần lưu ý" in result.content
 
     def test_filler_detection_no_filler(self):
         """Clean content → filler_count=0."""
@@ -196,12 +221,12 @@ class TestFillerDetection:
         result = check_and_fix(content)
         assert result.filler_count == 0
 
-    def test_filler_flagged_for_review(self):
-        """Filler phrases show up in flagged_for_review as 'Filler removed'."""
+    def test_filler_not_in_flagged_for_review(self):
+        """v0.29.1: Filler warn-only → NOT in flagged_for_review."""
         content = "Cần theo dõi thêm diễn biến thị trường." + DISCLAIMER
         result = check_and_fix(content)
         assert result.filler_count >= 1
-        assert any("Filler removed" in f for f in result.flagged_for_review)
+        assert not any("Filler" in f for f in result.flagged_for_review)
 
 
 class TestBatchFilter:

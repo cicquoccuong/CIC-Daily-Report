@@ -45,6 +45,8 @@ Yêu cầu TUYỆT ĐỐI:
 - KHÔNG đưa ra khuyến nghị mua/bán
 - Dùng 'tài sản mã hóa' thay vì 'tiền điện tử'
 - Dựa trên NỘI DUNG BÀI GỐC (nếu có), KHÔNG chỉ tiêu đề
+- KHÔNG dùng câu chung chung/filler như "có thể ảnh hưởng đến", "trong bối cảnh", \
+"điều này cho thấy". Thay bằng phân tích CỤ THỂ: ảnh hưởng GÌ, đến AI, bao NHIÊU.
 
 Cấu trúc (CHỈ viết 3 phần, KHÔNG thêm nguồn hay tuyên bố miễn trừ):
 
