@@ -166,18 +166,18 @@ class TestPhase5PhraseRemoval:
 
 
 class TestFillerDetection:
-    """Phase 1 E1: Filler phrase detection (count only, do NOT remove)."""
+    """v0.28.0: Filler phrases are now REMOVED (upgraded from count-only)."""
 
-    def test_filler_detection_single(self):
-        """Single filler phrase → filler_count=1, content unchanged."""
+    def test_filler_removal_single(self):
+        """Single filler phrase → filler_count=1, filler REMOVED from content."""
         content = "BTC tăng 5% có thể ảnh hưởng đến thị trường." + DISCLAIMER
         result = check_and_fix(content)
         assert result.filler_count == 1
-        # Filler NOT removed — content preserved
-        assert "có thể ảnh hưởng đến" in result.content
+        # v0.28.0: Filler REMOVED
+        assert "có thể ảnh hưởng đến" not in result.content
 
-    def test_filler_detection_multiple(self):
-        """Multiple filler phrases → filler_count=3."""
+    def test_filler_removal_multiple(self):
+        """Multiple filler phrases → filler_count=3, all removed."""
         content = (
             "BTC tăng 5% có thể ảnh hưởng đến thị trường.\n"
             "Điều này cho thấy xu hướng tích cực.\n"
@@ -185,10 +185,10 @@ class TestFillerDetection:
         )
         result = check_and_fix(content)
         assert result.filler_count == 3
-        # All fillers still present in content
-        assert "có thể ảnh hưởng đến" in result.content
-        assert "Điều này cho thấy" in result.content
-        assert "cần lưu ý" in result.content
+        # v0.28.0: All fillers removed
+        assert "có thể ảnh hưởng đến" not in result.content
+        assert "Điều này cho thấy" not in result.content
+        assert "cần lưu ý" not in result.content
 
     def test_filler_detection_no_filler(self):
         """Clean content → filler_count=0."""
@@ -197,11 +197,11 @@ class TestFillerDetection:
         assert result.filler_count == 0
 
     def test_filler_flagged_for_review(self):
-        """Filler phrases show up in flagged_for_review."""
+        """Filler phrases show up in flagged_for_review as 'Filler removed'."""
         content = "Cần theo dõi thêm diễn biến thị trường." + DISCLAIMER
         result = check_and_fix(content)
         assert result.filler_count >= 1
-        assert any("Filler detected" in f for f in result.flagged_for_review)
+        assert any("Filler removed" in f for f in result.flagged_for_review)
 
 
 class TestBatchFilter:

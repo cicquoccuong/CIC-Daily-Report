@@ -290,10 +290,23 @@ async def _load_tracked_coins() -> set[str]:
         sheets = SheetsClient()
         rows = await asyncio.to_thread(sheets.read_all, "DANH_SACH_COIN")
         coins = set()
+        name_map: dict[str, str] = {}
         for row in rows:
             symbol = str(row.get("Symbol", "") or row.get("Coin", "")).strip().upper()
             if symbol:
                 coins.add(symbol)
+            # v0.28.0: Also read project name mapping from existing column
+            project_name = str(row.get("Tên đầy đủ", "") or row.get("Tên dự án", "")).strip()
+            if symbol and project_name:
+                name_map[project_name.lower()] = symbol
+
+        # Load config-driven name mapping into shared coin_mapping
+        if name_map:
+            from cic_daily_report.core.coin_mapping import load_from_config
+
+            added = load_from_config(name_map)
+            logger.info(f"Coin mapping: {added} names from DANH_SACH_COIN")
+
         logger.info(f"Loaded {len(coins)} tracked coins from DANH_SACH_COIN")
         return coins
     except Exception as e:
@@ -518,11 +531,12 @@ _COIN_PATTERN = re.compile(r"\b([A-Z]{2,6})\b")
 def _extract_coins_from_title(title: str, known_coins: set[str]) -> set[str]:
     """Extract known coin symbols from title.
 
-    Uses ORIGINAL case (not uppercased) to avoid false positives —
-    real coin tickers are written in uppercase in news titles.
+    v0.28.0: Now also recognizes project names (Ripple → XRP, Cardano → ADA)
+    via shared coin_mapping module, not just uppercase tickers.
     """
-    candidates = set(_COIN_PATTERN.findall(title))
-    return candidates & known_coins
+    from cic_daily_report.core.coin_mapping import extract_coins_from_text
+
+    return extract_coins_from_text(title, known_coins)
 
 
 _FALSE_POSITIVE_SYMBOLS = {

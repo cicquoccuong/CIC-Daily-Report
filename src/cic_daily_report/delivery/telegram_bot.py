@@ -217,6 +217,7 @@ class TelegramBot:
             "chat_id": self._chat_id,
             "text": text,
             "parse_mode": parse_mode,
+            "link_preview_options": {"is_disabled": True},
         }
 
         async with httpx.AsyncClient(timeout=30) as client:

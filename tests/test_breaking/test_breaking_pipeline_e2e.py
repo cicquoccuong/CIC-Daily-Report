@@ -448,3 +448,31 @@ class TestPhase3CoinFilter:
         events = [_event("PIPPIN crashes"), _event("BTC drops")]
         result = _filter_non_cic_coins(events, set())
         assert len(result) == 2
+
+    # v0.28.0: Project name recognition via coin_mapping
+
+    def test_project_name_ripple_recognized_as_xrp(self):
+        """'Ripple' in title → recognized as XRP → kept."""
+        from cic_daily_report.breaking_pipeline import _extract_coins_from_title
+
+        tracked = {"BTC", "ETH", "XRP", "SOL"}
+        result = _extract_coins_from_title("Ripple partners with Asian bank", tracked)
+        assert "XRP" in result
+
+    def test_project_name_cardano_recognized_as_ada(self):
+        """'Cardano' in title → recognized as ADA → kept."""
+        from cic_daily_report.breaking_pipeline import _filter_non_cic_coins
+
+        events = [_event("Cardano summit announces major upgrades")]
+        tracked = {"BTC", "ETH", "ADA", "SOL"}
+        result = _filter_non_cic_coins(events, tracked)
+        assert len(result) == 1
+
+    def test_pippin_with_ripple_not_filtered(self):
+        """PIPPIN + Ripple → XRP is tracked → event kept (not filtered)."""
+        from cic_daily_report.breaking_pipeline import _filter_non_cic_coins
+
+        events = [_event("PIPPIN dumps 50% as Ripple momentum fades")]
+        tracked = {"BTC", "ETH", "XRP", "SOL"}
+        result = _filter_non_cic_coins(events, tracked)
+        assert len(result) == 1  # Ripple → XRP is tracked

@@ -11,6 +11,7 @@ so AI writes insights instead of guessing what numbers mean.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from cic_daily_report.collectors.market_data import MarketDataPoint
@@ -658,7 +659,7 @@ def detect_narratives(
         if not title:
             continue
         for narrative_name, keywords in _NARRATIVE_KEYWORDS.items():
-            if any(kw in title for kw in keywords):
+            if any(re.search(r"\b" + re.escape(kw) + r"\b", title) for kw in keywords):
                 counts[narrative_name] = counts.get(narrative_name, 0) + 1
                 if narrative_name not in samples:
                     samples[narrative_name] = []

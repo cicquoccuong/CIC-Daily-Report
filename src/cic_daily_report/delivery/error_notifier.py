@@ -2,10 +2,12 @@
 
 Maps CICError codes to Vietnamese action suggestions.
 Groups multiple errors into a single notification.
+Sanitizes error messages to prevent API key leakage (v0.28.0).
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -13,6 +15,33 @@ from cic_daily_report.core.error_handler import CICError
 from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("error_notifier")
+
+# Regex patterns to strip API keys/tokens from error messages.
+# Matches: key=..., api_key=..., token=..., apikey=... in URLs or text.
+_URL_KEY_RE = re.compile(
+    r"([\?&](?:key|api_key|apikey|token|access_token|secret)=)"
+    r"[^&\s\"']+",
+    re.IGNORECASE,
+)
+_API_KEY_PATTERNS = [
+    _URL_KEY_RE,
+    re.compile(r"(AIzaSy[A-Za-z0-9_-]{33})"),  # Google API key
+    re.compile(r"(gsk_[A-Za-z0-9]{48,})"),  # Groq API key
+    re.compile(r"(sk-[A-Za-z0-9]{32,})"),  # OpenAI-style key
+]
+
+
+def _sanitize_error(message: str) -> str:
+    """Strip API keys/tokens from error messages.
+
+    httpx exceptions include full URLs with query params (API keys).
+    Redacts known key patterns before sending to users.
+    """
+    sanitized = message
+    for pattern in _API_KEY_PATTERNS:
+        sanitized = pattern.sub("***REDACTED***", sanitized)
+    return sanitized
+
 
 # Error code → Vietnamese action suggestion mapping
 ERROR_ACTION_MAP: dict[str, str] = {
@@ -98,12 +127,14 @@ def build_notification(errors: list[Exception]) -> ErrorNotification:
     cic_errors: list[CICError] = []
     for e in errors:
         if isinstance(e, CICError):
+            # Sanitize the message in-place to prevent API key leakage
+            e.message = _sanitize_error(e.message)
             cic_errors.append(e)
         else:
             cic_errors.append(
                 CICError(
                     code="UNKNOWN_ERROR",
-                    message=str(e),
+                    message=_sanitize_error(str(e)),
                     source="unknown",
                     retry=False,
                 )

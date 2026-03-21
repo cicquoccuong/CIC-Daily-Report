@@ -7,14 +7,15 @@ import pytest
 from cic_daily_report.storage.config_loader import ConfigLoader
 
 
-def _coin_row(symbol, name, tier, enabled="TRUE"):
-    return {
+def _coin_row(symbol, name, tier, enabled="TRUE", project_name=None):
+    row = {
         "Mã coin": symbol,
-        "Tên đầy đủ": name,
+        "Tên đầy đủ": project_name or name,
         "Cấp tier": tier,
         "Bật/Tắt": enabled,
         "Ghi chú": "",
     }
+    return row
 
 
 @pytest.fixture
@@ -170,3 +171,36 @@ class TestGetCoinList:
         ]
         coins = loader.get_coin_list(tier="L1")
         assert "L1" in coins
+
+
+class TestGetCoinNameMap:
+    """v0.28.0: Project name→ticker mapping from 'Tên đầy đủ' column."""
+
+    def test_reads_project_names(self, loader, mock_sheets):
+        mock_sheets.read_all.return_value = [
+            _coin_row("BTC", "Bitcoin", "L1"),
+            _coin_row("XRP", "Ripple", "L2"),
+            _coin_row("PEPE", "Pepe", "L2"),
+        ]
+        name_map = loader.get_coin_name_map()
+        assert name_map["bitcoin"] == "BTC"
+        assert name_map["ripple"] == "XRP"
+        assert name_map["pepe"] == "PEPE"
+
+    def test_empty_name_skipped(self, loader, mock_sheets):
+        mock_sheets.read_all.return_value = [
+            {"Mã coin": "BTC", "Tên đầy đủ": "", "Cấp tier": "L1", "Bật/Tắt": "TRUE"},
+        ]
+        name_map = loader.get_coin_name_map()
+        assert len(name_map) == 0
+
+    def test_populated_via_get_coin_list(self, loader, mock_sheets):
+        """get_coin_name_map() triggers get_coin_list() if cache empty."""
+        mock_sheets.read_all.return_value = [
+            _coin_row("SOL", "Solana", "L2"),
+        ]
+        # Call name_map first (before get_coin_list)
+        name_map = loader.get_coin_name_map()
+        assert name_map["solana"] == "SOL"
+        # Should have also populated coins cache
+        assert loader._coins_cache is not None

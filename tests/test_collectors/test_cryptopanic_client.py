@@ -43,6 +43,39 @@ class TestCryptoPanicArticle:
         assert len(row) == 11
         assert "CryptoPanic:CoinDesk" in row[3]
 
+    def test_to_row_stores_currencies(self):
+        """v0.28.0: currencies from API should be stored, not discarded."""
+        article = CryptoPanicArticle(
+            title="BTC ETF",
+            url="https://example.com",
+            source_name="S",
+            published_date="2026-03-09",
+            summary="S",
+            full_text="F",
+            panic_score=50.0,
+            votes_bullish=50,
+            votes_bearish=50,
+            currencies=["BTC", "ETH"],
+        )
+        row = article.to_row()
+        assert row[8] == "BTC,ETH"  # coin_symbol column
+
+    def test_to_row_empty_currencies(self):
+        """No currencies → empty string (not 'None')."""
+        article = CryptoPanicArticle(
+            title="T",
+            url="u",
+            source_name="S",
+            published_date="d",
+            summary="S",
+            full_text="F",
+            panic_score=50.0,
+            votes_bullish=0,
+            votes_bearish=0,
+        )
+        row = article.to_row()
+        assert row[8] == ""
+
 
 class TestCollectCryptopanic:
     async def test_skips_when_no_api_key(self):

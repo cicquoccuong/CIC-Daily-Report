@@ -400,6 +400,13 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         raw_templates = await asyncio.to_thread(config.get_templates)
         coin_lists = await asyncio.to_thread(config.get_coin_list)
         templates = load_templates(raw_templates)
+        # v0.28.0: Load project name→ticker mapping from Sheet
+        from cic_daily_report.core.coin_mapping import load_from_config
+
+        config_names = config.get_coin_name_map()
+        if config_names:
+            added = load_from_config(config_names)
+            logger.info(f"Coin mapping: {added} names from DANH_SACH_COIN")
     except Exception as e:
         logger.warning(f"Config load failed, using defaults: {e}")
         errors.append(e)

@@ -7,11 +7,13 @@ Uses hash(title + source) checked against BREAKING_LOG sheet.
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 
 from cic_daily_report.breaking.event_detector import BreakingEvent
+from cic_daily_report.core.coin_mapping import NAME_TO_TICKER
 from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("dedup_manager")
@@ -84,6 +86,73 @@ def compute_hash(title: str, source: str) -> str:
 
 
 SIMILARITY_THRESHOLD = 0.70
+ENTITY_OVERLAP_THRESHOLD = 0.60  # v0.28.0: entity-based dedup
+
+# Named entities: crypto projects, companies, regulatory bodies, key figures
+_ENTITY_PATTERN = re.compile(
+    r"\b("
+    r"BTC|ETH|SOL|BNB|XRP|ADA|DOGE|AVAX|DOT|MATIC|LINK|UNI|ATOM|LTC|NEAR|APT|ARB|OP|SUI"
+    r"|Bitcoin|Ethereum|Solana|Ripple|Cardano|Dogecoin"
+    r"|Binance|Coinbase|Kraken|OKX|Bybit|MEXC|Bitget|Kalshi|Robinhood"
+    r"|SEC|CFTC|DOJ|FBI|Fed|ECB|MiCA|FATF"
+    r"|BlackRock|Fidelity|Grayscale|MicroStrategy|Tesla|Tether|Circle"
+    r"|Trump|Gensler|Powell|CZ|SBF|Vitalik"
+    r"|Nevada|California|Wyoming|Congress|Senate|House"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+# Build dedup synonym dict from shared coin_mapping (lowercase → lowercase ticker).
+# Also includes people/org aliases not in coin_mapping.
+_ENTITY_SYNONYMS: dict[str, str] = {k: v.lower() for k, v in NAME_TO_TICKER.items()}
+_ENTITY_SYNONYMS.update(
+    {
+        "changpeng zhao": "cz",
+        "sam bankman-fried": "sbf",
+        "vitalik buterin": "vitalik",
+        "strategy": "microstrategy",  # rebranded 2025
+    }
+)
+
+
+def _extract_entities(title: str) -> set[str]:
+    """Extract named entities from a title for entity-based dedup.
+
+    Applies synonym normalization so "Ripple" and "XRP" map to the same
+    canonical entity, improving Jaccard overlap for duplicate detection.
+    """
+    raw = {m.lower() for m in _ENTITY_PATTERN.findall(title)}
+    return {_ENTITY_SYNONYMS.get(e, e) for e in raw}
+
+
+def _is_entity_overlap(
+    title: str,
+    recent_entries: list[DedupEntry],
+    threshold: float = ENTITY_OVERLAP_THRESHOLD,
+) -> bool:
+    """Check if a new title shares too many entities with a recent entry.
+
+    v0.28.0: Catches cases where different English titles describe the same event
+    (e.g., "Kalshi launches crypto prediction market" and "Nevada licenses Kalshi for crypto").
+    """
+    new_entities = _extract_entities(title)
+    if len(new_entities) < 2:
+        return False  # Not enough entities to compare
+
+    for entry in recent_entries:
+        existing_entities = _extract_entities(entry.title)
+        if not existing_entities:
+            continue
+        overlap = new_entities & existing_entities
+        # Jaccard similarity on entities
+        union = new_entities | existing_entities
+        if union and len(overlap) / len(union) >= threshold:
+            logger.info(
+                f"Entity dedup: '{title[:50]}' overlaps '{entry.title[:50]}' (entities: {overlap})"
+            )
+            return True
+    return False
 
 
 def _is_similar_to_recent(
@@ -165,6 +234,12 @@ class DedupManager:
             if _is_similar_to_recent(event.title, recent_entries):
                 result.duplicates_skipped += 1
                 logger.info(f"Dedup: skipped similar event '{event.title}'")
+                continue
+
+            # v0.28.0: Entity-based dedup — catch same-event with different wording
+            if _is_entity_overlap(event.title, recent_entries):
+                result.duplicates_skipped += 1
+                logger.info(f"Dedup: skipped entity-overlap event '{event.title}'")
                 continue
 
             # New event — add to entries

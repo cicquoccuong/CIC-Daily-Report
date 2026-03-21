@@ -31,12 +31,14 @@ class ConfigLoader:
         self._config_cache: dict[str, str] | None = None
         self._templates_cache: list[dict[str, Any]] | None = None
         self._coins_cache: dict[str, list[str]] | None = None
+        self._coin_names_cache: dict[str, str] | None = None  # name → ticker
 
     def reload(self) -> None:
         """Clear cache — forces fresh read from Sheets on next access."""
         self._config_cache = None
         self._templates_cache = None
         self._coins_cache = None
+        self._coin_names_cache = None
         logger.info("Config cache cleared — will reload from Sheets on next access")
 
     def get_settings(self) -> dict[str, str]:
@@ -153,6 +155,7 @@ class ConfigLoader:
         try:
             rows = self._sheets.read_all("DANH_SACH_COIN")
             raw_tiers: dict[str, list[str]] = {}
+            name_map: dict[str, str] = {}  # project name (lower) → ticker
 
             for row in rows:
                 coin = str(row.get("Mã coin", "")).strip().upper()
@@ -162,6 +165,12 @@ class ConfigLoader:
                     "1",
                     "BẬT",
                 )
+                # v0.28.0: Read "Tên đầy đủ" column for name↔ticker mapping
+                # Uses existing column (e.g., "Bitcoin", "Ethereum") — no schema change
+                project_name = str(row.get("Tên đầy đủ", "") or row.get("Tên dự án", "")).strip()
+                if coin and project_name:
+                    name_map[project_name.lower()] = coin
+
                 if coin and t and enabled:
                     raw_tiers.setdefault(t, []).append(coin)
 
@@ -182,9 +191,11 @@ class ConfigLoader:
                 cumulative[t] = unique
 
             self._coins_cache = cumulative
+            self._coin_names_cache = name_map
             logger.info(
                 "Loaded coin lists: "
                 + ", ".join(f"{t}={len(coins)}" for t, coins in cumulative.items())
+                + (f" | {len(name_map)} project name mappings" if name_map else "")
             )
 
             if tier:
@@ -193,3 +204,15 @@ class ConfigLoader:
 
         except Exception as e:
             raise ConfigError(f"Failed to load DANH_SACH_COIN: {e}", source="config_loader") from e
+
+    def get_coin_name_map(self) -> dict[str, str]:
+        """Return project name → ticker mapping from DANH_SACH_COIN.
+
+        v0.28.0: Reads "Tên dự án" column. Returns empty dict if column
+        is missing or no names are filled in. Callers should merge with
+        coin_mapping.NAME_TO_TICKER as fallback.
+        """
+        if self._coin_names_cache is None:
+            # Trigger coin list load which also populates name cache
+            self.get_coin_list()
+        return self._coin_names_cache or {}

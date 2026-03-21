@@ -81,3 +81,68 @@ class TestBuildNotification:
     def test_empty_errors(self):
         n = build_notification([])
         assert len(n.errors) == 0
+
+
+class TestSanitizeError:
+    from cic_daily_report.delivery.error_notifier import _sanitize_error
+
+    def test_url_query_param_key_redacted(self):
+        from cic_daily_report.delivery.error_notifier import _sanitize_error
+
+        msg = "Request failed: https://example.com/api?key=AIzaSyABC123"
+        result = _sanitize_error(msg)
+        assert "AIzaSyABC123" not in result
+        assert "***REDACTED***" in result
+        assert "https://example.com/api" in result
+
+    def test_url_ampersand_api_key_redacted(self):
+        from cic_daily_report.delivery.error_notifier import _sanitize_error
+
+        msg = "Error calling https://api.example.com/data?page=1&api_key=supersecretvalue"
+        result = _sanitize_error(msg)
+        assert "supersecretvalue" not in result
+        assert "***REDACTED***" in result
+        assert "page=1" in result
+
+    def test_google_api_key_in_text_redacted(self):
+        from cic_daily_report.delivery.error_notifier import _sanitize_error
+
+        # Google API key: AIzaSy + exactly 33 alphanumeric/dash/underscore chars
+        google_key = "AIzaSy" + "A" * 33
+        msg = f"Invalid credentials: {google_key} is not authorized"
+        result = _sanitize_error(msg)
+        assert google_key not in result
+        assert "***REDACTED***" in result
+        assert "Invalid credentials" in result
+        assert "is not authorized" in result
+
+    def test_groq_key_redacted(self):
+        from cic_daily_report.delivery.error_notifier import _sanitize_error
+
+        # Groq key: gsk_ + 48 alphanumeric chars
+        groq_key = "gsk_" + "x" * 48
+        msg = f"Groq API error with key {groq_key}: rate limit exceeded"
+        result = _sanitize_error(msg)
+        assert groq_key not in result
+        assert "***REDACTED***" in result
+        assert "rate limit exceeded" in result
+
+    def test_message_without_keys_unchanged(self):
+        from cic_daily_report.delivery.error_notifier import _sanitize_error
+
+        msg = "Connection timed out after 30 seconds"
+        result = _sanitize_error(msg)
+        assert result == msg
+
+    def test_multiple_keys_all_redacted(self):
+        from cic_daily_report.delivery.error_notifier import _sanitize_error
+
+        google_key = "AIzaSy" + "B" * 33
+        groq_key = "gsk_" + "y" * 48
+        openai_key = "sk-" + "z" * 32
+        msg = f"Auth failed: google={google_key}, groq={groq_key}, openai={openai_key}"
+        result = _sanitize_error(msg)
+        assert google_key not in result
+        assert groq_key not in result
+        assert openai_key not in result
+        assert result.count("***REDACTED***") == 3

@@ -51,7 +51,7 @@ class CryptoPanicArticle:
             self.language,
             self.summary or self.full_text[:500],
             "",  # event_type
-            "",  # coin_symbol
+            ",".join(self.currencies) if self.currencies else "",  # coin_symbol
             str(sentiment),  # sentiment_score
             "",  # action_category
         ]

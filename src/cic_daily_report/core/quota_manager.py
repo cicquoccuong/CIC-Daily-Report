@@ -96,6 +96,26 @@ class QuotaManager:
             logger.debug(f"Rate limit: waiting {wait_time:.1f}s for {service}")
             await asyncio.sleep(wait_time)
 
+    def remaining(self, service: str) -> int:
+        """Return remaining daily quota for a service.
+
+        v0.28.0: Used by pipeline to check if enough budget exists
+        before attempting optional tasks (research, summary).
+        """
+        quota = self._quotas.get(service)
+        if quota is None:
+            return 999999  # unknown service = unlimited
+        return max(0, quota.daily_limit - quota.calls_made)
+
+    def has_budget(self, service: str, needed: int) -> bool:
+        """Check if enough daily quota remains for a task.
+
+        Args:
+            service: Service name (e.g., "gemini_flash").
+            needed: Number of calls the task will make.
+        """
+        return self.remaining(service) >= needed
+
     def get_summary(self) -> dict[str, str]:
         """Get quota usage summary for all services."""
         summary = {}

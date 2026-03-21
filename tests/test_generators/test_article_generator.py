@@ -205,7 +205,8 @@ class TestGenerateTierArticles:
         assert "SO SÁNH" in prompt
         assert "Ý NGHĨA" in prompt  # v0.22.0: shortened from "GIẢI THÍCH Ý NGHĨA"
         assert "NHÂN QUẢ" in prompt
-        assert "**Tóm lược:**" in prompt
+        # v0.28.0: Dual Tóm lược/Phân tích chi tiết format removed to prevent repetition
+        assert "KHÔNG chia thành" in prompt or "viết LIỀN MẠCH" in prompt
 
     async def test_nq05_system_prompt_used(self):
         templates = _make_templates("L1")
@@ -280,3 +281,112 @@ class TestAntiHallucinationGuardrails:
         assert "Bloomberg" in NQ05_SYSTEM_PROMPT
         assert "CryptoQuant" in NQ05_SYSTEM_PROMPT
         assert "TradingView" in NQ05_SYSTEM_PROMPT
+
+
+class TestTierDataSources:
+    """v0.28.0: Tests for _get_tier_data_sources()."""
+
+    def test_l1_sources_no_coingecko(self):
+        """L1 must NOT include CoinGecko — it only receives CoinLore + alternative.me data."""
+        from cic_daily_report.generators.article_generator import _get_tier_data_sources
+
+        result = _get_tier_data_sources("L1")
+        assert "CoinLore" in result
+        assert "alternative.me" in result
+        assert "CoinGecko" not in result
+
+    def test_l3_l4_l5_include_faireconomy_and_whale_alert(self):
+        """L3, L4, L5 all receive FairEconomy calendar and Whale Alert data."""
+        from cic_daily_report.generators.article_generator import _get_tier_data_sources
+
+        for tier in ("L3", "L4", "L5"):
+            result = _get_tier_data_sources(tier)
+            assert "FairEconomy" in result, f"{tier} missing FairEconomy"
+            assert "Whale Alert" in result, f"{tier} missing Whale Alert"
+
+    def test_unknown_tier_returns_fallback(self):
+        """An unrecognised tier string falls back to 'CoinLore, CoinGecko'."""
+        from cic_daily_report.generators.article_generator import _get_tier_data_sources
+
+        assert _get_tier_data_sources("L99") == "CoinLore, CoinGecko"
+        assert _get_tier_data_sources("") == "CoinLore, CoinGecko"
+
+
+class TestValidateAndClean:
+    """v0.28.0: Tests for _validate_and_clean_output()."""
+
+    def test_clean_content_returned_unchanged_no_warnings(self):
+        """Content with no fabricated metrics or banned sources passes through clean."""
+        from cic_daily_report.generators.article_generator import _validate_and_clean_output
+
+        content = (
+            "BTC đang giao dịch ở mức $105,000. "
+            "Fear & Greed Index ở mức 45 (Neutral). "
+            "Tâm lý thị trường đang thận trọng trước các sự kiện vĩ mô."
+        )
+        cleaned, warnings = _validate_and_clean_output(content, "L3", "")
+        assert cleaned == content
+        assert warnings == []
+
+    def test_mvrv_without_onchain_data_removes_line(self):
+        """A line containing MVRV is removed when MVRV is absent from the onchain input."""
+        from cic_daily_report.generators.article_generator import _validate_and_clean_output
+
+        content = (
+            "BTC đang giao dịch tốt.\n"
+            "MVRV ratio hiện tại cho thấy thị trường đang overvalued.\n"
+            "Nhà đầu tư nên theo dõi thêm."
+        )
+        cleaned, warnings = _validate_and_clean_output(content, "L3", onchain_data="")
+        assert "MVRV" not in cleaned
+        assert any("MVRV" in w for w in warnings)
+        # Lines without MVRV must be preserved
+        assert "BTC đang giao dịch tốt." in cleaned
+
+    def test_bloomberg_citation_line_removed(self):
+        """A line citing Bloomberg is removed and a warning is recorded."""
+        from cic_daily_report.generators.article_generator import _validate_and_clean_output
+
+        content = (
+            "Thị trường phục hồi mạnh.\n"
+            "Theo Bloomberg, dòng tiền ETF vào BTC đạt $500M trong tuần qua.\n"
+            "Điều này phản ánh sức mua tích cực."
+        )
+        cleaned, warnings = _validate_and_clean_output(content, "L3", onchain_data="")
+        assert "Bloomberg" not in cleaned
+        assert any("Bloomberg" in w for w in warnings)
+        assert "Thị trường phục hồi mạnh." in cleaned
+        assert "Điều này phản ánh sức mua tích cực." in cleaned
+
+    def test_l2_too_few_coins_triggers_warning(self):
+        """L2 content mentioning fewer than 10 coin symbols produces a coin-count warning."""
+        from cic_daily_report.generators.article_generator import _validate_and_clean_output
+
+        # Mention only 2 coins — well below the ≥10 threshold
+        content = "BTC và ETH đang dẫn dắt thị trường hôm nay với diễn biến tích cực."
+        _cleaned, warnings = _validate_and_clean_output(content, "L2", onchain_data="")
+        assert any("coin" in w.lower() for w in warnings), (
+            f"Expected coin-count warning, got: {warnings}"
+        )
+
+    def test_l2_project_names_counted_as_coins(self):
+        """v0.28.0: Project names (Ripple, Cardano) count toward L2 coin threshold."""
+        from cic_daily_report.generators.article_generator import _validate_and_clean_output
+
+        # Mix of tickers and project names — should count as 5 unique coins
+        content = (
+            "BTC đang tăng mạnh. Ethereum cũng phục hồi theo. "
+            "Ripple có tin hợp tác mới. Cardano ra mắt bản nâng cấp. "
+            "SOL giao dịch tích cực."
+        )
+        _cleaned, warnings = _validate_and_clean_output(content, "L2", onchain_data="")
+        # Should count: BTC, ETH (Ethereum), XRP (Ripple), ADA (Cardano), SOL = 5
+        coin_warnings = [w for w in warnings if "coin" in w.lower()]
+        if coin_warnings:
+            # Extract the number from warning like "L2 only mentions 5 coins..."
+            import re
+
+            match = re.search(r"(\d+) coins", coin_warnings[0])
+            assert match and int(match.group(1)) >= 5, (
+                f"Expected ≥5 coins counted, got: {coin_warnings[0]}"
+            )

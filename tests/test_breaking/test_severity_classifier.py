@@ -11,6 +11,7 @@ from cic_daily_report.breaking.severity_classifier import (
     ClassificationConfig,
     _determine_action,
     _determine_severity,
+    _is_crypto_relevant,
     _is_night_mode,
     classify_batch,
     classify_event,
@@ -220,3 +221,51 @@ class TestClassifyBatch:
         assert len(results) == 2
         assert results[0].severity == CRITICAL
         assert results[1].severity == NOTABLE
+
+
+class TestCryptoRelevance:
+    """v0.28.0: _is_crypto_relevant() filters non-crypto, non-geopolitical events."""
+
+    def test_crypto_keyword_bitcoin_etf(self):
+        """Title containing crypto keyword 'etf' and 'bitcoin' → True."""
+        assert _is_crypto_relevant("Bitcoin ETF approved") is True
+
+    def test_geopolitical_keyword_missile(self):
+        """Geopolitical keyword 'missile' bypasses crypto requirement → True."""
+        assert _is_crypto_relevant("Iran launches missile attack") is True
+
+    def test_sports_betting_platform_false(self):
+        """Pure fintech/sports headline with no crypto or geo keywords → False."""
+        assert _is_crypto_relevant("Kalshi launches sports betting platform") is False
+
+    def test_exchange_keyword_binance(self):
+        """Known exchange name 'binance' is a crypto keyword → True."""
+        assert _is_crypto_relevant("Binance announces new feature") is True
+
+    def test_sports_news_false(self):
+        """Sports headline with no crypto or geo keywords → False."""
+        assert _is_crypto_relevant("NBA draft picks announced") is False
+
+    def test_sec_sues_exchange(self):
+        """'sec' and 'exchange' are both crypto keywords → True."""
+        assert _is_crypto_relevant("SEC sues major exchange") is True
+
+    # v0.28.0: Project names added to keyword list
+    def test_ripple_recognized(self):
+        """'ripple' is now a crypto relevance keyword."""
+        assert _is_crypto_relevant("Ripple partners with top Asian bank") is True
+
+    def test_dogecoin_recognized(self):
+        assert _is_crypto_relevant("Dogecoin surges after Elon tweet") is True
+
+    def test_avalanche_recognized(self):
+        assert _is_crypto_relevant("Avalanche launches subnet upgrade") is True
+
+    def test_polkadot_recognized(self):
+        assert _is_crypto_relevant("Polkadot governance vote passes") is True
+
+    def test_chainlink_recognized(self):
+        assert _is_crypto_relevant("Chainlink integrates with major bank") is True
+
+    def test_litecoin_recognized(self):
+        assert _is_crypto_relevant("Litecoin halving approaches milestone") is True

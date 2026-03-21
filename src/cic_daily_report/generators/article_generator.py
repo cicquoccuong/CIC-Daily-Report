@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -236,6 +237,22 @@ async def generate_tier_articles(
     return articles
 
 
+def _get_tier_data_sources(tier: str) -> str:
+    """Return tier-specific data source attribution string.
+
+    Prevents L1 from claiming CoinGecko sector data it doesn't receive,
+    and ensures each tier only cites sources whose data it actually gets.
+    """
+    sources = {
+        "L1": "CoinLore, alternative.me",
+        "L2": "CoinLore, CoinGecko, MEXC",
+        "L3": "CoinLore, CoinGecko, yfinance, Coinalyze, CoinMetrics, FairEconomy, Whale Alert",
+        "L4": "CoinLore, CoinGecko, yfinance, Coinalyze, CoinMetrics, FairEconomy, Whale Alert",
+        "L5": "CoinLore, CoinGecko, yfinance, Coinalyze, CoinMetrics, FairEconomy, Whale Alert",
+    }
+    return sources.get(tier, "CoinLore, CoinGecko")
+
+
 def _filter_data_for_tier(
     tier: str,
     context: GenerationContext,
@@ -320,9 +337,12 @@ async def _generate_single_article(
         )
 
     # v0.22.0: Restructured prompt — "context first, questions last" (Gemini best practice)
+    # v0.28.0: Tier-specific data source headers to prevent wrong attribution
+    data_sources = _get_tier_data_sources(tier)
+
     # Layer 1: ALL DATA (context for Gemini to process first)
     full_prompt = (
-        f"=== DỮ LIỆU THỊ TRƯỜNG (nguồn: CoinLore, CoinGecko, yfinance) ===\n"
+        f"=== DỮ LIỆU THỊ TRƯỜNG (nguồn: {data_sources}) ===\n"
         f"{variables.get('market_data') or 'Không có dữ liệu'}\n\n"
         f"=== BẢNG CHỈ SỐ CHÍNH ===\n"
         f"{variables.get('key_metrics_table', 'N/A')}\n\n"
@@ -384,20 +404,21 @@ async def _generate_single_article(
     )
 
     # Layer 6: FORMAT + QUALITY RULES (concise, positive-first)
+    # v0.28.0: Removed dual "Tóm lược/Phân tích chi tiết" format that caused within-tier repetition
     full_prompt += (
         "ĐỊNH DẠNG:\n"
-        "- ## cho tiêu đề, **bold** cho số liệu quan trọng, - cho bullet\n"
-        "- Mỗi section: ## [Tên] → **Tóm lược:** (2-3 câu insight) → **Phân tích chi tiết:**\n\n"
+        "- ## cho tiêu đề section, **bold** cho số liệu quan trọng, - cho bullet\n"
+        "- Mỗi section viết LIỀN MẠCH — KHÔNG chia thành 'Tóm lược' và 'Phân tích chi tiết'\n"
+        "- Mở đầu section bằng 1 câu insight chính, rồi phân tích chi tiết liền sau\n\n"
         "YÊU CẦU CHẤT LƯỢNG:\n"
         "1. SO SÁNH: 2+ chỉ số → chỉ ra đồng thuận/mâu thuẫn\n"
-        "   VD: 'BTC +2.8% NHƯNG F&G=28 (Fear) → giá hồi nhưng sentiment chưa theo'\n"
         "2. NHÂN QUẢ: Nối các yếu tố thành chuỗi tác động\n"
-        "   VD: 'DXY giảm về 99.87 → USD yếu → dòng tiền có xu hướng chảy vào crypto'\n"
         "3. Ý NGHĨA: Mỗi số liệu phải kèm giải thích nó quan trọng thế nào\n\n"
         "⛔ KHÔNG:\n"
         "- Bịa MVRV, SOPR, whale data, correlation coefficient, support/resistance\n"
         "- Dự đoán giá hoặc khuyến nghị mua/bán (NQ05)\n"
-        "- Cite nguồn không có trong data (Bloomberg, TradingView, CryptoQuant...)\n\n"
+        "- Cite nguồn không có trong data (Bloomberg, TradingView, CryptoQuant...)\n"
+        "- KHÔNG viết 'Tóm lược:' rồi 'Phân tích chi tiết:' — viết liền mạch\n\n"
         "CÁC PHẦN BÀI VIẾT:\n\n" + "\n\n".join(section_prompts)
     )
 
@@ -418,8 +439,8 @@ async def _generate_single_article(
             source="article_generator",
         )
 
-    # Post-generation validation: scan for common LLM fabrication patterns
-    warnings = _validate_output(content, tier, variables.get("onchain_data", ""))
+    # Post-generation validation: detect AND strip fabricated data (v0.28.0)
+    content, warnings = _validate_and_clean_output(content, tier, variables.get("onchain_data", ""))
     for w in warnings:
         logger.warning(f"[{tier}] Post-gen validation: {w}")
 
@@ -450,25 +471,32 @@ _FABRICATED_METRIC_PATTERNS = [
 ]
 
 
-def _validate_output(content: str, tier: str, onchain_data: str) -> list[str]:
-    """Post-generation validation: detect fabricated data and quality issues.
+def _validate_and_clean_output(content: str, tier: str, onchain_data: str) -> tuple[str, list[str]]:
+    """Post-generation validation: detect AND strip fabricated data.
 
-    Returns a list of warning strings (empty = all good).
+    v0.28.0: Upgraded from warn-only to actively removing fabricated sentences.
+    Returns (cleaned_content, list_of_warnings).
     """
-    import re
-
     warnings = []
+    cleaned = content
 
-    # Check for fabricated metrics not in pipeline data
-    for pattern, name in _FABRICATED_METRIC_PATTERNS:
-        if re.search(pattern, content, re.IGNORECASE):
-            # Only flag if metric is NOT in the actual onchain data
+    # Check for fabricated metrics not in pipeline data — REMOVE sentences containing them
+    for pattern_str, name in _FABRICATED_METRIC_PATTERNS:
+        pattern = re.compile(pattern_str, re.IGNORECASE)
+        if pattern.search(cleaned):
+            # Only act if metric is NOT in the actual onchain data
             if name.upper() not in onchain_data.upper():
-                warnings.append(f"Possibly fabricated metric: {name} (not in input data)")
+                warnings.append(f"Fabricated metric REMOVED: {name} (not in input data)")
+                # Remove lines containing the fabricated metric
+                lines = cleaned.split("\n")
+                cleaned = "\n".join(ln for ln in lines if not pattern.search(ln))
 
     # L2 should mention multiple coins — warn if too few
+    # v0.28.0: Also count project names (Ripple → XRP) via coin_mapping
     if tier == "L2":
-        coin_symbols = [
+        from cic_daily_report.core.coin_mapping import extract_coins_from_text
+
+        l2_coins = {
             "BTC",
             "ETH",
             "SOL",
@@ -488,18 +516,24 @@ def _validate_output(content: str, tier: str, onchain_data: str) -> list[str]:
             "ARB",
             "OP",
             "SUI",
-        ]
-        mentioned = sum(1 for s in coin_symbols if s in content.upper())
-        if mentioned < 10:
-            warnings.append(f"L2 only mentions {mentioned} coins (target: ≥10 of 19)")
+        }
+        mentioned_coins = extract_coins_from_text(cleaned, l2_coins)
+        if len(mentioned_coins) < 10:
+            warnings.append(f"L2 only mentions {len(mentioned_coins)} coins (target: ≥10 of 19)")
 
-    # Check for banned source citations (sources not in our pipeline)
+    # Check for banned source citations — REMOVE sentences citing them
     banned_sources = ["Bloomberg", "CryptoQuant", "TradingView", "Santiment", "IntoTheBlock"]
     for src in banned_sources:
-        if src.lower() in content.lower():
-            warnings.append(f"Banned source cited: {src} (not in pipeline data)")
+        pattern = re.compile(re.escape(src), re.IGNORECASE)
+        if pattern.search(cleaned):
+            warnings.append(f"Banned source REMOVED: {src} (not in pipeline data)")
+            lines = cleaned.split("\n")
+            cleaned = "\n".join(ln for ln in lines if not pattern.search(ln))
 
-    return warnings
+    # Clean up double blank lines from removals
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+
+    return cleaned, warnings
 
 
 # ---------------------------------------------------------------------------
@@ -524,8 +558,6 @@ def _summarize_tier_output(tier: str, content: str) -> str:
     next tier knows exactly what was already covered — preventing repetition
     while enabling L5 to synthesize a complete strategic picture.
     """
-    import re
-
     focus = _TIER_FOCUS.get(tier, "")
 
     # Extract data points mentioned (numbers, percentages, coin names)

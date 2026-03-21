@@ -197,7 +197,7 @@ async def _collect_mexc() -> list[MarketDataPoint]:
                 MarketDataPoint(
                     symbol=coin_symbol,
                     price=float(ticker.get("lastPrice", 0)),
-                    change_24h=pct_change * 100,  # MEXC returns as decimal (0.007 = 0.7%)
+                    change_24h=pct_change * 100,  # MEXC returns decimal (0.023 = 2.3%)
                     volume_24h=float(ticker.get("quoteVolume", 0)),
                     market_cap=0,  # MEXC doesn't provide market cap
                     data_type="crypto",
@@ -554,7 +554,8 @@ async def _collect_altcoin_season() -> list[MarketDataPoint]:
             logger.warning(f"Altcoin Season Index failed ({url}): {e}")
 
     # Fallback: return neutral default so report is not missing this metric
-    logger.warning("Altcoin Season Index: all sources failed, using fallback value 50")
+    # ⚠️ Marked as synthetic — LLM and metrics engine should NOT interpret this as real data
+    logger.warning("Altcoin Season Index: all sources failed, using SYNTHETIC fallback value 50")
     return [
         MarketDataPoint(
             symbol="Altcoin_Season",
@@ -563,6 +564,6 @@ async def _collect_altcoin_season() -> list[MarketDataPoint]:
             volume_24h=0,
             market_cap=0,
             data_type="index",
-            source="BlockchainCenter (fallback)",
+            source="SYNTHETIC (BlockchainCenter unavailable)",
         )
     ]

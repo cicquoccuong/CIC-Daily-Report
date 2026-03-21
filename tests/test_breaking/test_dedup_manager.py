@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from cic_daily_report.breaking.dedup_manager import (
     DedupEntry,
     DedupManager,
+    _extract_entities,
+    _is_entity_overlap,
     _is_similar_to_recent,
     compute_hash,
 )
@@ -300,3 +302,77 @@ class TestGenerationFailedStatus:
         failed = mgr.get_deferred_events("generation_failed")
         assert len(failed) == 1
         assert failed[0].hash == "a"
+
+
+class TestEntityDedup:
+    """v0.28.0: _extract_entities() and _is_entity_overlap() prevent same-event duplicates."""
+
+    # --- _extract_entities ---
+
+    def test_extract_known_entities(self):
+        """SEC and Binance are named entities in the pattern → lowercased set.
+
+        Note: generic words like 'crypto' are NOT in _ENTITY_PATTERN; only specific
+        named entities (tickers, exchanges, regulators, people, states) are captured.
+        """
+        result = _extract_entities("SEC sues Binance over crypto")
+        assert result == {"sec", "binance"}
+
+    def test_extract_no_entities(self):
+        """Title with no pattern-matched words → empty set."""
+        assert _extract_entities("No entities here") == set()
+
+    def test_extract_crypto_tickers(self):
+        """BTC and ETH are explicit ticker matches → lowercased."""
+        result = _extract_entities("BTC and ETH prices surge")
+        assert result == {"btc", "eth"}
+
+    # --- _is_entity_overlap ---
+
+    def test_entity_overlap_same_event(self):
+        """Two titles sharing Kalshi + Nevada → Jaccard above 0.60 → True."""
+        entries = [
+            DedupEntry(
+                hash="h1",
+                title="Kalshi launches crypto prediction market in Nevada",
+                source="S",
+            )
+        ]
+        assert _is_entity_overlap("Nevada licenses Kalshi for crypto", entries) is True
+
+    def test_entity_overlap_different_events(self):
+        """Titles about entirely different entities → no overlap → False."""
+        entries = [DedupEntry(hash="h1", title="BlackRock files for Bitcoin ETF", source="S")]
+        assert _is_entity_overlap("SEC sues Binance over derivatives trading", entries) is False
+
+    def test_entity_overlap_guard_clause_few_entities(self):
+        """Title with fewer than 2 extracted entities → guard clause → False."""
+        entries = [DedupEntry(hash="h1", title="Binance announces new staking product", source="S")]
+        # "Update" has no entity matches → _extract_entities returns set() → len < 2
+        assert _is_entity_overlap("Market update today", entries) is False
+
+    # --- Synonym resolution (v0.28.0 fix) ---
+
+    def test_synonym_ripple_maps_to_xrp(self):
+        """'Ripple' and 'XRP' must normalize to the same entity ('xrp')."""
+        result = _extract_entities("SEC sues Ripple over XRP sales")
+        assert "xrp" in result
+        assert "ripple" not in result  # normalized away
+
+    def test_synonym_bitcoin_maps_to_btc(self):
+        """'Bitcoin' normalizes to 'btc'."""
+        result = _extract_entities("Bitcoin surges to new high")
+        assert result == {"btc"}
+
+    def test_synonym_enables_entity_overlap(self):
+        """'SEC sues Ripple' and 'SEC charges XRP' should overlap via synonym."""
+        entries = [DedupEntry(hash="h1", title="SEC sues Ripple over securities", source="S")]
+        # Without synonyms: {sec, ripple} vs {sec, xrp} → Jaccard 1/3 = 0.33 < 0.60
+        # With synonyms: {sec, xrp} vs {sec, xrp} → Jaccard 1.0 ≥ 0.60
+        assert _is_entity_overlap("SEC charges XRP with violations", entries) is True
+
+    def test_synonym_ethereum_maps_to_eth(self):
+        """'Ethereum' normalizes to 'eth'."""
+        result = _extract_entities("Vitalik presents Ethereum roadmap")
+        assert "eth" in result
+        assert "ethereum" not in result

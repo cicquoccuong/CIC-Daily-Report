@@ -68,6 +68,138 @@ DEFAULT_IMPORTANT_KEYWORDS = [
     "invasion",
 ]
 
+# v0.28.0: Crypto relevance keywords — at least one must appear in title
+# for non-geopolitical events to be classified as breaking news.
+# Geopolitical keywords (war, sanctions, etc.) bypass this check.
+_CRYPTO_RELEVANCE_KEYWORDS = {
+    # Assets — tickers
+    "bitcoin",
+    "btc",
+    "ethereum",
+    "eth",
+    "crypto",
+    "blockchain",
+    "solana",
+    "sol",
+    "bnb",
+    "xrp",
+    "cardano",
+    "ada",
+    "doge",
+    "altcoin",
+    "memecoin",
+    "token",
+    "coin",
+    "nft",
+    "web3",
+    "stablecoin",
+    "usdt",
+    "usdc",
+    "defi",
+    # Assets — project names (v0.28.0: sync with data_cleaner + coin_mapping)
+    "ripple",
+    "dogecoin",
+    "avalanche",
+    "avax",
+    "polkadot",
+    "dot",
+    "polygon",
+    "matic",
+    "chainlink",
+    "link",
+    "litecoin",
+    "ltc",
+    "uniswap",
+    "cosmos",
+    "toncoin",
+    "ton",
+    "stellar",
+    "xlm",
+    "aptos",
+    "arbitrum",
+    "optimism",
+    "sui",
+    "near",
+    "shib",
+    "tron",
+    "hedera",
+    "filecoin",
+    # Exchanges & infra
+    "binance",
+    "coinbase",
+    "kraken",
+    "okx",
+    "bybit",
+    "exchange",
+    "mining",
+    "miner",
+    "halving",
+    "wallet",
+    "ledger",
+    "trezor",
+    "smart contract",
+    "layer 2",
+    "rollup",
+    "airdrop",
+    # Regulatory
+    "etf",
+    "sec",
+    "cftc",
+    "regulation",
+    "ban",
+    # Security events (common in crypto)
+    "hack",
+    "exploit",
+    "breach",
+    "vulnerability",
+    "rug pull",
+    "stolen",
+    # Market events
+    "market",
+    "crash",
+    "liquidation",
+    "liquidated",
+    "rally",
+    "pump",
+    "dump",
+    "bull",
+    "bear",
+    "price",
+    "surge",
+    "plunge",
+    "partnership",
+    "acquisition",
+    "lawsuit",
+}
+_GEOPOLITICAL_KEYWORDS = {
+    "war",
+    "attack",
+    "missile",
+    "sanctions",
+    "iran",
+    "escalation",
+    "invasion",
+    "fed",
+    "interest rate",
+    "inflation",
+    "tariff",
+}
+
+
+def _is_crypto_relevant(title: str) -> bool:
+    """Check if event title is relevant to crypto market.
+
+    Returns True if title contains any crypto keyword or geopolitical keyword.
+    Non-crypto, non-geopolitical events (e.g., sports betting platforms)
+    should not trigger breaking alerts for a crypto community.
+    """
+    title_lower = title.lower()
+    if any(kw in title_lower for kw in _CRYPTO_RELEVANCE_KEYWORDS):
+        return True
+    if any(kw in title_lower for kw in _GEOPOLITICAL_KEYWORDS):
+        return True
+    return False
+
 
 @dataclass
 class ClassificationConfig:
@@ -115,6 +247,16 @@ def classify_event(
     """
     cfg = config or ClassificationConfig()
     current_time = now or datetime.now(timezone.utc)
+
+    # v0.28.0: Skip non-crypto-relevant events (e.g., sports betting)
+    if not _is_crypto_relevant(event.title):
+        logger.info(f"Skipping non-crypto event: '{event.title}'")
+        return ClassifiedEvent(
+            event=event,
+            severity=NOTABLE,
+            emoji=SEVERITY_EMOJI[NOTABLE],
+            delivery_action="skipped",
+        )
 
     severity = _determine_severity(event, cfg)
     is_night = _is_night_mode(current_time)

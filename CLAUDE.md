@@ -1,7 +1,7 @@
 # CIC Daily Report
 
 ## System
-- **Version**: 0.27.0 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
+- **Version**: 0.28.0 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
 - **Purpose**: Automated crypto daily report pipeline for CIC community (BIC Group/BIC Chat)
 - **Output**: 5 tier articles (L1→L5 cumulative) + 1 BIC Chat summary + 1 Research article (BIC Group L1) + Breaking news alerts
 - **Operator**: Anh Cường (no-code user, receives on Telegram, copy-pastes to BIC)
@@ -25,7 +25,7 @@
 ## Project Structure
 ```
 src/cic_daily_report/
-├── core/           # error_handler, logger, config, quota_manager, retry_utils
+├── core/           # error_handler, logger, config, quota_manager, retry_utils, coin_mapping
 ├── collectors/     # rss, cryptopanic, market_data, onchain_data, coinalyze_data, coinmetrics_data, research_data, whale_alert, telegram_scraper, economic_calendar, data_cleaner
 ├── generators/     # article_generator, summary_generator, research_generator, template_engine, nq05_filter
 ├── adapters/       # llm_adapter (multi-provider)

@@ -60,7 +60,7 @@ class FilterResult:
     flagged_for_review: list[str] = field(default_factory=list)
     disclaimer_present: bool = False
     passed: bool = True
-    filler_count: int = 0  # Count of detected filler phrases (not removed)
+    filler_count: int = 0  # Count of filler phrases detected and removed (v0.28.0)
 
     @property
     def status(self) -> str:
@@ -71,8 +71,8 @@ class FilterResult:
         return "pass"
 
 
-# Filler phrases banned by system prompt — detected and COUNTED (not removed).
-# Used by quality gate to flag low-quality output.
+# Filler phrases banned by system prompt — detected and REMOVED (v0.28.0).
+# Previously WARN-only, but fillers consistently degraded article quality.
 FILLER_PATTERNS = [
     r"có thể ảnh hưởng đến",
     r"cần theo dõi (?:thêm|chặt chẽ|sát sao)",
@@ -90,6 +90,14 @@ SEMANTIC_NQ05_PATTERNS = [
     r"smart money\s+(?:đang\s+)?(?:mua|tích lũy|accumulate)",
     r"thời điểm\s+(?:tốt|thích hợp)\s+để\s+(?:mua|vào lệnh|entry)",
     r"(?:nên|hãy)\s+(?:cân nhắc|xem xét)\s+(?:mua|bán|tích lũy)",
+    # v0.28.0: Additional semantic patterns from QA audit
+    r"dự báo\s+(?:giá|thị trường)\s+(?:sẽ|có thể)\s+(?:tăng|giảm|đạt)",
+    r"(?:sẽ|chắc chắn)\s+(?:tăng|giảm|phục hồi|bứt phá)\s+(?:mạnh|trong)",
+    r"nhà đầu tư\s+nên\s+(?:theo dõi|chú ý|cân nhắc|xem xét)",
+    r"cơ hội\s+cho\s+(?:nhà đầu tư|trader|người)",
+    r"kỳ vọng\s+(?:giá|thị trường)\s+(?:sẽ|có thể)",
+    r"(?:mục tiêu|target)\s+(?:giá|price)\s*[:=]?\s*\$?\d",
+    r"(?:hỗ trợ|kháng cự|support|resistance)\s+(?:tại|ở|quanh)\s+\$?\d",
 ]
 
 
@@ -182,16 +190,16 @@ def check_and_fix(
         result.auto_fixed += len(cjk_matches)
         logger.warning(f"Removed {len(cjk_matches)} CJK character sequences from content")
 
-    # Step 1e: Detect filler phrases (WARN only, do NOT remove)
+    # Step 1e: Detect and REMOVE filler phrases (v0.28.0: upgraded from WARN to REMOVE)
     filler_count = 0
     for pattern_str in FILLER_PATTERNS:
         pattern = re.compile(pattern_str, re.IGNORECASE)
         matches = pattern.findall(result.content)
         if matches:
             filler_count += len(matches)
-            result.flagged_for_review.append(
-                f"Filler detected (not removed): '{pattern_str}' ({len(matches)}x)"
-            )
+            result.content = _remove_sentences_with_pattern(result.content, pattern)
+            result.auto_fixed += len(matches)
+            result.flagged_for_review.append(f"Filler removed: '{pattern_str}' ({len(matches)}x)")
     result.filler_count = filler_count
 
     # Step 2: Fix terminology

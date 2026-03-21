@@ -1,5 +1,73 @@
 # Changelog
 
+## [0.28.0] - 2026-03-21
+
+### Quality Audit Fixes (42 issues / 8 root causes / 7 clusters)
+
+Comprehensive QA/QC audit of pipeline output identified 42 issues across 8 root causes.
+All fixes organized into 7 implementation clusters:
+
+#### Cluster 5: Security & Delivery
+- **API key sanitization**: `error_notifier.py` now strips API keys from error messages
+  before sending to Telegram (regex redaction for Google, Groq, OpenAI key formats)
+- **Link preview disabled**: Added `link_preview_options: {is_disabled: true}` to Telegram
+  `sendMessage` payload to prevent unwanted URL previews in articles
+
+#### Cluster 4: Data Integrity
+- **Synthetic data warning**: Altcoin Season Index fallback now marked as
+  `source="SYNTHETIC (BlockchainCenter unavailable)"` to prevent LLM misinterpretation
+- **Narrative word boundary**: `metrics_engine.py` narrative detection upgraded from
+  substring matching to `re.search(r"\b...\b")` — fixes false positives like "ADA" in "Canada"
+
+#### Cluster 2: NQ05 Post-Filter
+- **Filler removal**: Upgraded from WARN-only to REMOVE — filler phrases are now actively
+  stripped from generated content (was: counted but preserved)
+- **7 new semantic NQ05 patterns**: Added detection for price predictions, investor
+  recommendations, price targets, support/resistance levels
+
+#### Cluster 1: Prompt Engineering
+- **Tier-specific data headers**: Each tier now cites only its actual data sources
+  (L1: CoinLore+alternative.me, L5: all sources) instead of generic "CoinLore, CoinGecko, yfinance"
+- **Format simplification**: Removed dual "Tóm lược/Phân tích chi tiết" structure that
+  caused within-tier repetition — articles now write in continuous flow
+
+#### Cluster 3: Output Validation
+- **Fabrication blocking**: `_validate_output()` → `_validate_and_clean_output()` —
+  fabricated metrics and banned source citations are now REMOVED from content (was: log warning only)
+
+#### Cluster 6: Breaking News
+- **Entity-based dedup**: New `_is_entity_overlap()` in `dedup_manager.py` — catches
+  duplicate events with different wording by comparing named entity overlap (Jaccard similarity)
+- **Crypto relevance filter**: New `_is_crypto_relevant()` in `severity_classifier.py` —
+  non-crypto events (e.g., sports betting) are skipped instead of triggering breaking alerts
+
+#### Cluster 7: Quota Management
+- **Quota awareness**: Added `remaining()` and `has_budget()` methods to `QuotaManager`
+  for pipeline to check quota before optional tasks (research, summary)
+
+#### Unified Coin Name↔Ticker Mapping (Config-Driven)
+- **New `core/coin_mapping.py`**: Config-driven name→ticker resolution. Primary source:
+  DANH_SACH_COIN "Tên đầy đủ" column (operator-managed). Fallback: hardcoded 30+ entries.
+  Operator adds new coin + name on Sheet → pipeline recognizes it, no code change needed.
+- **`config_loader.get_coin_name_map()`**: New method reads "Tên đầy đủ" column, populates
+  `coin_mapping.load_from_config()` at pipeline startup (daily + breaking)
+- **Breaking pipeline**: `_extract_coins_from_title()` now recognizes project names, not just
+  uppercase tickers — fixes "Ripple partners with bank" being filtered out despite XRP tracked
+- **Severity classifier**: Added 20+ missing project names (ripple, dogecoin, avalanche, polkadot,
+  chainlink, litecoin, etc.) — synced with data_cleaner keywords
+- **Dedup manager**: `_ENTITY_SYNONYMS` now derived from shared `coin_mapping` instead of isolated dict
+- **L2 validation**: Coin count now uses `extract_coins_from_text()` — "Ethereum" counts as ETH
+- **CryptoPanic**: `currencies` field from API now stored in `coin_symbol` column (was: discarded)
+
+### Tests
+- 751 tests pass (+70 from v0.27.0)
+- New `test_coin_mapping.py`: 13 tests for normalize/extract/consistency
+- New breaking pipeline tests: project name extraction (Ripple→XRP, Cardano→ADA)
+- New severity classifier tests: 6 project name recognition tests
+- New CryptoPanic tests: currencies field storage
+- Updated test assertions for filler removal behavior change
+- Updated test for prompt format change (Tóm lược removal)
+
 ## [0.27.0] - 2026-03-20
 
 ### P2-A: CIC Market Insight Research Article (BIC Group L1)
