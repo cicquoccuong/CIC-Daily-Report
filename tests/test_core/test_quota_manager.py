@@ -111,3 +111,28 @@ class TestQuotaBudget:
         qm.register_service("tight_svc", daily_limit=3, rate_limit_per_min=0)
         qm.track("tight_svc", 3)
         assert qm.has_budget("tight_svc", 1) is False
+
+
+class TestTrackFailure:
+    """v0.29.0 (A2): track_failure() updates timing but not daily counter."""
+
+    @pytest.fixture
+    def qm(self):
+        return QuotaManager()
+
+    def test_track_failure_does_not_increment_calls(self, qm):
+        """Failed calls should not count against daily quota."""
+        qm.register_service("test_svc", daily_limit=10, rate_limit_per_min=60)
+        qm.track_failure("test_svc")
+        assert qm.remaining("test_svc") == 10  # Unchanged
+
+    def test_track_failure_updates_last_call_time(self, qm):
+        """Failed calls update timing to prevent rapid-fire retries."""
+        qm.register_service("test_svc", daily_limit=10, rate_limit_per_min=60)
+        qm.track_failure("test_svc")
+        # Rate limit should now block immediate retry
+        assert qm.can_call("test_svc") is False
+
+    def test_track_failure_unknown_service_no_crash(self, qm):
+        """track_failure() on unknown service is a no-op."""
+        qm.track_failure("nonexistent")  # Should not raise

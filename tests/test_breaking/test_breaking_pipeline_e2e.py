@@ -24,7 +24,6 @@ from cic_daily_report.breaking.severity_classifier import (
 )
 from cic_daily_report.collectors.market_data import MarketDataPoint
 from cic_daily_report.collectors.rss_collector import NewsArticle
-from cic_daily_report.generators.article_generator import DISCLAIMER
 
 
 def _event(title="BTC hack alert", source="CoinDesk", panic_score=85) -> BreakingEvent:
@@ -132,14 +131,14 @@ class TestFullBreakingFlow:
         content = await generate_breaking_content(_event(), llm)
         assert "Tuyên bố miễn trừ trách nhiệm" in content.content
 
-    async def test_llm_failure_raw_fallback(self):
-        """When all LLMs fail, raw data sent with warning."""
+    async def test_llm_failure_propagates(self):
+        """v0.29.0 (A4): LLM errors propagate to caller instead of raw fallback."""
+        import pytest
+
         llm = AsyncMock()
         llm.generate = AsyncMock(side_effect=Exception("All failed"))
-        content = await generate_breaking_content(_event(), llm)
-        assert not content.ai_generated
-        assert "AI không khả dụng" in content.content
-        assert DISCLAIMER in content.content
+        with pytest.raises(Exception, match="All failed"):
+            await generate_breaking_content(_event(), llm)
 
     async def test_batch_classify_mixed_severities(self):
         """Multiple events classified with different severities."""
@@ -409,6 +408,56 @@ class TestPhase2Helpers:
         from cic_daily_report.breaking_pipeline import _format_recent_events
 
         assert _format_recent_events([]) == ""
+
+
+class TestV029PipelineConstants:
+    """v0.29.0: Pipeline limits and configuration constants."""
+
+    def test_max_events_per_run(self):
+        from cic_daily_report.breaking_pipeline import MAX_EVENTS_PER_RUN
+
+        assert MAX_EVENTS_PER_RUN == 5
+
+    def test_max_deferred_per_run(self):
+        from cic_daily_report.breaking_pipeline import MAX_DEFERRED_PER_RUN
+
+        assert MAX_DEFERRED_PER_RUN == 5
+
+    def test_digest_threshold(self):
+        from cic_daily_report.breaking_pipeline import DIGEST_THRESHOLD
+
+        assert DIGEST_THRESHOLD == 5
+
+    def test_inter_event_delay(self):
+        from cic_daily_report.breaking_pipeline import INTER_EVENT_DELAY
+
+        assert INTER_EVENT_DELAY == 30
+
+    def test_severity_order(self):
+        from cic_daily_report.breaking_pipeline import _SEVERITY_ORDER
+
+        assert _SEVERITY_ORDER["critical"] < _SEVERITY_ORDER["important"]
+        assert _SEVERITY_ORDER["important"] < _SEVERITY_ORDER["notable"]
+
+
+class TestV029SeveritySorting:
+    """v0.29.0 (A6/B3): Events sorted by severity before processing."""
+
+    def test_classify_batch_can_be_sorted_by_severity(self):
+        """Classified events can be sorted using _SEVERITY_ORDER."""
+        from cic_daily_report.breaking_pipeline import _SEVERITY_ORDER
+
+        events = [
+            _event("Whale movement", "S1", 20),  # notable
+            _event("Exchange collapse", "S2", 95),  # critical
+            _event("SEC news", "S3", 50),  # important
+        ]
+        classified = classify_batch(events, now=_vn_time(12))
+        classified.sort(key=lambda c: _SEVERITY_ORDER.get(c.severity, 3))
+
+        assert classified[0].severity == CRITICAL
+        assert classified[1].severity == IMPORTANT
+        assert classified[2].severity == NOTABLE
 
 
 class TestPhase3CoinFilter:

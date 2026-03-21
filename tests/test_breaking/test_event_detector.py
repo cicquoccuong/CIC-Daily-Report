@@ -78,11 +78,23 @@ class TestMatchKeywords:
     def test_single_match(self):
         assert _match_keywords("Exchange hack discovered", ["hack", "crash"]) == ["hack"]
 
-    def test_multiple_matches(self):
-        result = _match_keywords("SEC ban causes crash", ["SEC", "ban", "crash"])
+    def test_multiple_matches_with_crypto_context(self):
+        """v0.29.0 (C2): CONTEXT_REQUIRED keywords match when crypto context present."""
+        result = _match_keywords("SEC ban causes crypto crash", ["SEC", "ban", "crash"])
         assert "SEC" in result
         assert "ban" in result
         assert "crash" in result
+
+    def test_context_required_without_crypto_context(self):
+        """v0.29.0 (C2): CONTEXT_REQUIRED keywords don't match without crypto context."""
+        result = _match_keywords("SEC ban causes crash", ["SEC", "ban", "crash"])
+        assert result == []  # No crypto context words in title
+
+    def test_always_trigger_without_crypto_context(self):
+        """v0.29.0 (C2): ALWAYS_TRIGGER keywords match regardless of context."""
+        result = _match_keywords("Major exploit discovered in system", ["exploit", "crash"])
+        assert "exploit" in result
+        assert "crash" not in result  # CONTEXT_REQUIRED, no crypto context
 
     def test_case_insensitive(self):
         assert _match_keywords("MAJOR HACK ALERT", ["hack"]) == ["hack"]

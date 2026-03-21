@@ -139,6 +139,71 @@ class TestLLMAdapter:
             with pytest.raises(LLMError, match="All LLM providers failed"):
                 await adapter.generate("test")
 
+    async def test_circuit_breaker_opens_after_all_fail(self):
+        """v0.29.0 (A7): After all providers fail, circuit breaker opens."""
+        provider = _groq_provider()
+        adapter = LLMAdapter(providers=[provider])
+
+        with patch(
+            "cic_daily_report.adapters.llm_adapter._call_groq",
+            new_callable=AsyncMock,
+            side_effect=Exception("dead"),
+        ):
+            with pytest.raises(LLMError):
+                await adapter.generate("test")
+
+        assert adapter.circuit_open is True
+
+    async def test_circuit_breaker_fails_fast(self):
+        """v0.29.0 (A7): Circuit breaker raises immediately without API calls."""
+        provider = _groq_provider()
+        adapter = LLMAdapter(providers=[provider])
+        adapter._all_providers_failed = True  # Simulate open circuit
+
+        with pytest.raises(LLMError, match="Circuit breaker open"):
+            await adapter.generate("test")
+
+    async def test_circuit_breaker_resets_on_success(self):
+        """v0.29.0 (A7): Successful response resets circuit breaker."""
+        provider = _groq_provider()
+        adapter = LLMAdapter(providers=[provider])
+
+        groq_resp = LLMResponse(text="ok", tokens_used=5, model="llama")
+        with patch(
+            "cic_daily_report.adapters.llm_adapter._call_groq",
+            new_callable=AsyncMock,
+            return_value=groq_resp,
+        ):
+            await adapter.generate("test")
+
+        assert adapter.circuit_open is False
+
+    async def test_track_failure_called_on_provider_error(self):
+        """v0.29.0 (A2): Failed providers update QuotaManager timing."""
+        groq = _groq_provider()
+        gemini = _gemini_provider()
+        adapter = LLMAdapter(providers=[groq, gemini])
+
+        gemini_resp = LLMResponse(text="fallback", tokens_used=5, model="flash")
+        with (
+            patch(
+                "cic_daily_report.adapters.llm_adapter._call_groq",
+                new_callable=AsyncMock,
+                side_effect=Exception("groq 429"),
+            ),
+            patch(
+                "cic_daily_report.adapters.llm_adapter._call_gemini",
+                new_callable=AsyncMock,
+                return_value=gemini_resp,
+            ),
+        ):
+            await adapter.generate("test")
+
+        # Groq failed, its last_call_time should be updated
+        groq_quota = adapter._quota._quotas.get("groq")
+        assert groq_quota is not None
+        assert groq_quota.last_call_time > 0
+
 
 class TestCallGroq:
     async def test_parses_response(self):

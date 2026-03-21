@@ -83,6 +83,17 @@ class QuotaManager:
         if usage_pct >= 80:
             logger.warning(f"{service}: {quota.calls_made}/{quota.daily_limit} ({usage_pct:.0f}%)")
 
+    def track_failure(self, service: str) -> None:
+        """Record a failed API call — updates timing but not daily counter.
+
+        v0.29.0: Ensures wait_for_rate_limit() respects interval after 429 errors,
+        preventing rapid-fire retries against rate-limited providers.
+        """
+        quota = self._quotas.get(service)
+        if quota is None:
+            return
+        quota.last_call_time = time.monotonic()
+
     async def wait_for_rate_limit(self, service: str) -> None:
         """Wait until rate limit allows the next call."""
         quota = self._quotas.get(service)

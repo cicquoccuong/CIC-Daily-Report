@@ -77,24 +77,21 @@ class TestGenerateBreakingContent:
         prompt = call_kwargs.kwargs.get("prompt", "") or call_kwargs.args[0]
         assert "100-150" in prompt
 
-    async def test_llm_failure_returns_raw_fallback(self):
+    async def test_llm_failure_propagates_exception(self):
+        """v0.29.0 (A4): LLM errors propagate to caller for proper handling."""
+        import pytest
+
         llm = AsyncMock()
         llm.generate = AsyncMock(side_effect=Exception("All LLMs failed"))
-        result = await generate_breaking_content(_event(), llm)
+        with pytest.raises(Exception, match="All LLMs failed"):
+            await generate_breaking_content(_event(), llm)
+
+    async def test_raw_data_fallback_still_works_directly(self):
+        """_raw_data_fallback() still available for explicit use by pipeline."""
+        result = _raw_data_fallback(_event())
         assert not result.ai_generated
         assert result.model_used == "raw_data"
-        assert "AI không khả dụng" in result.content
-
-    async def test_raw_fallback_has_disclaimer(self):
-        llm = AsyncMock()
-        llm.generate = AsyncMock(side_effect=Exception("fail"))
-        result = await generate_breaking_content(_event(), llm)
         assert DISCLAIMER in result.content
-
-    async def test_raw_fallback_has_source(self):
-        llm = AsyncMock()
-        llm.generate = AsyncMock(side_effect=Exception("fail"))
-        result = await generate_breaking_content(_event(), llm)
         assert "CoinDesk" in result.content
 
 
@@ -256,6 +253,83 @@ class TestSourceUrlInContent:
         llm = _mock_llm()
         result = await generate_breaking_content(_event(), llm)
         assert "🔗 <a href=" in result.content
+
+
+class TestSkipEnrichment:
+    """v0.29.0 (B4): skip_enrichment skips article fetch."""
+
+    async def test_skip_enrichment_skips_article_fetch(self):
+        """When skip_enrichment=True, _fetch_article_text is NOT called."""
+        llm = _mock_llm()
+        event = _event()
+        event.raw_data = {}  # No summary
+
+        with patch(
+            "cic_daily_report.breaking.content_generator._fetch_article_text",
+        ) as mock_fetch:
+            await generate_breaking_content(event, llm, skip_enrichment=True)
+
+        mock_fetch.assert_not_called()
+
+    async def test_no_skip_enrichment_fetches_article(self):
+        """When skip_enrichment=False (default), article fetch is attempted."""
+        llm = _mock_llm()
+        event = _event()
+        event.raw_data = {}  # No summary
+
+        with patch(
+            "cic_daily_report.breaking.content_generator._fetch_article_text",
+            return_value="Article text",
+        ) as mock_fetch:
+            await generate_breaking_content(event, llm, skip_enrichment=False)
+
+        mock_fetch.assert_called_once()
+
+
+class TestDigestContent:
+    """v0.29.0 (B5): Digest mode for multiple events."""
+
+    async def test_generate_digest_content(self):
+        from cic_daily_report.breaking.content_generator import generate_digest_content
+
+        events = [
+            BreakingEvent(
+                title=f"Event {i}",
+                source=f"Source{i}",
+                url=f"https://example.com/{i}",
+                panic_score=80,
+            )
+            for i in range(3)
+        ]
+        llm = _mock_llm()
+        result = await generate_digest_content(events, llm)
+        assert result.ai_generated
+        assert result.word_count > 0
+
+    async def test_digest_includes_all_source_links(self):
+        from cic_daily_report.breaking.content_generator import generate_digest_content
+
+        events = [
+            BreakingEvent(title="A", source="CoinDesk", url="https://a.com", panic_score=80),
+            BreakingEvent(title="B", source="Reuters", url="https://b.com", panic_score=70),
+        ]
+        llm = _mock_llm()
+        result = await generate_digest_content(events, llm)
+        assert "CoinDesk" in result.content
+        assert "Reuters" in result.content
+
+    async def test_digest_llm_failure_propagates(self):
+        import pytest
+
+        from cic_daily_report.breaking.content_generator import generate_digest_content
+
+        events = [
+            BreakingEvent(title="A", source="S", url="https://a.com", panic_score=80),
+        ]
+        llm = AsyncMock()
+        llm.generate = AsyncMock(side_effect=Exception("LLM down"))
+        with pytest.raises(Exception, match="LLM down"):
+            await generate_digest_content(events, llm)
 
 
 class TestDisclaimerDedup:

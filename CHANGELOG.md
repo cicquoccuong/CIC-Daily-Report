@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.29.0] - 2026-03-21
+
+### Breaking Pipeline Reliability Overhaul (12 issues / 5 root-cause layers / 15 fixes)
+
+Root-cause investigation of "AI không khả dụng" errors and burst-sending behavior
+revealed a 5-layer causal chain from false-positive detection through infinite loop.
+All 12 issues resolved across 6 implementation phases.
+
+#### Layer 1: Quota & Rate Limiting
+- **(A2) track_failure()**: `QuotaManager` now updates `last_call_time` on failed API calls,
+  preventing rapid-fire retries against rate-limited providers (was: only updated on success)
+- **(A3) Shared LLMAdapter**: Single `LLMAdapter` instance for entire pipeline run — was
+  creating 3 separate instances (main, RSS fallback, deferred), each with independent
+  QuotaManagers that couldn't coordinate rate limits
+
+#### Layer 2: Circuit Breaker
+- **(A7) Circuit breaker**: After all LLM providers fail once, subsequent `generate()` calls
+  fail fast without making API requests. Resets on next successful response
+- **(C1) Health check**: Pipeline verifies LLM availability with a ping before batch
+  processing — opens circuit breaker early if all providers are down
+
+#### Layer 3: Error Handling
+- **(A4) Error propagation**: `generate_breaking_content()` no longer silently catches LLM
+  errors and sends "AI không khả dụng" raw data. Exceptions propagate to caller, which marks
+  events as `generation_failed` for retry in next run
+- **(B4) Skip enrichment**: When LLM is known down, skip 8-second article fetch
+  (trafilatura) — saves time when content generation will fail anyway
+
+#### Layer 4: Flow Control
+- **(A6/B3) Priority ordering**: Events sorted by severity (Critical → Important → Notable)
+  before processing — ensures most important events get LLM quota first
+- **(B1) Event cap**: Max 5 events per run (`MAX_EVENTS_PER_RUN`). Overflow events deferred
+  to next run as `deferred_overflow` instead of exhausting all quota
+- **(A8) Deferred cap**: Max 5 deferred events reprocessed per run (`MAX_DEFERRED_PER_RUN`)
+- **(B2) Inter-event delay**: 30-second gap between Telegram sends (`INTER_EVENT_DELAY`).
+  Prevents burst-sending dozens of alerts simultaneously
+- **(B5) Digest mode**: When ≥5 events need sending, generate single combined summary
+  via `generate_digest_content()` instead of individual messages
+- **(A5) Incremental persist**: Dedup state saved after each successful send (not just at
+  end). Prevents timeout → dedup lost → re-send loop (the infinite loop root cause)
+
+#### Layer 5: False Positive Reduction
+- **(C2) Context-aware keywords**: Split keywords into ALWAYS_TRIGGER (hack, exploit,
+  rug pull, delisting, bankrupt) and CONTEXT_REQUIRED (crash, collapse, SEC, ban,
+  emergency). Generic keywords only fire when title also contains a crypto-related word.
+  Prevents "plane crash" from triggering crypto breaking alerts
+
 ## [0.28.0] - 2026-03-21
 
 ### Quality Audit Fixes (42 issues / 8 root causes / 7 clusters)

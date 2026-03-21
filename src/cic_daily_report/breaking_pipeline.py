@@ -16,9 +16,11 @@ from datetime import datetime, timezone
 from cic_daily_report.breaking.content_generator import (
     BreakingContent,
     generate_breaking_content,
+    generate_digest_content,
 )
 from cic_daily_report.breaking.dedup_manager import DedupEntry, DedupManager, compute_hash
 from cic_daily_report.breaking.event_detector import (
+    BreakingEvent,
     detect_breaking_events,
 )
 from cic_daily_report.breaking.severity_classifier import (
@@ -30,6 +32,15 @@ from cic_daily_report.core.logger import get_logger
 logger = get_logger("breaking_pipeline")
 
 BREAKING_TIMEOUT_SECONDS = 20 * 60  # 20 minutes
+
+# v0.29.0: Pipeline limits to prevent spam and quota exhaustion
+MAX_EVENTS_PER_RUN = 5  # B1: max events to generate+send per run
+MAX_DEFERRED_PER_RUN = 5  # A8: max deferred events to reprocess per run
+DIGEST_THRESHOLD = 5  # B5: when >=N send_now events, switch to digest mode
+INTER_EVENT_DELAY = 30  # B2: seconds between events sent to TG
+
+# A6: severity sort order (lower = higher priority)
+_SEVERITY_ORDER = {"critical": 0, "important": 1, "notable": 2, "": 3}
 
 
 @dataclass
@@ -138,18 +149,43 @@ async def _run_breaking_pipeline() -> BreakingPipelineResult:
 
 
 async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
-    """Core pipeline: detect → dedup → generate → classify → deliver.
+    """Core pipeline: detect → dedup → classify → generate → deliver.
 
-    This function is called with external dependencies injected in production.
-    For testability, the steps are also available as individual functions.
+    v0.29.0 restructure:
+    - A3: Single shared LLMAdapter for entire run
+    - C1: Health check before batch processing
+    - B3/A6: Priority-based event ordering (critical → important → notable)
+    - B1/A8: Capped event processing to prevent spam
+    - B5: Digest mode for high-volume runs
+    - A4: LLM errors propagate (generation_failed, not raw fallback)
+    - A5: Incremental dedup persist after each send
+    - B2: 30s delay between events
     """
     result = BreakingPipelineResult(run_log=run_log)
 
     # Load dedup state ONCE for the entire pipeline run
     dedup_mgr = await _load_dedup_from_sheets()
 
+    # A3: Create single shared LLMAdapter for entire pipeline
+    from cic_daily_report.adapters.llm_adapter import LLMAdapter
+
+    llm = None
+    try:
+        llm = LLMAdapter()
+    except Exception as e:
+        logger.warning(f"LLM init failed: {e}")
+
+    # C1: Health check — verify at least one LLM provider responds
+    if llm is not None:
+        try:
+            await llm.generate(prompt="ping", max_tokens=10, temperature=0)
+            logger.info("LLM health check passed")
+        except Exception:
+            logger.warning("LLM health check failed — circuit breaker will engage")
+
     # Stage 0: Reprocess deferred events from previous night (FR28)
-    await _reprocess_deferred_events(run_log, result, dedup_mgr)
+    # Uses shared LLM, limited by MAX_DEFERRED_PER_RUN (A8)
+    await _reprocess_deferred_events(run_log, result, dedup_mgr, llm)
 
     # Stage 1: Detect via CryptoPanic (primary)
     events: list = []
@@ -163,9 +199,9 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
         logger.warning(f"CryptoPanic detection failed: {e} — will try RSS fallback")
         use_rss_fallback = True
 
-    # Stage 1b: RSS + LLM fallback (when CryptoPanic unavailable)
+    # Stage 1b: RSS + LLM fallback (uses shared LLM — A3)
     if use_rss_fallback:
-        rss_events = await _rss_fallback_detection(run_log)
+        rss_events = await _rss_fallback_detection(run_log, llm)
         events.extend(rss_events)
 
     # Stage 1c: Market triggers (always-on, additive)
@@ -201,6 +237,41 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     # Stage 3: Classify
     classified = classify_batch(dedup_result.new_events)
 
+    # A6/B3: Sort by severity — critical events processed first
+    classified.sort(key=lambda c: _SEVERITY_ORDER.get(c.severity, 3))
+
+    # Separate send_now vs deferred
+    send_now = [c for c in classified if not c.is_deferred]
+    deferred = [c for c in classified if c.is_deferred]
+
+    # Record deferred events in dedup
+    for classified_event in deferred:
+        run_log.events_deferred += 1
+        result.deferred_events.append(classified_event)
+        h = compute_hash(classified_event.event.title, classified_event.event.source)
+        dedup_mgr.update_entry_status(
+            h, classified_event.delivery_action, severity=classified_event.severity
+        )
+
+    # B1: Cap events per run to prevent spam
+    if len(send_now) > MAX_EVENTS_PER_RUN:
+        overflow = send_now[MAX_EVENTS_PER_RUN:]
+        send_now = send_now[:MAX_EVENTS_PER_RUN]
+        for classified_event in overflow:
+            run_log.events_deferred += 1
+            result.deferred_events.append(classified_event)
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
+            dedup_mgr.update_entry_status(
+                h, "deferred_overflow", severity=classified_event.severity
+            )
+        logger.info(f"B1: Capped at {MAX_EVENTS_PER_RUN}, deferred {len(overflow)} overflow events")
+
+    if not send_now:
+        dedup_mgr.cleanup_old_entries()
+        await _persist_dedup_to_sheets(dedup_mgr, new_entries=dedup_result.entries_written)
+        run_log.status = "partial" if run_log.events_deferred > 0 else "no_events"
+        return result
+
     # Stage 3b: Build enrichment context for content generation
     market_snapshot = ""
     try:
@@ -213,69 +284,69 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
 
     recent_events_text = _format_recent_events(dedup_mgr.entries)
 
-    # Stage 4: Generate content + deliver based on classification
-    from cic_daily_report.adapters.llm_adapter import LLMAdapter
+    # B5: Digest mode when many events queue up
+    if len(send_now) >= DIGEST_THRESHOLD and llm is not None and not llm.circuit_open:
+        await _generate_and_deliver_digest(
+            send_now,
+            llm,
+            dedup_mgr,
+            result,
+            run_log,
+            market_snapshot,
+            dedup_result.entries_written,
+        )
+    else:
+        # Stage 4: Generate + deliver individually
+        for i, classified_event in enumerate(send_now):
+            try:
+                if llm is None or llm.circuit_open:
+                    raise RuntimeError("LLM unavailable — circuit open")
 
-    try:
-        llm = LLMAdapter()
-    except Exception as e:
-        logger.warning(f"LLM init failed, will use raw data fallback: {e}")
-        llm = None
+                content = await asyncio.wait_for(
+                    generate_breaking_content(
+                        classified_event.event,
+                        llm,
+                        severity=classified_event.severity,
+                        market_context=market_snapshot,
+                        recent_events=recent_events_text,
+                    ),
+                    timeout=60,
+                )
+                result.contents.append(content)
+                result.sent_events.append(classified_event)
+                run_log.events_sent += 1
 
-    for classified_event in classified:
-        if classified_event.is_deferred:
-            run_log.events_deferred += 1
-            result.deferred_events.append(classified_event)
-            # Update dedup entry status + severity (C4)
-            h = compute_hash(classified_event.event.title, classified_event.event.source)
-            dedup_mgr.update_entry_status(
-                h, classified_event.delivery_action, severity=classified_event.severity
-            )
-            continue
+                # Deliver immediately (not batched)
+                await _deliver_single_breaking(content, classified_event)
 
-        # Generate content for events to send now
-        try:
-            if llm is None:
-                raise RuntimeError("LLM unavailable — using raw data fallback")
-            content = await asyncio.wait_for(
-                generate_breaking_content(
-                    classified_event.event,
-                    llm,
+                # A5: Incremental dedup persist after each successful send
+                h = compute_hash(classified_event.event.title, classified_event.event.source)
+                dedup_mgr.update_entry_status(
+                    h,
+                    "sent",
+                    delivered_at=datetime.now(timezone.utc).isoformat(),
                     severity=classified_event.severity,
-                    market_context=market_snapshot,
-                    recent_events=recent_events_text,
-                ),
-                timeout=60,  # 60s per event to prevent blocking
-            )
-            result.contents.append(content)
-            result.sent_events.append(classified_event)
-            run_log.events_sent += 1
+                )
+                await _persist_dedup_to_sheets(dedup_mgr, new_entries=dedup_result.entries_written)
 
-            # Update dedup entry (C4: include severity)
-            h = compute_hash(classified_event.event.title, classified_event.event.source)
-            dedup_mgr.update_entry_status(
-                h,
-                "sent",
-                delivered_at=datetime.now(timezone.utc).isoformat(),
-                severity=classified_event.severity,
-            )
-        except Exception as e:
-            logger.error(f"Content generation failed for '{classified_event.event.title}': {e}")
-            # C3: Mark as generation_failed for retry in morning reprocessing
-            h = compute_hash(classified_event.event.title, classified_event.event.source)
-            dedup_mgr.update_entry_status(
-                h, "generation_failed", severity=classified_event.severity
-            )
-            run_log.errors.append(f"Generate: {e}")
+                # B2: Delay between events (skip after last)
+                if i < len(send_now) - 1:
+                    logger.info(f"B2: Waiting {INTER_EVENT_DELAY}s before next event")
+                    await asyncio.sleep(INTER_EVENT_DELAY)
 
-    # Deliver generated content via Telegram
-    if result.contents:
-        await _deliver_breaking(result)
+            except Exception as e:
+                logger.error(f"Content generation failed for '{classified_event.event.title}': {e}")
+                # A4: Mark as generation_failed for retry (not raw fallback)
+                h = compute_hash(classified_event.event.title, classified_event.event.source)
+                dedup_mgr.update_entry_status(
+                    h, "generation_failed", severity=classified_event.severity
+                )
+                run_log.errors.append(f"Generate: {e}")
 
     # Cleanup old entries
     dedup_mgr.cleanup_old_entries()
 
-    # Persist dedup state back to BREAKING_LOG (A5)
+    # Final persist (covers overflow deferrals, cleanup, any remaining updates)
     await _persist_dedup_to_sheets(dedup_mgr, new_entries=dedup_result.entries_written)
 
     run_log.status = "success" if run_log.events_sent > 0 else "partial"
@@ -292,7 +363,11 @@ async def _load_tracked_coins() -> set[str]:
         coins = set()
         name_map: dict[str, str] = {}
         for row in rows:
-            symbol = str(row.get("Symbol", "") or row.get("Coin", "")).strip().upper()
+            symbol = (
+                str(row.get("Mã coin", "") or row.get("Symbol", "") or row.get("Coin", ""))
+                .strip()
+                .upper()
+            )
             if symbol:
                 coins.add(symbol)
             # v0.28.0: Also read project name mapping from existing column
@@ -392,16 +467,25 @@ async def _write_breaking_run_log(run_log: BreakingRunLog) -> None:
         logger.warning(f"Breaking run log write failed: {e}")
 
 
-async def _rss_fallback_detection(run_log: BreakingRunLog) -> list:
-    """Fallback: collect RSS feeds and score via LLM for breaking events."""
+async def _rss_fallback_detection(run_log: BreakingRunLog, llm=None) -> list:
+    """Fallback: collect RSS feeds and score via LLM for breaking events.
+
+    A3: Uses shared LLM instance when available, creates fallback only if needed.
+    """
     try:
-        from cic_daily_report.adapters.llm_adapter import LLMAdapter
         from cic_daily_report.breaking.llm_scorer import score_rss_articles
         from cic_daily_report.collectors.rss_collector import collect_rss
 
         rss_articles = await asyncio.wait_for(collect_rss(), timeout=60)
-        llm = LLMAdapter()
-        events = await asyncio.wait_for(score_rss_articles(rss_articles, llm), timeout=60)
+
+        # A3: Use shared LLM, create fallback only if needed
+        rss_llm = llm
+        if rss_llm is None:
+            from cic_daily_report.adapters.llm_adapter import LLMAdapter
+
+            rss_llm = LLMAdapter()
+
+        events = await asyncio.wait_for(score_rss_articles(rss_articles, rss_llm), timeout=60)
         logger.info(f"RSS fallback: {len(events)} breaking events from RSS+LLM")
         return events
     except Exception as e:
@@ -428,13 +512,19 @@ async def _market_trigger_detection(run_log: BreakingRunLog) -> list:
 
 
 async def _reprocess_deferred_events(
-    run_log: BreakingRunLog, result: BreakingPipelineResult, dedup_mgr: DedupManager
+    run_log: BreakingRunLog,
+    result: BreakingPipelineResult,
+    dedup_mgr: DedupManager,
+    llm=None,
 ) -> None:
     """FR28: Reprocess deferred events when we're past the night window.
 
-    C1 rewrite: Generates full Breaking News content via LLM for each deferred event
-    instead of sending plain text links. Uses split_message() for TG safety.
-    Also retries generation_failed events (C3, max 1 retry).
+    v0.29.0 changes:
+    - A3: Uses shared LLM instance (no separate init)
+    - A6: Sorts by severity (critical first)
+    - A8: Limits to MAX_DEFERRED_PER_RUN events
+    - B2: 30s delay between events
+    Also retries generation_failed + deferred_overflow events (C3, max 1 retry).
     """
     from cic_daily_report.breaking.severity_classifier import _is_night_mode
 
@@ -442,28 +532,29 @@ async def _reprocess_deferred_events(
     if _is_night_mode(now):
         return  # Still night — don't reprocess yet
 
-    # Collect deferred_to_morning + generation_failed (C3 retry)
+    # Collect deferred_to_morning + generation_failed (C3) + overflow (B1)
     morning_events = dedup_mgr.get_deferred_events("deferred_to_morning")
     retry_events = dedup_mgr.get_deferred_events("generation_failed")
-    all_events = morning_events + retry_events
+    overflow_events = dedup_mgr.get_deferred_events("deferred_overflow")
+    all_events = morning_events + retry_events + overflow_events
 
     if not all_events:
         return
 
+    # A6: Sort by severity (critical first)
+    all_events.sort(key=lambda e: _SEVERITY_ORDER.get(e.severity or "", 3))
+
+    # A8: Limit deferred reprocessing
+    if len(all_events) > MAX_DEFERRED_PER_RUN:
+        logger.info(f"A8: Capping deferred from {len(all_events)} to {MAX_DEFERRED_PER_RUN}")
+        all_events = all_events[:MAX_DEFERRED_PER_RUN]
+
     logger.info(
-        f"FR28: Reprocessing {len(morning_events)} deferred + {len(retry_events)} failed events"
+        f"FR28: Reprocessing {len(morning_events)} deferred + "
+        f"{len(retry_events)} failed + {len(overflow_events)} overflow events"
     )
 
-    # Initialize LLM for content generation (Approach B)
-    from cic_daily_report.adapters.llm_adapter import LLMAdapter
-    from cic_daily_report.breaking.event_detector import BreakingEvent
     from cic_daily_report.delivery.telegram_bot import TelegramBot, split_message
-
-    try:
-        llm = LLMAdapter()
-    except Exception as e:
-        logger.warning(f"LLM init failed for deferred reprocessing: {e}")
-        llm = None
 
     bot = TelegramBot()
     severity_map = {
@@ -473,8 +564,7 @@ async def _reprocess_deferred_events(
     }
     sent_count = 0
 
-    # Process each event individually (per-event try/except)
-    for entry in all_events:
+    for i, entry in enumerate(all_events):
         try:
             # Reconstruct BreakingEvent from DedupEntry metadata
             event = BreakingEvent(
@@ -486,30 +576,38 @@ async def _reprocess_deferred_events(
 
             emoji = severity_map.get(entry.severity, "\U0001f7e1")
 
-            if llm is not None:
+            # A3: Use shared LLM instance
+            if llm is not None and not llm.circuit_open:
                 content = await asyncio.wait_for(
-                    generate_breaking_content(event, llm, severity=entry.severity or "important"),
+                    generate_breaking_content(
+                        event,
+                        llm,
+                        severity=entry.severity or "important",
+                    ),
                     timeout=60,
                 )
                 message = f"{emoji} BREAKING NEWS\n\n{content.formatted}"
             else:
                 # Fallback: raw data with hyperlink if LLM unavailable
-                from cic_daily_report.breaking.content_generator import (
-                    _raw_data_fallback,
-                )
+                from cic_daily_report.breaking.content_generator import _raw_data_fallback
 
                 fallback = _raw_data_fallback(event)
                 message = f"{emoji} BREAKING NEWS\n\n{fallback.formatted}"
 
-            # Split for TG safety (A2)
+            # Split for TG safety
             parts = split_message("BREAKING", message)
             for part in parts:
                 await bot.send_message(part.formatted)
                 await asyncio.sleep(1.0)
 
-            # Update status per event (not batch)
+            # Update status per event
             dedup_mgr.update_entry_status(entry.hash, "sent", delivered_at=now.isoformat())
             sent_count += 1
+
+            # B2: Delay between events (skip after last)
+            if i < len(all_events) - 1:
+                await asyncio.sleep(INTER_EVENT_DELAY)
+
         except Exception as e:
             logger.warning(f"Deferred reprocess failed for '{entry.title[:50]}': {e}")
             if entry.status == "generation_failed":
@@ -665,48 +763,97 @@ def _format_recent_events(dedup_entries: list[DedupEntry], max_events: int = 5) 
     return "\n".join(lines)
 
 
-async def _deliver_breaking(result: BreakingPipelineResult) -> None:
-    """Deliver breaking news content via Telegram Bot.
+async def _deliver_single_breaking(
+    content: BreakingContent, classified_event: ClassifiedEvent
+) -> None:
+    """Deliver a single breaking news content via Telegram.
 
-    A1: Per-event try/except + split_message() for TG 4096 char safety.
-    FR25: If image_url is available, send photo first with short caption,
-    then send full text. Falls back to text-only if photo fails.
+    v0.29.0: Extracted from batch delivery for incremental send + A5 persist.
+    FR25: If image_url available, send photo first, then full text.
     """
     from cic_daily_report.delivery.telegram_bot import TelegramBot, split_message
 
     severity_map = {"critical": "\U0001f534", "important": "\U0001f7e0", "notable": "\U0001f7e1"}
     bot = TelegramBot()
+    emoji = severity_map.get(classified_event.severity, "\U0001f7e1")
 
-    for content in result.contents:
-        # Per-event try/except — one failure doesn't kill remaining (A1)
+    # FR25: Send illustration image if available
+    if content.image_url:
         try:
-            emoji = "\U0001f7e1"
-            for evt in result.sent_events:
-                if evt.event.title == content.event.title:
-                    emoji = severity_map.get(evt.severity, "\U0001f7e1")
-                    break
-
-            # FR25: Send illustration image if available (text-only fallback)
-            if content.image_url:
-                try:
-                    caption = f"{emoji} BREAKING: {content.event.title[:200]}"
-                    await bot.send_photo(content.image_url, caption=caption)
-                    await asyncio.sleep(1.0)
-                except Exception as img_err:
-                    logger.warning(f"FR25 image failed (text-only fallback): {img_err}")
-
-            message = f"{emoji} BREAKING NEWS\n\n{content.formatted}"
-            # A1: split for TG 4096 char safety
-            parts = split_message("BREAKING", message)
-            for part in parts:
-                await bot.send_message(part.formatted)
-                await asyncio.sleep(0.5)
-
-            logger.info(f"Breaking delivered: {content.event.title[:50]}...")
+            caption = f"{emoji} BREAKING: {content.event.title[:200]}"
+            await bot.send_photo(content.image_url, caption=caption)
             await asyncio.sleep(1.0)
-        except Exception as e:
-            logger.error(f"Breaking delivery failed for '{content.event.title[:50]}': {e}")
-            result.run_log.errors.append(f"Delivery: {e}")
+        except Exception as img_err:
+            logger.warning(f"FR25 image failed (text-only fallback): {img_err}")
+
+    message = f"{emoji} BREAKING NEWS\n\n{content.formatted}"
+    parts = split_message("BREAKING", message)
+    for part in parts:
+        await bot.send_message(part.formatted)
+        await asyncio.sleep(0.5)
+
+    logger.info(f"Breaking delivered: {content.event.title[:50]}...")
+
+
+async def _generate_and_deliver_digest(
+    send_now: list[ClassifiedEvent],
+    llm,
+    dedup_mgr: DedupManager,
+    result: BreakingPipelineResult,
+    run_log: BreakingRunLog,
+    market_snapshot: str,
+    new_entries: list,
+) -> None:
+    """B5: Generate and deliver a single digest for multiple events.
+
+    When >=DIGEST_THRESHOLD events need sending, combine into one summary
+    to avoid spamming the Telegram channel.
+    """
+    from cic_daily_report.delivery.telegram_bot import TelegramBot, split_message
+
+    logger.info(f"B5: Digest mode — {len(send_now)} events in single summary")
+
+    events_for_digest = [c.event for c in send_now]
+    try:
+        digest_content = await asyncio.wait_for(
+            generate_digest_content(events_for_digest, llm, market_context=market_snapshot),
+            timeout=90,
+        )
+        result.contents.append(digest_content)
+        run_log.events_sent += len(send_now)
+
+        # Deliver digest
+        bot = TelegramBot()
+        message = f"\U0001f534 BREAKING NEWS DIGEST\n\n{digest_content.formatted}"
+        parts = split_message("BREAKING", message)
+        for part in parts:
+            await bot.send_message(part.formatted)
+            await asyncio.sleep(0.5)
+
+        # Mark all events as sent
+        for classified_event in send_now:
+            result.sent_events.append(classified_event)
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
+            dedup_mgr.update_entry_status(
+                h,
+                "sent_digest",
+                delivered_at=datetime.now(timezone.utc).isoformat(),
+                severity=classified_event.severity,
+            )
+
+        # A5: Persist after digest delivery
+        await _persist_dedup_to_sheets(dedup_mgr, new_entries=new_entries)
+        logger.info(f"B5: Digest delivered for {len(send_now)} events")
+
+    except Exception as e:
+        logger.error(f"Digest generation failed: {e}")
+        run_log.errors.append(f"Digest: {e}")
+        # Mark all as generation_failed
+        for classified_event in send_now:
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
+            dedup_mgr.update_entry_status(
+                h, "generation_failed", severity=classified_event.severity
+            )
 
 
 def _calc_duration(start_iso: str, end_iso: str) -> float:

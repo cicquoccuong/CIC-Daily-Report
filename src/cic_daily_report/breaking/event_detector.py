@@ -23,21 +23,84 @@ CRYPTOPANIC_API_URL = "https://cryptopanic.com/api/v1/posts/"
 CACHE_KEY = "cryptopanic_breaking"
 CACHE_MAX_AGE = 7200  # 2 hours — breaking runs every 3h, so cache protects overlaps/retries
 
-# Default keyword triggers — operator can add more via CAU_HINH
-DEFAULT_KEYWORD_TRIGGERS = [
+# v0.29.0: Keywords split into two tiers for context-aware triggering.
+# ALWAYS_TRIGGER: Crypto-specific terms — trigger regardless of context.
+# CONTEXT_REQUIRED: Generic terms — only trigger when title also contains a crypto keyword.
+ALWAYS_TRIGGER_KEYWORDS = [
     "hack",
     "exploit",
-    "SEC",
-    "ban",
-    "crash",
-    "collapse",
-    "bankrupt",
     "rug pull",
     "delisting",
+    "bankrupt",
+]
+
+CONTEXT_REQUIRED_KEYWORDS = [
+    "crash",
+    "collapse",
+    "SEC",
+    "ban",
     "emergency",
 ]
 
+# Combined list for backward compat (DetectionConfig default)
+DEFAULT_KEYWORD_TRIGGERS = ALWAYS_TRIGGER_KEYWORDS + CONTEXT_REQUIRED_KEYWORDS
+
 DEFAULT_PANIC_THRESHOLD = 70
+
+# Crypto context words — if title contains at least one, CONTEXT_REQUIRED keywords fire.
+# Reuses severity_classifier._CRYPTO_RELEVANCE_KEYWORDS concept but minimal set here.
+_CRYPTO_CONTEXT_WORDS = {
+    "bitcoin",
+    "btc",
+    "ethereum",
+    "eth",
+    "crypto",
+    "blockchain",
+    "solana",
+    "sol",
+    "bnb",
+    "xrp",
+    "cardano",
+    "ada",
+    "doge",
+    "altcoin",
+    "memecoin",
+    "token",
+    "coin",
+    "nft",
+    "web3",
+    "stablecoin",
+    "usdt",
+    "usdc",
+    "defi",
+    "binance",
+    "coinbase",
+    "kraken",
+    "okx",
+    "bybit",
+    "exchange",
+    "mining",
+    "miner",
+    "wallet",
+    "etf",
+    "ripple",
+    "dogecoin",
+    "avalanche",
+    "polkadot",
+    "chainlink",
+    "litecoin",
+    "uniswap",
+    "toncoin",
+    "stellar",
+    "aptos",
+    "arbitrum",
+    "optimism",
+    "sui",
+    "near",
+    "tron",
+    "hedera",
+    "filecoin",
+}
 
 
 @dataclass
@@ -217,6 +280,25 @@ def _calculate_panic_score(votes: dict) -> int:
 
 
 def _match_keywords(title: str, keywords: list[str]) -> list[str]:
-    """Check if title contains any keyword triggers (case-insensitive)."""
+    """Check if title contains any keyword triggers (case-insensitive).
+
+    v0.29.0: Context-aware — CONTEXT_REQUIRED keywords only match when
+    the title also contains a crypto-related word (prevents "plane crash"
+    triggering breaking alerts for a crypto community).
+    """
     title_lower = title.lower()
-    return [kw for kw in keywords if kw.lower() in title_lower]
+    has_crypto_context = any(w in title_lower for w in _CRYPTO_CONTEXT_WORDS)
+
+    matched: list[str] = []
+    for kw in keywords:
+        kw_lower = kw.lower()
+        if kw_lower not in title_lower:
+            continue
+        # Always-trigger keywords fire regardless of context
+        if kw_lower in {k.lower() for k in ALWAYS_TRIGGER_KEYWORDS}:
+            matched.append(kw)
+        # Context-required keywords need a crypto word in the same title
+        elif has_crypto_context:
+            matched.append(kw)
+        # else: skip — generic keyword without crypto context
+    return matched

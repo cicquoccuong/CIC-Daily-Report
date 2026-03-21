@@ -85,7 +85,11 @@ def _build_providers() -> list[LLMProvider]:
 
 
 class LLMAdapter:
-    """Multi-provider LLM adapter with automatic fallback chain."""
+    """Multi-provider LLM adapter with automatic fallback chain.
+
+    v0.29.0: Circuit breaker — after all providers fail once, subsequent
+    generate() calls fail fast without making API requests.
+    """
 
     def __init__(
         self,
@@ -95,6 +99,7 @@ class LLMAdapter:
         self._providers = providers if providers is not None else _build_providers()
         self._quota = quota_manager or QuotaManager()
         self._last_provider: str = ""
+        self._all_providers_failed: bool = False
 
         if not self._providers:
             raise LLMError(
@@ -107,6 +112,11 @@ class LLMAdapter:
         """Name of the last provider that successfully responded."""
         return self._last_provider
 
+    @property
+    def circuit_open(self) -> bool:
+        """True if circuit breaker is open (all providers known down)."""
+        return self._all_providers_failed
+
     async def generate(
         self,
         prompt: str,
@@ -117,7 +127,15 @@ class LLMAdapter:
         """Generate text using the fallback chain.
 
         Tries each provider in order. Returns on first success.
+        v0.29.0: Circuit breaker — if all providers failed previously,
+        raises immediately without API calls.
         """
+        if self._all_providers_failed:
+            raise LLMError(
+                "Circuit breaker open — all LLM providers failed previously",
+                source="llm_adapter",
+            )
+
         errors: list[str] = []
 
         for provider in self._providers:
@@ -140,16 +158,19 @@ class LLMAdapter:
                         source="llm_adapter",
                     )
 
+                self._all_providers_failed = False  # Reset on success
                 self._quota.track(provider.name)
                 self._last_provider = provider.name
                 logger.info(f"LLM response from {provider.name} ({response.tokens_used} tokens)")
                 return response
 
             except Exception as e:
+                self._quota.track_failure(provider.name)  # v0.29.0: A2
                 errors.append(f"{provider.name}: {e}")
                 logger.warning(f"LLM {provider.name} failed: {e}")
                 continue
 
+        self._all_providers_failed = True  # v0.29.0: A7 circuit breaker
         fallback_chain = " → ".join(p.name for p in self._providers)
         raise LLMError(
             f"All LLM providers failed ({fallback_chain}): {'; '.join(errors)}",
