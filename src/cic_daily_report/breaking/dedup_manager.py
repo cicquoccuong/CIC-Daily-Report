@@ -213,7 +213,10 @@ class DedupManager:
         self,
         events: list[BreakingEvent],
     ) -> DedupResult:
-        """Filter out duplicate events based on hash + 4h cooldown.
+        """Filter out duplicate events based on URL + hash + similarity + entity overlap.
+
+        v0.30.0: Added URL-based dedup as first check — same URL = same article,
+        regardless of title/source differences across runs.
 
         Args:
             events: Detected breaking events to check.
@@ -225,6 +228,12 @@ class DedupManager:
         now = datetime.now(timezone.utc)
 
         for event in events:
+            # v0.30.0: URL-based dedup — same URL = same article, guaranteed
+            if event.url and self._is_url_duplicate(event.url, now):
+                result.duplicates_skipped += 1
+                logger.info(f"Dedup: skipped URL-match event '{event.title}'")
+                continue
+
             h = compute_hash(event.title, event.source)
 
             if self._is_duplicate(h, now):
@@ -264,6 +273,20 @@ class DedupManager:
             f"Dedup: {len(result.new_events)} new, {result.duplicates_skipped} duplicates skipped"
         )
         return result
+
+    def _is_url_duplicate(self, url: str, now: datetime) -> bool:
+        """Check if URL matches any recent entry within cooldown window.
+
+        v0.30.0: URL-based dedup catches the same article across runs even when
+        the AI-generated title differs (which changes the hash). Same URL = same
+        underlying article, so this is the most reliable dedup signal.
+        """
+        url_lower = url.strip().lower()
+        for entry in self._entries:
+            if entry.url and entry.url.strip().lower() == url_lower:
+                if not self._is_cooldown_expired(entry, now):
+                    return True
+        return False
 
     def _is_duplicate(self, hash_value: str, now: datetime) -> bool:
         """Check if hash exists within the cooldown window."""

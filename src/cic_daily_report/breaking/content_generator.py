@@ -30,7 +30,9 @@ _DISCLAIMER_RE = re.compile(
 )
 
 BREAKING_PROMPT_TEMPLATE = """\
-Viết bản tin BREAKING NEWS bằng tiếng Việt cho cộng đồng đầu tư crypto CIC.
+Viết bản tin BREAKING NEWS bằng tiếng Việt cho cộng đồng đầu tư crypto CIC \
+(Crypto Investment Community — cộng đồng phân tích crypto chuyên sâu, \
+thành viên đã có kiến thức nền về thị trường).
 
 **Sự kiện:** {title}
 **Nguồn:** {source}
@@ -47,19 +49,22 @@ Yêu cầu TUYỆT ĐỐI:
 - Dựa trên NỘI DUNG BÀI GỐC (nếu có), KHÔNG chỉ tiêu đề
 - KHÔNG dùng câu chung chung/filler như "có thể ảnh hưởng đến", "trong bối cảnh", \
 "điều này cho thấy". Thay bằng phân tích CỤ THỂ: ảnh hưởng GÌ, đến AI, bao NHIÊU.
+- Viết cho người ĐÃ biết crypto — không giải thích khái niệm cơ bản.
 
 Cấu trúc (CHỈ viết 3 phần, KHÔNG thêm nguồn hay tuyên bố miễn trừ):
 
-1. **Tiêu đề** (1 dòng tiếng Việt, nêu rõ tên tài sản nếu có)
+1. **Tiêu đề** (1 dòng tiếng Việt, nêu rõ tên tài sản + con số nếu có)
 
-2. **Nội dung cốt lõi:** (3-4 câu)
+2. **Nội dung cốt lõi:** (4-6 câu)
    - Tóm tắt SỰ KIỆN + SỐ LIỆU quan trọng từ bài gốc
    - Ai liên quan? Quy mô bao lớn? Con số cụ thể nào?
+   - Nguyên nhân hoặc bối cảnh dẫn đến sự kiện
 
-3. **Bối cảnh & tác động:** (2-3 câu)
+3. **Bối cảnh & tác động:** (3-4 câu)
    - Tin này nằm trong xu hướng gì? (liên kết tin gần đây nếu có)
    - Ảnh hưởng CỤ THỂ gì đến thị trường/nhà đầu tư crypto?
-   - Nếu có data thị trường, nối với bối cảnh hiện tại"""
+   - Nếu có data thị trường, nối với bối cảnh hiện tại
+   - Điều gì cần theo dõi tiếp?"""
 
 DIGEST_PROMPT_TEMPLATE = """\
 Viết bản tin TỔNG HỢP BREAKING NEWS bằng tiếng Việt cho cộng đồng CIC.
@@ -115,14 +120,14 @@ def _format_source_link(source: str, url: str) -> str:
     return f"Nguồn: {safe_source}"
 
 
-_TRAFILATURA_TIMEOUT = 8  # seconds — fail fast, fallback to title-only
+_TRAFILATURA_TIMEOUT = 12  # seconds — balance speed vs content depth
 
 
-async def _fetch_article_text(url: str, max_chars: int = 1500) -> str:
+async def _fetch_article_text(url: str, max_chars: int = 3000) -> str:
     """Fetch and extract article body text via trafilatura.
 
     Returns extracted text (max max_chars) or empty string on failure.
-    Timeout: 8s — breaking news must be fast.
+    v0.30.0: Increased from 1500→3000 chars, 8→12s timeout for deeper content.
     """
     if trafilatura is None:
         return ""
@@ -167,7 +172,7 @@ async def generate_breaking_content(
         LLMError: v0.29.0 (A4) — propagates to caller instead of silently
             returning raw_data_fallback. Caller decides whether to defer or skip.
     """
-    word_target = "200-250" if severity == "critical" else "100-150"
+    word_target = "300-400" if severity == "critical" else "200-300"
 
     # Build summary section from raw_data if available
     summary_text = event.raw_data.get("summary", "") if event.raw_data else ""
@@ -181,13 +186,21 @@ async def generate_breaking_content(
 
     summary_section = f"**Nội dung bài gốc:**\n{summary_text}\n" if summary_text else ""
 
+    # v0.30.0 (Fix 3.4): Only include market/recent context when meaningful
+    market_section = (
+        f"**Bối cảnh thị trường hiện tại:**\n{market_context}\n" if market_context.strip() else ""
+    )
+    recent_section = (
+        f"**Tin breaking gần đây (tránh lặp):**\n{recent_events}\n" if recent_events.strip() else ""
+    )
+
     prompt = BREAKING_PROMPT_TEMPLATE.format(
         title=event.title,
         source=event.source,
         url=event.url,
         summary_section=summary_section,
-        market_context=market_context,
-        recent_events=recent_events,
+        market_context=market_section,
+        recent_events=recent_section,
         word_target=word_target,
     )
 

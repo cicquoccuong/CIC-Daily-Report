@@ -103,6 +103,21 @@ async def _run_pipeline() -> str:
         f"{len(articles)} articles, {len(errors)} errors"
     )
 
+    # v0.30.0: Admin alert on pipeline failure
+    if run_log["status"] in ("error", "timeout"):
+        try:
+            from cic_daily_report.delivery.telegram_bot import send_admin_alert
+
+            errors_text = "\n".join(f"- {e}" for e in run_log.get("errors", [])[:5])
+            await send_admin_alert(
+                f"\u26a0\ufe0f Daily pipeline THẤT BẠI ({run_log['status']})\n"
+                f"Thời gian: {elapsed:.0f}s\n"
+                f"Bài viết: {len(articles)}\n"
+                f"Lỗi:\n{errors_text}"
+            )
+        except Exception:
+            pass  # Monitoring should never crash the pipeline
+
     # Write log to Sheets (best effort)
     try:
         await _write_run_log(run_log)
@@ -389,7 +404,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     except Exception as e:
         logger.error(f"LLM init failed: {e}")
         errors.append(e)
-        return [], errors
+        return [], errors, "", 0
 
     # Load config from Sheets (QĐ8, FR41) — gspread is sync, wrap with to_thread
     templates = {}
@@ -423,7 +438,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         msg = "No templates loaded — cannot generate articles"
         logger.error(msg)
         errors.append(Exception(msg))
-        return [], errors
+        return [], errors, "", 0
     for tier in sorted(loaded_tiers):
         coins = coin_lists.get(tier, [])
         if not coins:
@@ -638,6 +653,12 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     if len(generated) >= 3:
         _check_cross_tier_repetition(generated)
 
+    # v0.30.0: Cooldown before summary/research — tier generation already consumed
+    # most of the per-minute rate limit; wait 60s to let the window reset.
+    if generated:
+        logger.info("Cooldown 60s before summary/research generation")
+        await asyncio.sleep(60)
+
     # Generate BIC Chat summary (FR15, v0.24.0: full data context)
     summary = None
     if generated:
@@ -660,8 +681,10 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
             errors.append(e)
 
     # Generate CIC Market Insight research article (P2-A: BIC Group L1)
+    # v0.30.0 (Fix 4.1): Decoupled from tier generation — research uses raw data (context),
+    # not generated tier articles. Always attempt if LLM is available.
     research_article = None
-    if generated:
+    if llm is not None:
         try:
             research_article = await generate_research_article(
                 llm=llm,
@@ -675,6 +698,14 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
                 )
             else:
                 logger.warning("Research article skipped: content too short for paid members")
+                # v0.30.0: Notify admin when research article is skipped
+                from cic_daily_report.delivery.telegram_bot import send_admin_alert
+
+                await send_admin_alert(
+                    "\u26a0\ufe0f Research article SKIPPED\n"
+                    "Lý do: Nội dung quá ngắn (quality gate)\n"
+                    "Bài viết Research không xuất hiện hôm nay."
+                )
         except Exception as e:
             logger.error(f"Research article generation failed: {e}")
             errors.append(e)

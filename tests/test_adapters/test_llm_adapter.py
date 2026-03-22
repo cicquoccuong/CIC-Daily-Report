@@ -154,14 +154,49 @@ class TestLLMAdapter:
 
         assert adapter.circuit_open is True
 
-    async def test_circuit_breaker_fails_fast(self):
-        """v0.29.0 (A7): Circuit breaker raises immediately without API calls."""
+    async def test_failed_provider_skipped_in_chain(self):
+        """v0.30.0: Per-provider circuit breaker skips failed provider."""
+        groq = _groq_provider()
+        gemini = _gemini_provider()
+        adapter = LLMAdapter(providers=[groq, gemini])
+        # Mark groq as failed — gemini should be tried directly
+        adapter._provider_failed["groq"] = True
+
+        gemini_resp = LLMResponse(text="gemini ok", tokens_used=5, model="flash")
+        with (
+            patch(
+                "cic_daily_report.adapters.llm_adapter._call_groq",
+                new_callable=AsyncMock,
+                side_effect=Exception("should not be called"),
+            ) as mock_groq,
+            patch(
+                "cic_daily_report.adapters.llm_adapter._call_gemini",
+                new_callable=AsyncMock,
+                return_value=gemini_resp,
+            ),
+        ):
+            resp = await adapter.generate("test")
+
+        assert resp.text == "gemini ok"
+        assert adapter.last_provider == "gemini_flash"
+        mock_groq.assert_not_called()
+
+    async def test_all_failed_resets_and_retries(self):
+        """v0.30.0: When all providers are failed, reset and retry all."""
         provider = _groq_provider()
         adapter = LLMAdapter(providers=[provider])
-        adapter._all_providers_failed = True  # Simulate open circuit
+        adapter._provider_failed["groq"] = True
 
-        with pytest.raises(LLMError, match="Circuit breaker open"):
-            await adapter.generate("test")
+        groq_resp = LLMResponse(text="recovered", tokens_used=5, model="llama")
+        with patch(
+            "cic_daily_report.adapters.llm_adapter._call_groq",
+            new_callable=AsyncMock,
+            return_value=groq_resp,
+        ):
+            resp = await adapter.generate("test")
+
+        assert resp.text == "recovered"
+        assert adapter.circuit_open is False
 
     async def test_circuit_breaker_resets_on_success(self):
         """v0.29.0 (A7): Successful response resets circuit breaker."""

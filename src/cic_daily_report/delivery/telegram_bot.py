@@ -295,3 +295,17 @@ class TelegramBot:
         sent = sum(1 for r in results if r.get("ok"))
         logger.info(f"Delivery complete: {sent}/{len(messages)} messages sent")
         return results
+
+
+async def send_admin_alert(message: str) -> None:
+    """v0.30.0: Fire-and-forget admin alert via Telegram.
+
+    Used for pipeline monitoring: failure notifications, circuit breaker alerts,
+    dedup errors, research skips. Silently swallows all errors — monitoring
+    should never crash the pipeline.
+    """
+    try:
+        bot = TelegramBot()
+        await bot.send_message(f"\u2699\ufe0f PIPELINE MONITOR\n\n{message}")
+    except Exception as e:
+        logger.debug(f"Admin alert failed (non-critical): {e}")

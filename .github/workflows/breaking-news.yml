@@ -2,7 +2,7 @@ name: Breaking News
 
 on:
   schedule:
-    - cron: '0 6,9,12,15,18,21 * * *'  # Every 3h, skip UTC 0-5 (low volume). Was hourly.
+    - cron: '0 0,6,9,12,15,18,21 * * *'  # Every 3h + 00:00 UTC (07:00 VN) for morning deferred delivery
   workflow_dispatch:      # manual trigger
 
 concurrency:

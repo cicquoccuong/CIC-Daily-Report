@@ -48,15 +48,16 @@ def _build_providers() -> list[LLMProvider]:
 
     gemini_key = os.getenv("GEMINI_API_KEY", "")
     if gemini_key:
-        # Both Gemini models share the SAME API key rate limit (15 RPM total).
-        # Use rate_limit_per_min=10 each to leave headroom for shared quota.
+        # v0.30.0: Both Gemini models share 15 RPM total on same API key.
+        # Use shared rate limiter group "gemini" with 7 RPM each (14 max combined,
+        # leaving 1 RPM headroom). QuotaManager tracks "gemini" as shared group.
         providers.append(
             LLMProvider(
                 name="gemini_flash",
                 api_key=gemini_key,
                 model="gemini-2.0-flash",
                 endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-                rate_limit_per_min=10,
+                rate_limit_per_min=7,
             )
         )
         providers.append(
@@ -65,7 +66,7 @@ def _build_providers() -> list[LLMProvider]:
                 api_key=gemini_key,
                 model="gemini-2.0-flash-lite",
                 endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent",
-                rate_limit_per_min=10,
+                rate_limit_per_min=7,
             )
         )
 
@@ -84,11 +85,17 @@ def _build_providers() -> list[LLMProvider]:
     return providers
 
 
+# v0.30.0: Providers sharing the same API key rate limit
+_SHARED_RATE_GROUPS: dict[str, list[str]] = {
+    "gemini": ["gemini_flash", "gemini_flash_lite"],
+}
+
+
 class LLMAdapter:
     """Multi-provider LLM adapter with automatic fallback chain.
 
-    v0.29.0: Circuit breaker — after all providers fail once, subsequent
-    generate() calls fail fast without making API requests.
+    v0.30.0: Per-provider circuit breaker — each provider tracks its own
+    failure state independently. Gemini Flash failing does NOT block Groq.
     """
 
     def __init__(
@@ -99,7 +106,8 @@ class LLMAdapter:
         self._providers = providers if providers is not None else _build_providers()
         self._quota = quota_manager or QuotaManager()
         self._last_provider: str = ""
-        self._all_providers_failed: bool = False
+        # v0.30.0: Per-provider circuit breaker instead of global flag
+        self._provider_failed: dict[str, bool] = {}
 
         if not self._providers:
             raise LLMError(
@@ -114,8 +122,21 @@ class LLMAdapter:
 
     @property
     def circuit_open(self) -> bool:
-        """True if circuit breaker is open (all providers known down)."""
-        return self._all_providers_failed
+        """True if ALL providers are marked as failed."""
+        return all(self._provider_failed.get(p.name, False) for p in self._providers)
+
+    def _get_available_providers(self) -> list[LLMProvider]:
+        """Get providers whose circuit breaker is not open.
+
+        v0.30.0: Skip providers known to be down, but always try at least
+        one provider (reset all if all are failed).
+        """
+        available = [p for p in self._providers if not self._provider_failed.get(p.name, False)]
+        if not available:
+            # All providers were marked failed — reset and try all again
+            self._provider_failed.clear()
+            return list(self._providers)
+        return available
 
     async def generate(
         self,
@@ -126,21 +147,21 @@ class LLMAdapter:
     ) -> LLMResponse:
         """Generate text using the fallback chain.
 
-        Tries each provider in order. Returns on first success.
-        v0.29.0: Circuit breaker — if all providers failed previously,
-        raises immediately without API calls.
+        v0.30.0: Per-provider circuit breaker — only skips providers that
+        have individually failed. Other providers still get attempted.
         """
-        if self._all_providers_failed:
-            raise LLMError(
-                "Circuit breaker open — all LLM providers failed previously",
-                source="llm_adapter",
-            )
-
+        available = self._get_available_providers()
         errors: list[str] = []
 
-        for provider in self._providers:
+        for provider in available:
+            # v0.30.0: Shared rate limit — wait for group, not just individual
+            rate_key = provider.name
+            for group, members in _SHARED_RATE_GROUPS.items():
+                if provider.name in members:
+                    rate_key = group
+                    break
             try:
-                await self._quota.wait_for_rate_limit(provider.name)
+                await self._quota.wait_for_rate_limit(rate_key)
 
                 if provider.name == "groq":
                     response = await _call_groq(
@@ -151,27 +172,28 @@ class LLMAdapter:
                         provider, prompt, max_tokens, temperature, system_prompt
                     )
 
-                # Safety net: validate response is non-empty (covers all providers)
+                # Safety net: validate response is non-empty
                 if not response.text.strip():
                     raise LLMError(
                         f"{provider.name} returned empty response",
                         source="llm_adapter",
                     )
 
-                self._all_providers_failed = False  # Reset on success
-                self._quota.track(provider.name)
+                # Success — reset this provider's circuit breaker
+                self._provider_failed[provider.name] = False
+                self._quota.track(rate_key)
                 self._last_provider = provider.name
                 logger.info(f"LLM response from {provider.name} ({response.tokens_used} tokens)")
                 return response
 
             except Exception as e:
-                self._quota.track_failure(provider.name)  # v0.29.0: A2
+                self._provider_failed[provider.name] = True
+                self._quota.track_failure(rate_key)
                 errors.append(f"{provider.name}: {e}")
                 logger.warning(f"LLM {provider.name} failed: {e}")
                 continue
 
-        self._all_providers_failed = True  # v0.29.0: A7 circuit breaker
-        fallback_chain = " → ".join(p.name for p in self._providers)
+        fallback_chain = " → ".join(p.name for p in available)
         raise LLMError(
             f"All LLM providers failed ({fallback_chain}): {'; '.join(errors)}",
             source="llm_adapter",

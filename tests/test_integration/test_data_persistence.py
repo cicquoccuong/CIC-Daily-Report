@@ -7,6 +7,8 @@ All Sheets calls are mocked.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from cic_daily_report.collectors.market_data import MarketDataPoint
 from cic_daily_report.collectors.onchain_data import OnChainMetric
 
@@ -157,17 +159,16 @@ class TestBreakingPipelineSheets:
         assert len(mgr.entries) == 1
         assert mgr.entries[0].hash == "abc123"
 
-    async def test_load_dedup_from_sheets_fallback(self):
-        """Falls back to empty DedupManager on error."""
+    async def test_load_dedup_from_sheets_fatal_on_failure(self):
+        """v0.30.0: Raises RuntimeError after retries instead of silently returning empty."""
         with patch(
             "cic_daily_report.storage.sheets_client.SheetsClient",
             side_effect=Exception("No sheets"),
         ):
             from cic_daily_report.breaking_pipeline import _load_dedup_from_sheets
 
-            mgr = await _load_dedup_from_sheets()
-
-        assert len(mgr.entries) == 0
+            with pytest.raises(RuntimeError, match="CRITICAL.*Cannot load BREAKING_LOG"):
+                await _load_dedup_from_sheets()
 
     async def test_write_breaking_run_log(self):
         """_write_breaking_run_log writes to NHAT_KY_PIPELINE."""

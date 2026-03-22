@@ -13,8 +13,8 @@ from cic_daily_report.breaking.dedup_manager import (
 from cic_daily_report.breaking.event_detector import BreakingEvent
 
 
-def _event(title="BTC hack", source="CoinDesk") -> BreakingEvent:
-    return BreakingEvent(title=title, source=source, url="https://x.com", panic_score=80)
+def _event(title="BTC hack", source="CoinDesk", url="https://x.com") -> BreakingEvent:
+    return BreakingEvent(title=title, source=source, url=url, panic_score=80)
 
 
 class TestComputeHash:
@@ -102,9 +102,23 @@ class TestDedupManager:
 
     def test_different_events_both_pass(self):
         mgr = DedupManager()
-        events = [_event("BTC hack", "CoinDesk"), _event("ETH crash", "Reuters")]
+        events = [
+            _event("BTC hack", "CoinDesk", url="https://x.com/1"),
+            _event("ETH crash", "Reuters", url="https://x.com/2"),
+        ]
         result = mgr.check_and_filter(events)
         assert len(result.new_events) == 2
+
+    def test_same_url_different_title_deduped(self):
+        """v0.30.0: Same URL = same article, even with different titles."""
+        mgr = DedupManager()
+        events = [
+            _event("BTC hack reported", "CoinDesk", url="https://news.com/btc-hack"),
+            _event("Bitcoin hacked!", "CoinTelegraph", url="https://news.com/btc-hack"),
+        ]
+        result = mgr.check_and_filter(events)
+        assert len(result.new_events) == 1
+        assert result.duplicates_skipped == 1
 
     def test_cooldown_expired_passes(self):
         old_time = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()

@@ -139,6 +139,17 @@ async def _run_breaking_pipeline() -> BreakingPipelineResult:
         f"{run_log.duration_seconds:.1f}s)"
     )
 
+    # v0.30.0: Admin alert on pipeline failure
+    if run_log.status == "error":
+        from cic_daily_report.delivery.telegram_bot import send_admin_alert
+
+        errors_text = "\n".join(f"- {e}" for e in run_log.errors[:5])
+        await send_admin_alert(
+            f"\u26a0\ufe0f Breaking pipeline THẤT BẠI\n"
+            f"Thời gian: {run_log.duration_seconds:.0f}s\n"
+            f"Lỗi:\n{errors_text}"
+        )
+
     # A6: Write run log to NHAT_KY_PIPELINE
     try:
         await _write_breaking_run_log(run_log)
@@ -291,10 +302,69 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
 
     recent_events_text = _format_recent_events(dedup_mgr.entries)
 
-    # B5: Digest mode when many events queue up
-    if len(send_now) >= DIGEST_THRESHOLD and llm is not None and not llm.circuit_open:
+    # v0.30.0 (Decision 1C): Critical → individual articles, Important → themed digest
+    critical_now = [c for c in send_now if c.severity == "critical"]
+    important_now = [c for c in send_now if c.severity != "critical"]
+
+    # Stage 4a: Critical events — generate + deliver individually
+    all_individual = critical_now[:]
+    # Important events with only 1 item — also send individually (digest needs ≥2)
+    if len(important_now) == 1:
+        all_individual.extend(important_now)
+        important_now = []
+
+    for i, classified_event in enumerate(all_individual):
+        content = None  # v0.29.1 (BUG 5): track generation vs delivery failure
+        try:
+            if llm is None or llm.circuit_open:
+                raise RuntimeError("LLM unavailable — circuit open")
+
+            content = await asyncio.wait_for(
+                generate_breaking_content(
+                    classified_event.event,
+                    llm,
+                    severity=classified_event.severity,
+                    market_context=market_snapshot,
+                    recent_events=recent_events_text,
+                ),
+                timeout=60,
+            )
+
+            # Deliver immediately (not batched)
+            await _deliver_single_breaking(content, classified_event)
+
+            # v0.29.1 (BUG 4): Count AFTER successful delivery, not before.
+            result.contents.append(content)
+            result.sent_events.append(classified_event)
+            run_log.events_sent += 1
+
+            # A5: Incremental dedup persist after each successful send
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
+            dedup_mgr.update_entry_status(
+                h,
+                "sent",
+                delivered_at=datetime.now(timezone.utc).isoformat(),
+                severity=classified_event.severity,
+            )
+            await _persist_dedup_to_sheets(dedup_mgr, new_entries=dedup_result.entries_written)
+
+            # B2: Delay between events (skip after last)
+            if i < len(all_individual) - 1 or important_now:
+                logger.info(f"B2: Waiting {INTER_EVENT_DELAY}s before next event")
+                await asyncio.sleep(INTER_EVENT_DELAY)
+
+        except Exception as e:
+            logger.error(f"Event failed for '{classified_event.event.title}': {e}")
+            # v0.29.1 (BUG 5): Distinguish generation vs delivery failure
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
+            status = "delivery_failed" if content is not None else "generation_failed"
+            dedup_mgr.update_entry_status(h, status, severity=classified_event.severity)
+            run_log.errors.append(f"{'Deliver' if content else 'Generate'}: {e}")
+
+    # Stage 4b: Important events (≥2) — batch into themed digest
+    if important_now and llm is not None and not llm.circuit_open:
         await _generate_and_deliver_digest(
-            send_now,
+            important_now,
             llm,
             dedup_mgr,
             result,
@@ -302,55 +372,14 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             market_snapshot,
             dedup_result.entries_written,
         )
-    else:
-        # Stage 4: Generate + deliver individually
-        for i, classified_event in enumerate(send_now):
-            content = None  # v0.29.1 (BUG 5): track generation vs delivery failure
-            try:
-                if llm is None or llm.circuit_open:
-                    raise RuntimeError("LLM unavailable — circuit open")
-
-                content = await asyncio.wait_for(
-                    generate_breaking_content(
-                        classified_event.event,
-                        llm,
-                        severity=classified_event.severity,
-                        market_context=market_snapshot,
-                        recent_events=recent_events_text,
-                    ),
-                    timeout=60,
-                )
-
-                # Deliver immediately (not batched)
-                await _deliver_single_breaking(content, classified_event)
-
-                # v0.29.1 (BUG 4): Count AFTER successful delivery, not before.
-                result.contents.append(content)
-                result.sent_events.append(classified_event)
-                run_log.events_sent += 1
-
-                # A5: Incremental dedup persist after each successful send
-                h = compute_hash(classified_event.event.title, classified_event.event.source)
-                dedup_mgr.update_entry_status(
-                    h,
-                    "sent",
-                    delivered_at=datetime.now(timezone.utc).isoformat(),
-                    severity=classified_event.severity,
-                )
-                await _persist_dedup_to_sheets(dedup_mgr, new_entries=dedup_result.entries_written)
-
-                # B2: Delay between events (skip after last)
-                if i < len(send_now) - 1:
-                    logger.info(f"B2: Waiting {INTER_EVENT_DELAY}s before next event")
-                    await asyncio.sleep(INTER_EVENT_DELAY)
-
-            except Exception as e:
-                logger.error(f"Event failed for '{classified_event.event.title}': {e}")
-                # v0.29.1 (BUG 5): Distinguish generation vs delivery failure
-                h = compute_hash(classified_event.event.title, classified_event.event.source)
-                status = "delivery_failed" if content is not None else "generation_failed"
-                dedup_mgr.update_entry_status(h, status, severity=classified_event.severity)
-                run_log.errors.append(f"{'Deliver' if content else 'Generate'}: {e}")
+    elif important_now:
+        # LLM unavailable — mark as generation_failed for retry
+        for classified_event in important_now:
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
+            dedup_mgr.update_entry_status(
+                h, "generation_failed", severity=classified_event.severity
+            )
+            run_log.errors.append(f"LLM unavailable for digest: {classified_event.event.title}")
 
     # Cleanup old entries
     dedup_mgr.cleanup_old_entries()
@@ -399,31 +428,47 @@ async def _load_tracked_coins() -> set[str]:
 
 
 async def _load_dedup_from_sheets() -> DedupManager:
-    """Load existing dedup entries from BREAKING_LOG sheet (A5)."""
-    try:
-        from cic_daily_report.storage.sheets_client import SheetsClient
+    """Load existing dedup entries from BREAKING_LOG sheet (A5).
 
-        sheets = SheetsClient()
-        rows = await asyncio.to_thread(sheets.read_all, "BREAKING_LOG")
-        entries = []
-        for row in rows:
-            entry = DedupEntry(
-                hash=str(row.get("Hash", "")),
-                title=str(row.get("Tiêu đề", "")),
-                source=str(row.get("Nguồn", "")),
-                severity=str(row.get("Mức độ", "")),
-                detected_at=str(row.get("Thời gian", "")),
-                status=str(row.get("Trạng thái gửi", "")),
-                url=str(row.get("URL", "")),
-                delivered_at=str(row.get("Thời gian gửi", "")),
-            )
-            if entry.hash:
-                entries.append(entry)
-        logger.info(f"Loaded {len(entries)} dedup entries from BREAKING_LOG")
-        return DedupManager(existing_entries=entries)
-    except Exception as e:
-        logger.warning(f"Failed to load BREAKING_LOG, starting fresh: {e}")
-        return DedupManager()
+    v0.30.0: CRITICAL — if loading fails after retries, pipeline MUST NOT
+    continue with empty dedup state (that would re-send all events).
+    Retries 3 times with exponential backoff before raising fatal error.
+    """
+    from cic_daily_report.storage.sheets_client import SheetsClient
+
+    max_retries = 3
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            sheets = SheetsClient()
+            rows = await asyncio.to_thread(sheets.read_all, "BREAKING_LOG")
+            entries = []
+            for row in rows:
+                entry = DedupEntry(
+                    hash=str(row.get("Hash", "")),
+                    title=str(row.get("Tiêu đề", "")),
+                    source=str(row.get("Nguồn", "")),
+                    severity=str(row.get("Mức độ", "")),
+                    detected_at=str(row.get("Thời gian", "")),
+                    status=str(row.get("Trạng thái gửi", "")),
+                    url=str(row.get("URL", "")),
+                    delivered_at=str(row.get("Thời gian gửi", "")),
+                )
+                if entry.hash:
+                    entries.append(entry)
+            logger.info(f"Loaded {len(entries)} dedup entries from BREAKING_LOG")
+            return DedupManager(existing_entries=entries)
+        except Exception as e:
+            last_error = e
+            logger.warning(f"BREAKING_LOG load attempt {attempt}/{max_retries} failed: {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(2**attempt)  # 2s, 4s backoff
+
+    # All retries exhausted — fail fatally to prevent duplicate sends
+    raise RuntimeError(
+        f"CRITICAL: Cannot load BREAKING_LOG after {max_retries} attempts "
+        f"(last error: {last_error}). Pipeline halted to prevent duplicate sends."
+    )
 
 
 async def _persist_dedup_to_sheets(
@@ -431,8 +476,9 @@ async def _persist_dedup_to_sheets(
 ) -> None:
     """Persist dedup entries back to BREAKING_LOG sheet (A5).
 
-    Uses clear-and-rewrite as primary strategy. If that fails, only appends
-    NEW entries (not all rows) to prevent duplicate rows in the sheet (B2).
+    v0.30.0: Uses atomic_rewrite (single API call) as primary strategy.
+    If write fails, old data remains intact. Falls back to append-only
+    for new entries if atomic rewrite fails.
     """
     try:
         from cic_daily_report.storage.sheets_client import SheetsClient
@@ -442,15 +488,15 @@ async def _persist_dedup_to_sheets(
         if not rows:
             return
 
-        # Try to clear-and-rewrite atomically via public method
+        # Primary: atomic rewrite — writes header + data in ONE API call
         try:
-            await asyncio.to_thread(sheets.clear_and_rewrite, "BREAKING_LOG", rows)
-            logger.info(f"Persisted {len(rows)} dedup entries to BREAKING_LOG (clean rewrite)")
-            return  # done — no append needed
+            await asyncio.to_thread(sheets.atomic_rewrite, "BREAKING_LOG", rows)
+            logger.info(f"Persisted {len(rows)} dedup entries to BREAKING_LOG (atomic rewrite)")
+            return
         except Exception as e:
-            logger.warning(f"BREAKING_LOG clear_and_rewrite failed: {e}")
+            logger.error(f"BREAKING_LOG atomic_rewrite failed: {e}")
 
-        # Fallback: only append NEW entries to prevent duplicates (B2)
+        # Fallback: only append NEW entries to prevent duplicates
         if new_entries:
             new_rows = [e.to_row() for e in new_entries]
             await asyncio.to_thread(sheets.batch_append, "BREAKING_LOG", new_rows)
@@ -459,9 +505,12 @@ async def _persist_dedup_to_sheets(
                 f"skipped {len(rows) - len(new_rows)} existing)"
             )
         else:
-            logger.warning("BREAKING_LOG: clear_and_rewrite failed and no new entries to append")
+            logger.error(
+                "BREAKING_LOG: atomic_rewrite failed and no new entries to append. "
+                "Dedup state may be stale — next run should recover."
+            )
     except Exception as e:
-        logger.warning(f"Failed to persist BREAKING_LOG: {e}")
+        logger.error(f"Failed to persist BREAKING_LOG: {e}")
 
 
 async def _write_breaking_run_log(run_log: BreakingRunLog) -> None:
@@ -828,7 +877,7 @@ async def _generate_and_deliver_digest(
     """
     from cic_daily_report.delivery.telegram_bot import TelegramBot, split_message
 
-    logger.info(f"B5: Digest mode — {len(send_now)} events in single summary")
+    logger.info(f"Digest mode — {len(send_now)} events in themed summary")
 
     events_for_digest = [c.event for c in send_now]
     digest_content = None  # v0.29.1 (BUG 5): track generation vs delivery failure
@@ -838,9 +887,12 @@ async def _generate_and_deliver_digest(
             timeout=90,
         )
 
-        # Deliver digest
+        # v0.30.0: Use severity-appropriate emoji for digest header
+        has_critical = any(c.severity == "critical" for c in send_now)
+        digest_emoji = "\U0001f534" if has_critical else "\U0001f7e0"
+        digest_label = "BREAKING NEWS DIGEST" if has_critical else "TỔNG HỢP TIN QUAN TRỌNG"
         bot = TelegramBot()
-        message = f"\U0001f534 BREAKING NEWS DIGEST\n\n{digest_content.formatted}"
+        message = f"{digest_emoji} {digest_label}\n\n{digest_content.formatted}"
         parts = split_message("BREAKING", message)
         for part in parts:
             await bot.send_message(part.formatted)

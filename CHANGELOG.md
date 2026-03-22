@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.30.0] - 2026-03-22
+
+### Major Overhaul — Pipeline Reliability, Content Quality & Architecture (6 clusters, 19 fixes)
+
+Root cause investigation after 20+ duplicate breaking news sends on 2026-03-22. Found cascading
+failures across dedup persistence, LLM fallback chain, content quality, and missing monitoring.
+
+#### Cụm 1: Dedup & Sheets Persistence (Triple-send root cause)
+- **atomic_rewrite()**: New Sheets write method — single `ws.update()` call replacing non-atomic
+  delete+append pattern. If write fails, old data remains intact.
+- **URL-based dedup**: First check in dedup chain — same URL = same article, regardless of
+  AI-generated title differences across runs.
+- **Fatal dedup load**: `_load_dedup_from_sheets()` retries 3x with exponential backoff, then
+  raises `RuntimeError` instead of silently returning empty state (which would re-send everything).
+- **atomic_rewrite for BREAKING_LOG**: `_persist_dedup_to_sheets()` uses atomic_rewrite as primary
+  strategy with append-only fallback for new entries.
+
+#### Cụm 2: Daily Pipeline LLM Cascade
+- **Per-provider circuit breaker**: Replaced global `_all_providers_failed` boolean with
+  per-provider `_provider_failed` dict. Gemini failing no longer blocks Groq.
+- **Early return tuple fix**: `_execute_stages()` early returns now return 4-tuple
+  `([], errors, "", 0)` matching caller's expected `articles, errors, llm_used, research_wc`.
+- **60s cooldown**: Added cooldown before Summary/Research generation to let per-minute rate
+  limit window reset after 5+ tier article generations.
+- **Shared rate limiter**: Gemini Flash + Flash Lite share 15 RPM total via `_SHARED_RATE_GROUPS`.
+  Each gets 7 RPM (14 combined, 1 RPM headroom).
+
+#### Cụm 5: Critical vs Important Architecture (Decision 1C + 2B)
+- **Separate delivery flows**: Critical (🔴) events → individual articles sent immediately.
+  Important (🟠) events → batched into themed digest (reduces Telegram noise).
+- **Night mode 07:00 VN run**: Added `0 0 * * *` UTC to breaking-news cron for morning
+  deferred event delivery at 07:00 VN.
+- **Digest emoji**: Important digest uses 🟠 header instead of 🔴.
+
+#### Cụm 6: Monitoring & Admin Alerts
+- **`send_admin_alert()`**: Fire-and-forget Telegram notification for pipeline failures.
+  Silently swallows all errors — monitoring never crashes the pipeline.
+- **Breaking pipeline alert**: Notifies on pipeline error/timeout with error summary.
+- **Daily pipeline alert**: Notifies on error/timeout with article count and errors.
+- **Research skip alert**: Notifies when research article fails quality gate.
+
+#### Cụm 3: Breaking News Content Quality
+- **CIC context in prompt**: Added community context (Crypto Investment Community, experienced
+  members) so LLM writes for the right audience.
+- **Higher word targets**: Critical 200-250 → 300-400, Important 100-150 → 200-300 words.
+- **Deeper source content**: Article extraction increased 1500→3000 chars, timeout 8→12s.
+- **Labeled context sections**: Market snapshot and recent events now have clear headers
+  in the prompt to help LLM distinguish data sources.
+- **Narrowed NQ05 patterns**: Removed over-aggressive semantic patterns that stripped legitimate
+  analysis (support/resistance levels, "nhà đầu tư nên theo dõi", market expectations).
+
+#### Cụm 4: Research Article
+- **Decoupled from tier generation**: Research article now attempts generation whenever LLM
+  is available, not gated by `if generated:`. Research uses raw pipeline data (context),
+  not generated tier articles.
+
 ## [0.29.1] - 2026-03-21
 
 ### Bug Fixes — Content Quality & Pipeline Reliability (7 bugs + 1 improvement)

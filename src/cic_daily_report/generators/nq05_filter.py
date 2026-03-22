@@ -92,13 +92,12 @@ SEMANTIC_NQ05_PATTERNS = [
     r"thời điểm\s+(?:tốt|thích hợp)\s+để\s+(?:mua|vào lệnh|entry)",
     r"(?:nên|hãy)\s+(?:cân nhắc|xem xét)\s+(?:mua|bán|tích lũy)",
     # v0.28.0: Additional semantic patterns from QA audit
-    r"dự báo\s+(?:giá|thị trường)\s+(?:sẽ|có thể)\s+(?:tăng|giảm|đạt)",
-    r"(?:sẽ|chắc chắn)\s+(?:tăng|giảm|phục hồi|bứt phá)\s+(?:mạnh|trong)",
-    r"nhà đầu tư\s+nên\s+(?:theo dõi|chú ý|cân nhắc|xem xét)",
-    r"cơ hội\s+cho\s+(?:nhà đầu tư|trader|người)",
-    r"kỳ vọng\s+(?:giá|thị trường)\s+(?:sẽ|có thể)",
+    # v0.30.0: Narrowed to avoid stripping legitimate analysis for CIC members
+    r"dự báo\s+(?:giá|thị trường)\s+sẽ\s+(?:tăng|giảm|đạt)",
+    r"chắc chắn\s+(?:tăng|giảm|phục hồi|bứt phá)",
+    r"nhà đầu tư\s+nên\s+(?:cân nhắc|xem xét)\s+(?:mua|bán|tích lũy)",
+    r"cơ hội\s+(?:tốt|vàng)\s+cho\s+(?:nhà đầu tư|trader)",
     r"(?:mục tiêu|target)\s+(?:giá|price)\s*[:=]?\s*\$?\d",
-    r"(?:hỗ trợ|kháng cự|support|resistance)\s+(?:tại|ở|quanh)\s+\$?\d",
 ]
 
 

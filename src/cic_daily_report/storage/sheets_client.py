@@ -326,3 +326,50 @@ class SheetsClient:
             raise StorageError(
                 f"clear_and_rewrite failed for {sheet_name}: {e}", source="sheets_client"
             ) from e
+
+    def atomic_rewrite(self, sheet_name: str, rows: list[list[Any]]) -> None:
+        """Atomically rewrite all data rows using a single update call.
+
+        v0.30.0: Safer alternative to clear_and_rewrite. Writes header + data
+        in ONE API call, then clears excess rows. If the write fails, old data
+        remains intact (unlike clear_and_rewrite which deletes first and can
+        lose data if append fails).
+        """
+        ss = self._connect()
+        try:
+            ws = ss.worksheet(sheet_name)
+
+            # Resolve header
+            expected_headers = TABS.get(sheet_name)
+            if not expected_headers:
+                raise StorageError(f"No schema for tab {sheet_name}", source="sheets_client")
+
+            # Build complete data: header + rows
+            all_data = [expected_headers] + rows
+
+            # Get current row count to detect excess rows
+            current_count = len(ws.get_all_values())
+            new_count = len(all_data)
+            num_cols = len(expected_headers)
+            end_col = chr(ord("A") + num_cols - 1)  # A-K for ≤11 cols
+
+            # Write header + all data in ONE call
+            ws.update(
+                f"A1:{end_col}{new_count}",
+                all_data,
+                value_input_option="RAW",
+            )
+
+            # Clear excess rows if old data was longer
+            if current_count > new_count:
+                ws.batch_clear([f"A{new_count + 1}:{end_col}{current_count}"])
+                logger.info(f"Cleared {current_count - new_count} excess rows from {sheet_name}")
+
+            logger.info(f"Atomic rewrite: {len(rows)} data rows to {sheet_name}")
+        except StorageError:
+            raise
+        except Exception as e:
+            raise StorageError(
+                f"atomic_rewrite failed for {sheet_name}: {e}",
+                source="sheets_client",
+            ) from e
