@@ -1,4 +1,4 @@
-"""Tests for generators/summary_generator.py — all mocked (v0.24.0)."""
+"""Tests for generators/summary_generator.py — all mocked (v0.31.0)."""
 
 from unittest.mock import AsyncMock
 
@@ -68,7 +68,7 @@ class TestGenerateBicSummary:
         mock_llm = AsyncMock()
         mock_llm.generate = AsyncMock(
             return_value=LLMResponse(
-                text="⭐ TỔNG QUAN THỊ TRƯỜNG\nSummary content", tokens_used=200, model="m"
+                text="Cập nhật Thị trường\nSummary content", tokens_used=200, model="m"
             )
         )
 
@@ -80,7 +80,7 @@ class TestGenerateBicSummary:
         )
 
         assert isinstance(summary, GeneratedSummary)
-        assert "TỔNG QUAN" in summary.content
+        assert "Summary content" in summary.content
         assert summary.word_count > 0
 
     async def test_backward_compatible_minimal_args(self):
@@ -141,7 +141,8 @@ class TestGenerateBicSummary:
         call_args = mock_llm.generate.call_args
         assert call_args.kwargs.get("max_tokens") == 4096
 
-    async def test_prompt_includes_4_section_format(self):
+    async def test_prompt_includes_story_based_format(self):
+        """v0.31.0: prompt uses story-based digest, not 4-section format."""
         mock_llm = AsyncMock()
         mock_llm.generate = AsyncMock(
             return_value=LLMResponse(text="ok", tokens_used=10, model="m")
@@ -153,13 +154,15 @@ class TestGenerateBicSummary:
 
         call_args = mock_llm.generate.call_args
         prompt = call_args.kwargs.get("prompt", "")
-        # Check all 4 sections are in the prompt
-        assert "PHẦN 1" in prompt
-        assert "PHẦN 2" in prompt
-        assert "PHẦN 3" in prompt
-        assert "PHẦN 4" in prompt
-        assert "Đáng chú ý" in prompt
-        assert "tin tức nổi bật" in prompt
+        # v0.31.0: story-based structure
+        assert "HOOK" in prompt
+        assert "CẬP NHẬT THỊ TRƯỜNG" in prompt
+        assert "TIN TỨC" in prompt
+        assert "SẮP TỚI" in prompt
+        assert "HỆ QUẢ CỤ THỂ" in prompt
+        # No old 4-section format
+        assert "PHẦN 1" not in prompt
+        assert "PHẦN 2" not in prompt
 
     async def test_handles_empty_articles(self):
         mock_llm = AsyncMock()
@@ -239,25 +242,41 @@ class TestBuildDataContext:
 
 
 class TestBuildPrompt:
-    def test_contains_4_sections(self):
+    def test_contains_story_structure(self):
+        """v0.31.0: prompt has hook, market overview, stories, forward look."""
         prompt = _build_prompt("18/03/2026", "data context here")
-        assert "PHẦN 1" in prompt
-        assert "PHẦN 2" in prompt
-        assert "PHẦN 3" in prompt
-        assert "PHẦN 4" in prompt
+        assert "HOOK" in prompt
+        assert "CẬP NHẬT THỊ TRƯỜNG" in prompt
+        assert "TIN TỨC" in prompt
+        assert "SẮP TỚI" in prompt
 
     def test_contains_date(self):
         prompt = _build_prompt("18/03/2026", "data")
         assert "18/03/2026" in prompt
 
-    def test_contains_terminology_rule(self):
-        """v0.30.1: NQ05 removed from prompt — post-filter enforces. Terminology rule kept."""
+    def test_contains_terminology_and_quality_rules(self):
         prompt = _build_prompt("18/03/2026", "data")
         assert "tài sản mã hóa" in prompt
         assert "bịa" in prompt.lower()
+        assert "HỆ QUẢ CỤ THỂ" in prompt
+        assert "TỐI ĐA 3 câu" in prompt
 
-    def test_contains_emoji_guide(self):
+    def test_no_old_format_remnants(self):
+        """v0.31.0: no emoji table, no 4-section structure."""
         prompt = _build_prompt("18/03/2026", "data")
-        assert "🔴" in prompt
-        assert "🟢" in prompt
-        assert "😱" in prompt
+        assert "PHẦN 1" not in prompt
+        assert "PHẦN 2" not in prompt
+        assert "📊 CHỈ SỐ" not in prompt
+        assert "🔴" not in prompt
+        assert "😱" not in prompt
+
+    def test_cross_signal_hook_instruction(self):
+        """v0.31.0: prompt instructs LLM to find signal contradictions."""
+        prompt = _build_prompt("18/03/2026", "data")
+        assert "mâu thuẫn" in prompt.lower()
+
+    def test_mobile_friendly_rules(self):
+        """v0.31.0: Telegram-optimized rules present."""
+        prompt = _build_prompt("18/03/2026", "data")
+        assert "Telegram" in prompt
+        assert "mobile" in prompt.lower()

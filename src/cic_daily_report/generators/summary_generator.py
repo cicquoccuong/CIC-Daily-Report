@@ -1,10 +1,10 @@
-"""BIC Chat Summary Generator — comprehensive market overview (FR15, v0.24.0).
+"""BIC Chat Summary Generator — story-based market digest (FR15, v0.31.0).
 
-Generates a 4-section summary matching Anh Cường's manual BIC Chat format:
-  Section 1: ⭐ Tổng quan Thị trường (causal analysis paragraphs)
-  Section 2: 📊 Bảng chỉ số (metrics table with emoji markers)
-  Section 3: 👉🏻 Đáng chú ý (VN news + upcoming macro events)
-  Section 4: Các tin tức nổi bật (5-8 news articles with analysis)
+Generates a cross-signal story digest for BIC Chat:
+  Hook: 1-2 sentences — cross-signal divergence or surprising number
+  Market Overview: 1 paragraph with numbers woven into causal narrative
+  Stories: 5-8 news stories (top 2-3 deep, rest concise)
+  Forward Look: macro/crypto events in next 3-7 days
 
 Copy-paste ready for Telegram group.
 """
@@ -54,8 +54,8 @@ async def generate_bic_summary(
 ) -> GeneratedSummary:
     """Generate BIC Chat summary with full data context.
 
-    v0.24.0: Receives raw data directly (not just article excerpts)
-    to produce comprehensive 4-section market overview.
+    v0.31.0: Story-based digest with cross-signal hook,
+    narrative market overview, and prioritized news stories.
     """
     start = time.monotonic()
     today = datetime.now(timezone.utc).strftime("%d/%m/%Y")
@@ -237,43 +237,49 @@ def _build_data_context(
 
 
 def _build_prompt(today: str, data_context: str) -> str:
-    """Build the 4-section summary prompt."""
+    """Build the story-based digest prompt (v0.31.0)."""
     return (
-        f"Viết bài TỔNG QUAN THỊ TRƯỜNG cho BIC Chat, ngày {today}.\n"
-        "Bài viết gồm ĐÚNG 4 phần theo format dưới đây.\n\n"
+        f"Viết bản tin tổng hợp thị trường tài sản mã hóa cho BIC Chat, "
+        f"ngày {today}.\n\n"
         "=== DỮ LIỆU ===\n"
         f"{data_context}\n\n"
-        "=== FORMAT BẮT BUỘC ===\n\n"
-        "PHẦN 1: Mở đầu bằng dòng:\n"
-        f"⭐ TỔNG QUAN THỊ TRƯỜNG TÀI SẢN MÃ HÓA\nNgày {today}\n\n"
-        "Viết 2-3 đoạn văn PHÂN TÍCH NHÂN QUẢ (không liệt kê bullet points):\n"
-        "- Đoạn 1: Bối cảnh macro/sự kiện lớn → tác động lên crypto\n"
-        "- Đoạn 2: BTC và ETH diễn biến thế nào, lý do cụ thể\n"
-        "- Đoạn 3: Tâm lý thị trường + dòng tiền (dùng F&G, whale data, "
-        "funding rate nếu có)\n"
-        "Phải NỐI NGUYÊN NHÂN → HỆ QUẢ, không chỉ liệt kê số liệu.\n\n"
-        "PHẦN 2: Bảng chỉ số với format:\n"
-        "📊 CHỈ SỐ        | GIÁ TRỊ     | THAY ĐỔI\n"
-        "Mỗi dòng: tên chỉ số | giá trị | emoji (🔴 giảm, 🟢 tăng, ➡️ ngang)\n"
-        "Gồm: BTC, ETH, BTC Dominance, Total MCap, Fear & Greed, DXY, Gold\n"
-        "Dùng emoji: 🔴 khi giảm >0.5%, 🟢 khi tăng >0.5%, ➡️ khi đi ngang\n"
-        "Fear & Greed: 😱 (≤25), 😰 (26-45), 😐 (46-55), 😏 (56-74), 🤑 (≥75)\n\n"
-        "PHẦN 3: Tiêu đề: 👉🏻 Đáng chú ý\n"
-        "- 2-3 tin đáng chú ý cho cộng đồng crypto Việt Nam "
-        "(ưu tiên tin VN, sự kiện sắp diễn ra)\n"
-        "- Sự kiện kinh tế/macro SẮP TỚI trong 3-7 ngày (FOMC, CPI, v.v.)\n"
-        "- Mỗi điểm: 1-2 câu ngắn gọn\n\n"
-        "PHẦN 4: Tiêu đề: 📰 Các tin tức nổi bật\n"
-        "Chọn 5-8 tin QUỐC TẾ quan trọng nhất từ dữ liệu ở trên.\n"
-        "Mỗi tin có format:\n"
-        "  [số]. [Tiêu đề tin bằng tiếng Việt]\n"
-        "  → 2-3 câu phân tích: chuyện gì xảy ra, tại sao quan trọng, "
-        "ảnh hưởng gì đến thị trường\n\n"
+        "=== CẤU TRÚC BẮT BUỘC ===\n\n"
+        "PHẦN MỞ ĐẦU — HOOK (1-2 câu):\n"
+        "Mở đầu bằng 1 PHÁT HIỆN THÚ VỊ từ dữ liệu. Ưu tiên:\n"
+        "- Mâu thuẫn giữa các tín hiệu (VD: F&G thấp nhưng whale đang tích lũy)\n"
+        "- Số liệu bất ngờ (VD: lần đầu tiên kể từ...)\n"
+        "- Bối cảnh lịch sử (VD: lần cuối chỉ số này ở mức đó, BTC đang ở $X)\n"
+        "KHÔNG mở đầu bằng 'Hôm nay thị trường...' hay 'Tổng quan thị trường...'\n\n"
+        "CẬP NHẬT THỊ TRƯỜNG (1 đoạn):\n"
+        "Viết **Cập nhật Thị trường** làm tiêu đề đậm.\n"
+        "Sau đó 1 đoạn văn xuôi lồng số liệu: tổng vốn hóa, BTC, ETH, "
+        "sector nổi bật. Nối NGUYÊN NHÂN → HỆ QUẢ, không liệt kê.\n"
+        "VD đúng: 'Tổng vốn hóa giảm 1,46% xuống 2,43 nghìn tỷ USD. "
+        "Bitcoin giảm 1,59% xuống 68.200 USD, trong khi...'\n"
+        "VD sai: 'BTC: $68,200 (-1.59%). ETH: ...' (liệt kê khô)\n\n"
+        "TIN TỨC (5-8 tin, sắp theo mức quan trọng):\n"
+        "Mỗi tin là 1 section riêng:\n"
+        "- Tiêu đề: **[Tiêu đề mô tả bằng tiếng Việt]** (in đậm)\n"
+        "- 2-3 TIN QUAN TRỌNG NHẤT: viết 1-2 đoạn phân tích sâu:\n"
+        "  + Đoạn 1: Chuyện gì xảy ra + bối cảnh + con số cụ thể\n"
+        "  + Đoạn 2: Tại sao quan trọng + hệ quả cụ thể cho nhà đầu tư\n"
+        "- 3-5 TIN PHỤ: viết 1 đoạn ngắn (3-4 câu) gồm sự kiện + ý nghĩa\n"
+        "Câu cuối mỗi tin = HỆ QUẢ CỤ THỂ (ai bị ảnh hưởng, bao nhiêu, khi nào), "
+        "KHÔNG viết chung chung kiểu 'cần theo dõi' hay 'có thể ảnh hưởng'.\n\n"
+        "SẮP TỚI (1-2 dòng cuối):\n"
+        "📅 Sự kiện sắp tới trong 3-7 ngày (FOMC, CPI, NFP, crypto event...). "
+        "Mỗi sự kiện: tên + ngày + tại sao quan trọng (1 câu).\n"
+        "Nếu không có sự kiện đáng kể trong dữ liệu → bỏ qua phần này.\n\n"
         "=== QUY TẮC ===\n"
-        "- Tiếng Việt, dễ hiểu, đọc tốt trên điện thoại\n"
-        "- Dùng 'tài sản mã hóa' (không 'tiền điện tử')\n"
-        "- Copy-paste ready cho Telegram (không markdown phức tạp)\n"
-        "- **bold** cho số liệu quan trọng\n"
-        "- CHỈ dùng DỮ LIỆU THỰC từ trên, không bịa số\n"
-        "- Tin tức phải có phân tích ngắn, không chỉ đưa tiêu đề\n"
+        "- Tiếng Việt có dấu, đọc tốt trên điện thoại\n"
+        "- Dùng 'tài sản mã hóa' (KHÔNG dùng 'tiền điện tử')\n"
+        "- Mỗi đoạn TỐI ĐA 3 câu — dài hơn sẽ khó đọc trên mobile\n"
+        "- **bold** CHỈ cho tiêu đề tin và số liệu then chốt\n"
+        "- Copy-paste ready cho Telegram (không dùng heading #, "
+        "không dùng link, không bảng)\n"
+        "- CHỈ dùng DỮ LIỆU THỰC từ phần DỮ LIỆU ở trên — "
+        "KHÔNG bịa số, KHÔNG thêm nguồn không có trong data\n"
+        "- KHÔNG viết lời khuyên đầu tư ('nên mua', 'nên bán', "
+        "'quyết định đầu tư thông minh')\n"
+        "- KHÔNG bắt đầu bằng 'TL;DR' hay 'Tóm lược'\n"
     )

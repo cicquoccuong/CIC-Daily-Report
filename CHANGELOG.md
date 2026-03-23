@@ -2,6 +2,19 @@
 
 ## [0.31.0] - 2026-03-23
 
+### BIC Chat Summary — Story-based Digest Rewrite
+
+Replaced 4-section format (emoji table + bullet lists) with story-based digest:
+- **Cross-signal hook**: Opening 1-2 sentences highlighting contradictions in data
+  (e.g., F&G low but whale accumulation → unique CIC insight)
+- **Narrative market overview**: Numbers woven into prose (not standalone table)
+- **Prioritized stories**: Top 2-3 news get 2 paragraphs of deep analysis,
+  remaining 3-5 get concise 1-paragraph treatment
+- **Forward look**: Upcoming macro/crypto events in 3-7 days
+- **Mobile-optimized**: Max 3 sentences per paragraph, bold only for headlines
+  and key numbers, no tables, no complex markdown
+- Removed: emoji metrics table (📊), numbered news list, rigid 4-section structure
+
 ### Dual-branch Fix — Provider Management + Content Quality
 
 Root cause: Daily report produced only 3/7 outputs (2026-03-23). Investigation revealed TWO
