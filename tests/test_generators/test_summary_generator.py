@@ -250,11 +250,11 @@ class TestBuildPrompt:
         prompt = _build_prompt("18/03/2026", "data")
         assert "18/03/2026" in prompt
 
-    def test_contains_nq05_rules(self):
+    def test_contains_terminology_rule(self):
+        """v0.30.1: NQ05 removed from prompt — post-filter enforces. Terminology rule kept."""
         prompt = _build_prompt("18/03/2026", "data")
-        assert "NQ05" in prompt
         assert "tài sản mã hóa" in prompt
-        assert "KHÔNG khuyến nghị mua/bán" in prompt
+        assert "bịa" in prompt.lower()
 
     def test_contains_emoji_guide(self):
         prompt = _build_prompt("18/03/2026", "data")

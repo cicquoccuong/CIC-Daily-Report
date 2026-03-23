@@ -30,60 +30,58 @@ _DISCLAIMER_RE = re.compile(
 )
 
 BREAKING_PROMPT_TEMPLATE = """\
-Viết bản tin BREAKING NEWS bằng tiếng Việt cho cộng đồng đầu tư crypto CIC \
-(Crypto Investment Community — cộng đồng phân tích crypto chuyên sâu, \
-thành viên đã có kiến thức nền về thị trường).
+Phóng viên thị trường tài sản mã hóa, viết cho cộng đồng CIC \
+(nhà đầu tư chiến lược, đã có kiến thức — KHÔNG giải thích khái niệm cơ bản).
 
-**Sự kiện:** {title}
-**Nguồn:** {source}
-**Link:** {url}
-{summary_section}
+<source>
+Tiêu đề: {title}
+Nguồn: {source}
+{summary_section}</source>
 {market_context}
 {recent_events}
 
-Yêu cầu TUYỆT ĐỐI:
-- Viết {word_target} từ
-- KHÔNG bịa thêm dữ liệu, nguồn, hoặc con số không có ở trên
-- KHÔNG đưa ra khuyến nghị mua/bán
-- Dùng 'tài sản mã hóa' thay vì 'tiền điện tử'
-- Dựa trên NỘI DUNG BÀI GỐC (nếu có), KHÔNG chỉ tiêu đề
-- KHÔNG dùng câu chung chung/filler như "có thể ảnh hưởng đến", "trong bối cảnh", \
-"điều này cho thấy". Thay bằng phân tích CỤ THỂ: ảnh hưởng GÌ, đến AI, bao NHIÊU.
-- Viết cho người ĐÃ biết crypto — không giải thích khái niệm cơ bản.
+NHIỆM VỤ: Viết bản tin {word_target} từ, tiếng Việt.
 
-Cấu trúc (CHỈ viết 3 phần, KHÔNG thêm nguồn hay tuyên bố miễn trừ):
+FORMAT (KHÔNG thêm nguồn hay disclaimer — hệ thống tự thêm):
+- Dòng 1: 📌 Tiêu đề ngắn gọn tiếng Việt (tên tài sản/tổ chức + con số nếu có)
+- (dòng trống)
+- Đoạn 1 (3-5 câu): 📰 Trích xuất CHI TIẾT từ bài gốc trong <source> — \
+ai làm gì, con số cụ thể, quy mô, timeline. Dùng **bold** cho số liệu quan trọng.
+- (dòng trống)
+- Đoạn 2 (2-3 câu): 📊 Bối cảnh — xu hướng gần đây, \
+data thị trường (nếu được cung cấp), tác động cụ thể. **Bold** số liệu.
 
-1. **Tiêu đề** (1 dòng tiếng Việt, nêu rõ tên tài sản + con số nếu có)
+KHÔNG dùng heading cứng (Nội dung cốt lõi, Bối cảnh & tác động...). \
+Viết đoạn ngắn 2-3 câu, cách nhau 1 dòng trống cho dễ đọc trên điện thoại.
 
-2. **Nội dung cốt lõi:** (4-6 câu)
-   - Tóm tắt SỰ KIỆN + SỐ LIỆU quan trọng từ bài gốc
-   - Ai liên quan? Quy mô bao lớn? Con số cụ thể nào?
-   - Nguyên nhân hoặc bối cảnh dẫn đến sự kiện
+KHI THIẾU THÔNG TIN:
+- Source chỉ có tiêu đề → viết ngắn 2-3 câu từ tiêu đề, KHÔNG suy diễn thêm.
+- Không có số liệu → KHÔNG bịa số. Mô tả định tính.
+- Không có data thị trường → bỏ qua đoạn bối cảnh.
 
-3. **Bối cảnh & tác động:** (3-4 câu)
-   - Tin này nằm trong xu hướng gì? (liên kết tin gần đây nếu có)
-   - Ảnh hưởng CỤ THỂ gì đến thị trường/nhà đầu tư crypto?
-   - Nếu có data thị trường, nối với bối cảnh hiện tại
-   - Điều gì cần theo dõi tiếp?"""
+CHỈ dùng thông tin trong <source> và data được cung cấp. \
+KHÔNG tự thêm nguồn, con số, hoặc trích dẫn. \
+Dùng 'tài sản mã hóa' thay 'tiền điện tử'."""
 
 DIGEST_PROMPT_TEMPLATE = """\
-Viết bản tin TỔNG HỢP BREAKING NEWS bằng tiếng Việt cho cộng đồng CIC.
+Phóng viên tài sản mã hóa, viết cho cộng đồng CIC \
+(nhà đầu tư chiến lược, đã có kiến thức).
 
-**Danh sách sự kiện ({count} tin):**
+<source>
 {events_list}
-
+</source>
 {market_context}
 
-Yêu cầu TUYỆT ĐỐI:
-- Viết 200-300 từ tổng hợp TẤT CẢ sự kiện trên
-- KHÔNG bịa thêm dữ liệu, nguồn, hoặc con số
-- KHÔNG đưa ra khuyến nghị mua/bán
-- Dùng 'tài sản mã hóa' thay vì 'tiền điện tử'
+NHIỆM VỤ: Viết bản tổng hợp 200-300 từ cho {count} sự kiện trên, tiếng Việt.
 
-Cấu trúc:
-1. **Tiêu đề tổng hợp** (1 dòng, nêu chủ đề chung)
-2. **Tóm tắt từng sự kiện** (1-2 câu mỗi sự kiện, dùng bullet points)
-3. **Nhận định chung** (2 câu — xu hướng + tác động tổng thể)"""
+FORMAT:
+- Dòng 1: 📌 Tiêu đề tổng hợp (nêu chủ đề chung)
+- Từng sự kiện: đánh số (1️⃣ 2️⃣ 3️⃣), tiêu đề ngắn + 2-3 câu chi tiết từ <source>, \
+**bold** số liệu quan trọng
+- Cuối: 📊 1-2 câu kết nối bức tranh chung
+
+CHỈ dùng thông tin trong <source>. KHÔNG bịa thêm nguồn hay con số. \
+Dùng 'tài sản mã hóa' thay 'tiền điện tử'."""
 
 RAW_DATA_TEMPLATE = """⚠️ AI không khả dụng — dữ liệu thô
 
@@ -184,15 +182,14 @@ async def generate_breaking_content(
             summary_text = article_text
             logger.info(f"Enriched breaking event with article text ({len(article_text)} chars)")
 
-    summary_section = f"**Nội dung bài gốc:**\n{summary_text}\n" if summary_text else ""
+    # v0.30.1: Clean labels without markdown — prevent bold leaking into output
+    summary_section = f"\nNội dung bài gốc:\n{summary_text}" if summary_text else ""
 
     # v0.30.0 (Fix 3.4): Only include market/recent context when meaningful
     market_section = (
-        f"**Bối cảnh thị trường hiện tại:**\n{market_context}\n" if market_context.strip() else ""
+        f"\nData thị trường hiện tại:\n{market_context}" if market_context.strip() else ""
     )
-    recent_section = (
-        f"**Tin breaking gần đây (tránh lặp):**\n{recent_events}\n" if recent_events.strip() else ""
-    )
+    recent_section = f"\nTin breaking gần đây:\n{recent_events}" if recent_events.strip() else ""
 
     prompt = BREAKING_PROMPT_TEMPLATE.format(
         title=event.title,

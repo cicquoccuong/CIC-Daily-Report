@@ -98,6 +98,10 @@ SEMANTIC_NQ05_PATTERNS = [
     r"nhà đầu tư\s+nên\s+(?:cân nhắc|xem xét)\s+(?:mua|bán|tích lũy)",
     r"cơ hội\s+(?:tốt|vàng)\s+cho\s+(?:nhà đầu tư|trader)",
     r"(?:mục tiêu|target)\s+(?:giá|price)\s*[:=]?\s*\$?\d",
+    # v0.30.1: Broader patterns from real output violations (2026-03-22)
+    r"cơ hội(?:\s+\w+){0,6}\s+(?:tích lũy|mua vào|mua thêm)",
+    r"(?:nhà đầu tư|bạn|trader)\s+nên\s+(?:\w+\s+){0,3}"
+    r"(?:mua|bán|tích lũy|vào lệnh|chốt lời|chốt lỗ)",
 ]
 
 

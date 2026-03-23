@@ -43,21 +43,11 @@ RESEARCH_SYSTEM_PROMPT = (
     "- Phân tích MÂU THUẪN giữa các tín hiệu (nếu có)\n"
     "- Viết tiếng Việt chuyên nghiệp, thuật ngữ chính xác, dễ đọc\n"
     "- Độ dài TỐI THIỂU 2500 từ — phân tích CHI TIẾT, không tóm tắt lướt\n\n"
-    "NQ05 COMPLIANCE (Nghị quyết 05/2025/NQ-CP — BẮT BUỘC):\n"
-    "- KHÔNG khuyến nghị mua/bán/giữ bất kỳ tài sản nào\n"
-    "- KHÔNG dùng: 'nên mua', 'nên bán', 'khuyến nghị', 'chắc chắn tăng/giảm'\n"
-    "- Dùng 'tài sản mã hóa' (không 'tiền điện tử', 'tiền ảo')\n"
-    "- Chỉ phân tích và thông tin — người đọc tự quyết định\n\n"
+    "NQ05: Chỉ phân tích và thông tin — dùng 'tài sản mã hóa' (không 'tiền điện tử').\n\n"
     "CHỐNG BỊA DỮ LIỆU:\n"
     "- CHỈ dùng data được cung cấp. KHÔNG tự thêm nguồn, con số, vùng giá.\n"
     "- Nếu thiếu dữ liệu cho một phần → bỏ qua, KHÔNG viết 'Chưa có dữ liệu'.\n"
     "- KHÔNG cite: Bloomberg, CryptoQuant, TradingView, Santiment, IntoTheBlock, Glassnode.\n\n"
-    "CỤM TỪ CẤM (filler — TUYỆT ĐỐI KHÔNG viết):\n"
-    "× 'có thể ảnh hưởng đến' → thay bằng nêu CỤ THỂ ảnh hưởng gì\n"
-    "× 'cần theo dõi thêm' → thay bằng nêu theo dõi CÁI GÌ, ngưỡng nào, KHI NÀO\n"
-    "× 'điều này cho thấy' rồi lặp lại data → thay bằng INFERENCE mới từ data\n"
-    "× 'trong bối cảnh' → bỏ, vào thẳng nội dung\n"
-    "× 'tuy nhiên cần lưu ý' → nêu thẳng rủi ro cụ thể\n"
 )
 
 
@@ -284,7 +274,6 @@ def _build_research_prompt(today: str, data_context: str) -> str:
         "- Tổng hợp TẤT CẢ tín hiệu thành BỨC TRANH NHẤT QUÁN\n"
         "- Chỉ ra các tín hiệu ĐỒNG THUẬN và MÂU THUẪN\n"
         "- Nêu các ngưỡng/sự kiện cần theo dõi CỤ THỂ (con số, ngày)\n"
-        "- KHÔNG khuyến nghị mua/bán (NQ05)\n"
         "(~200-300 từ)\n\n"
         "=== XỬ LÝ THIẾU DỮ LIỆU ===\n"
         "- NẾU dữ liệu cho một phần KHÔNG có trong 'DỮ LIỆU ĐẦU VÀO' → BỎ QUA phần đó\n"
@@ -298,6 +287,5 @@ def _build_research_prompt(today: str, data_context: str) -> str:
         "- Mỗi chỉ số on-chain PHẢI kèm diễn giải ý nghĩa và ngưỡng tham chiếu\n"
         "- NỐI NHÂN-QUẢ giữa các phần: on-chain → derivatives → dòng tiền → macro\n"
         "- KHÔNG bịa dữ liệu. Chỉ dùng data được cung cấp ở trên.\n"
-        "- KHÔNG khuyến nghị mua/bán (tuân thủ NQ05)\n"
         "- Kết thúc bài = kết thúc section 8. KHÔNG thêm phần nào khác.\n"
     )

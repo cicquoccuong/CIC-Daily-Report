@@ -164,7 +164,6 @@ class TestBuildResearchPrompt:
         assert "Macro & Sự kiện" in prompt
         assert "Bảng tổng hợp chỉ số chính" in prompt
         assert "Tổng kết & Nhận định" in prompt
-        assert "NQ05" in prompt
         assert "test data context" in prompt
 
     def test_missing_data_handling_instructions(self):
@@ -185,8 +184,7 @@ class TestSystemPrompt:
     def test_nq05_compliance_in_system_prompt(self):
         """System prompt includes NQ05 requirements."""
         assert "NQ05" in RESEARCH_SYSTEM_PROMPT
-        assert "KHÔNG khuyến nghị mua/bán" in RESEARCH_SYSTEM_PROMPT
-        assert "tài sản mã hóa" in RESEARCH_SYSTEM_PROMPT
+        assert "tài sản mã hóa" in RESEARCH_SYSTEM_PROMPT  # v0.30.1: slimmed — post-filter enforces
 
     def test_anti_fabrication_in_system_prompt(self):
         """System prompt includes anti-fabrication rules."""

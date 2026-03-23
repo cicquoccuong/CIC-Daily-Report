@@ -56,23 +56,11 @@ NQ05_SYSTEM_PROMPT = (
     "✓ 1 câu liên kết NHÂN-QUẢ giữa 2+ chỉ số (A xảy ra → B bị ảnh hưởng VÌ C)\n"
     "✓ 1 điều BẤT THƯỜNG hoặc MÂU THUẪN rút ra từ data (nếu tất cả bình thường → nói rõ)\n"
     "✓ 0 câu chỉ lặp lại số liệu mà không giải thích ý nghĩa\n\n"
-    "NQ05 COMPLIANCE (Nghị quyết 05/2025/NQ-CP — BẮT BUỘC):\n"
-    "- KHÔNG khuyến nghị mua/bán/giữ bất kỳ tài sản nào\n"
-    "- KHÔNG dùng: 'nên mua', 'nên bán', 'khuyến nghị', 'chắc chắn tăng/giảm'\n"
-    "- Dùng 'tài sản mã hóa' (không 'tiền điện tử', 'tiền ảo')\n"
-    "- Chỉ phân tích và thông tin — người đọc tự quyết định\n\n"
+    "NQ05: Chỉ phân tích và thông tin — dùng 'tài sản mã hóa' (không 'tiền điện tử').\n\n"
     "CHỐNG BỊA DỮ LIỆU:\n"
     "- CHỈ dùng data được cung cấp trong prompt. KHÔNG tự thêm nguồn, con số, vùng giá.\n"
     "- Nếu thiếu dữ liệu → bỏ qua phần đó, KHÔNG viết 'Chưa có dữ liệu'.\n"
     "- KHÔNG cite: Bloomberg, CryptoQuant, TradingView, Santiment, IntoTheBlock.\n\n"
-    "CỤM TỪ CẤM (filler — TUYỆT ĐỐI KHÔNG viết):\n"
-    "× 'có thể ảnh hưởng đến' → thay bằng nêu CỤ THỂ ảnh hưởng gì\n"
-    "× 'cần theo dõi thêm' → thay bằng nêu theo dõi CÁI GÌ, ngưỡng nào, KHI NÀO\n"
-    "× 'điều này cho thấy' rồi lặp lại data → thay bằng INFERENCE mới từ data\n"
-    "× 'trong bối cảnh' → bỏ, vào thẳng nội dung\n"
-    "× 'tuy nhiên cần lưu ý' → nêu thẳng rủi ro cụ thể\n"
-    "× 'Điều này có thể ảnh hưởng đến sự tự tin của nhà đầu tư' → nêu rõ ảnh hưởng gì\n"
-    "× 'Sự kiện này có thể liên quan đến' → nêu rõ liên quan thế nào\n"
 )
 
 TIERS = ["L1", "L2", "L3", "L4", "L5"]
@@ -407,18 +395,15 @@ async def _generate_single_article(
     # v0.28.0: Removed dual "Tóm lược/Phân tích chi tiết" format that caused within-tier repetition
     full_prompt += (
         "ĐỊNH DẠNG:\n"
-        "- ## cho tiêu đề section, **bold** cho số liệu quan trọng, - cho bullet\n"
-        "- Mỗi section viết LIỀN MẠCH — KHÔNG chia thành 'Tóm lược' và 'Phân tích chi tiết'\n"
-        "- Mở đầu section bằng 1 câu insight chính, rồi phân tích chi tiết liền sau\n\n"
-        "YÊU CẦU CHẤT LƯỢNG:\n"
-        "1. SO SÁNH: 2+ chỉ số → chỉ ra đồng thuận/mâu thuẫn\n"
-        "2. NHÂN QUẢ: Nối các yếu tố thành chuỗi tác động\n"
-        "3. Ý NGHĨA: Mỗi số liệu phải kèm giải thích nó quan trọng thế nào\n\n"
-        "⛔ KHÔNG:\n"
-        "- Bịa MVRV, SOPR, whale data, correlation coefficient, support/resistance\n"
-        "- Dự đoán giá hoặc khuyến nghị mua/bán (NQ05)\n"
-        "- Cite nguồn không có trong data (Bloomberg, TradingView, CryptoQuant...)\n"
-        "- KHÔNG viết 'Tóm lược:' rồi 'Phân tích chi tiết:' — viết liền mạch\n\n"
+        "- ## cho tiêu đề section (kèm emoji: 📈📉⚡📊🔍💡 tùy nội dung)\n"
+        "- **bold** cho số liệu quan trọng, • cho bullet\n"
+        "- Viết đoạn ngắn 2-3 câu, dễ đọc trên điện thoại\n"
+        "- Mở đầu section = 1 câu insight chính, phân tích chi tiết liền sau\n\n"
+        "CHẤT LƯỢNG:\n"
+        "1. SO SÁNH 2+ chỉ số → đồng thuận hay mâu thuẫn?\n"
+        "2. NHÂN QUẢ: A xảy ra → B bị ảnh hưởng VÌ C\n"
+        "3. Mỗi số liệu = giải thích nó quan trọng THẾ NÀO cho nhà đầu tư\n\n"
+        "⛔ KHÔNG bịa data không có trong input (MVRV, SOPR, Bloomberg, TradingView...)\n\n"
         "CÁC PHẦN BÀI VIẾT:\n\n" + "\n\n".join(section_prompts)
     )
 

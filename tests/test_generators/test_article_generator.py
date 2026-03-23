@@ -203,12 +203,12 @@ class TestGenerateTierArticles:
         call_args = mock_llm.generate.call_args
         prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
         assert "SO SÁNH" in prompt
-        assert "Ý NGHĨA" in prompt  # v0.22.0: shortened from "GIẢI THÍCH Ý NGHĨA"
-        assert "NHÂN QUẢ" in prompt
-        # v0.28.0: Dual Tóm lược/Phân tích chi tiết format removed to prevent repetition
-        assert "KHÔNG chia thành" in prompt or "viết LIỀN MẠCH" in prompt
+        assert "NHÂN QUẢ" in prompt  # v0.30.1: restructured quality rules
+        # v0.30.1: format simplified — check emoji guidance + mobile-friendly
+        assert "emoji" in prompt.lower() or "📈" in prompt
 
     async def test_nq05_system_prompt_used(self):
+        """v0.30.1: NQ05 slimmed in system prompt — only 1-line reminder, post-filter enforces."""
         templates = _make_templates("L1")
         context = _make_context()
 
@@ -221,8 +221,8 @@ class TestGenerateTierArticles:
 
         call_args = mock_llm.generate.call_args
         sys_prompt = call_args.kwargs.get("system_prompt", "")
-        assert "NQ05" in sys_prompt
-        assert "KHÔNG khuyến nghị" in sys_prompt  # v0.22.0: rewritten system prompt
+        assert "tài sản mã hóa" in sys_prompt
+        assert "CHỐNG BỊA" in sys_prompt
 
 
 class TestPhase1QuickWins:
