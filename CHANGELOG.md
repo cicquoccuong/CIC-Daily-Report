@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.30.1] - 2026-03-23
+
+### Prompt Quality — NQ05 Input→Output Shift + Anti-filler + Emoji Formatting
+
+After reviewing real pipeline output (2026-03-22 + 2026-03-23), identified that NQ05
+restrictions in prompts caused LLM self-censorship → generic filler content.
+
+#### NQ05 Prompt Slim (all content types)
+- **NQ05_SYSTEM_PROMPT**: Removed verbose COMPLIANCE section (4 rules) + CỤM TỪ CẤM
+  (7 banned phrases) → replaced with 1-line NQ05 reminder. NQ05 enforcement now
+  exclusively via post-filter (Layer 2).
+- **Tier Articles**: Removed NQ05 from ⛔ KHÔNG list, slimmed format instructions.
+- **Summary**: Removed NQ05 line from QUY TẮC.
+- **Research**: Removed 2 NQ05 lines (section 8 + QUY TẮC CHUNG).
+
+#### Breaking News Prompt Rewrite
+- **Positive instructions**: "CHUYỆN GÌ XẢY RA" (đoạn 1) + "TẠI SAO QUAN TRỌNG" (đoạn 2)
+  — prevents paragraph duplication.
+- **Anti-filler**: Explicit ban on "Điều này cho thấy...", "có thể ảnh hưởng đến...",
+  "trong bối cảnh..." — replaced by "kết thúc bằng HỆ QUẢ CỤ THỂ".
+- **Neutral tone**: "Tin xấu → nêu rủi ro THẬT, KHÔNG giảm nhẹ" — prevents AI from
+  spinning security incidents as positive PR.
+- **Emoji markers**: 📌 title, paragraphs without rigid headings.
+
+#### Digest Prompt Rewrite
+- Same anti-filler treatment: each item ends with specific consequence, not generic filler.
+- **bold** for all numbers (price, %, quantity, dates).
+
+#### NQ05 Post-filter (2 new patterns)
+- `cơ hội...tích lũy/mua vào/mua thêm` — catches implicit buy recommendations.
+- `nhà đầu tư/bạn nên...mua/bán/tích lũy` — catches "should buy/sell" variants.
+
+#### Emoji & Format
+- Tier Articles: emoji guidance (📈📉⚡📊🔍💡), mobile-friendly paragraph style.
+- Breaking: 📌 title marker consistent across all breaking news.
+
 ## [0.30.0] - 2026-03-22
 
 ### Major Overhaul — Pipeline Reliability, Content Quality & Architecture (6 clusters, 19 fixes)

@@ -43,21 +43,29 @@ Nguồn: {source}
 NHIỆM VỤ: Viết bản tin {word_target} từ, tiếng Việt.
 
 FORMAT (KHÔNG thêm nguồn hay disclaimer — hệ thống tự thêm):
-- Dòng 1: 📌 Tiêu đề ngắn gọn tiếng Việt (tên tài sản/tổ chức + con số nếu có)
+- Dòng 1: 📌 Tiêu đề ngắn gọn (tên tài sản/tổ chức + con số nếu có)
 - (dòng trống)
-- Đoạn 1 (3-5 câu): 📰 Trích xuất CHI TIẾT từ bài gốc trong <source> — \
-ai làm gì, con số cụ thể, quy mô, timeline. Dùng **bold** cho số liệu quan trọng.
+- Đoạn 1 — CHUYỆN GÌ XẢY RA (3-5 câu): Trích xuất từ <source> — \
+ai làm gì, **con số** cụ thể, quy mô, timeline. Dùng **bold** cho mọi số liệu.
 - (dòng trống)
-- Đoạn 2 (2-3 câu): 📊 Bối cảnh — xu hướng gần đây, \
-data thị trường (nếu được cung cấp), tác động cụ thể. **Bold** số liệu.
+- Đoạn 2 — TẠI SAO QUAN TRỌNG cho CIC (2-3 câu): \
+Nêu hệ quả CỤ THỂ cho nhà đầu tư chiến lược dài hạn. \
+KHÔNG lặp lại thông tin đoạn 1. Nếu không có info mới → viết 1 câu ngắn hoặc bỏ qua.
 
-KHÔNG dùng heading cứng (Nội dung cốt lõi, Bối cảnh & tác động...). \
-Viết đoạn ngắn 2-3 câu, cách nhau 1 dòng trống cho dễ đọc trên điện thoại.
+CÁCH KẾT THÚC MỖI ĐOẠN:
+- Câu cuối = HỆ QUẢ CỤ THỂ (ai bị ảnh hưởng, bao nhiêu, khi nào)
+- KHÔNG viết câu chung chung kiểu "Điều này cho thấy...", \
+"có thể ảnh hưởng đến...", "trong bối cảnh..."
+
+GIỌNG VĂN TRUNG LẬP:
+- Tin tốt → nêu sự kiện + con số, KHÔNG tô hồng
+- Tin xấu (hack, lỗ hổng, sụp đổ) → nêu rủi ro THẬT, KHÔNG giảm nhẹ
+- Đưa SỰ KIỆN, không đưa ý kiến
 
 KHI THIẾU THÔNG TIN:
-- Source chỉ có tiêu đề → viết ngắn 2-3 câu từ tiêu đề, KHÔNG suy diễn thêm.
-- Không có số liệu → KHÔNG bịa số. Mô tả định tính.
-- Không có data thị trường → bỏ qua đoạn bối cảnh.
+- Source chỉ có tiêu đề → viết ngắn 2-3 câu, KHÔNG suy diễn thêm.
+- Không có số liệu → KHÔNG bịa số.
+- Không có data thị trường → bỏ qua.
 
 CHỈ dùng thông tin trong <source> và data được cung cấp. \
 KHÔNG tự thêm nguồn, con số, hoặc trích dẫn. \
@@ -75,10 +83,15 @@ Phóng viên tài sản mã hóa, viết cho cộng đồng CIC \
 NHIỆM VỤ: Viết bản tổng hợp 200-300 từ cho {count} sự kiện trên, tiếng Việt.
 
 FORMAT:
-- Dòng 1: 📌 Tiêu đề tổng hợp (nêu chủ đề chung)
-- Từng sự kiện: đánh số (1️⃣ 2️⃣ 3️⃣), tiêu đề ngắn + 2-3 câu chi tiết từ <source>, \
-**bold** số liệu quan trọng
-- Cuối: 📊 1-2 câu kết nối bức tranh chung
+- Dòng 1: 📌 Tiêu đề tổng hợp (nêu chủ đề chung nếu có, hoặc "Tổng hợp tin")
+- Từng sự kiện: đánh số (1️⃣ 2️⃣ 3️⃣...), tiêu đề ngắn + 2-3 câu trích từ <source>
+- Dùng **bold** cho MỌI số liệu (giá, %, số lượng, ngày)
+- Cuối mỗi item = 1 câu HỆ QUẢ CỤ THỂ (ai bị ảnh hưởng, bao nhiêu)
+- Cuối bài: 📊 1-2 câu kết nối bức tranh chung bằng NHÂN QUẢ
+
+KHÔNG viết câu chung chung kiểu "Điều này cho thấy...", \
+"có thể ảnh hưởng đến...", "trong bối cảnh...". \
+Thay bằng HỆ QUẢ CỤ THỂ hoặc bỏ qua.
 
 CHỈ dùng thông tin trong <source>. KHÔNG bịa thêm nguồn hay con số. \
 Dùng 'tài sản mã hóa' thay 'tiền điện tử'."""
