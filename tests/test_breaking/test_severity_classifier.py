@@ -259,6 +259,26 @@ class TestAnalysisDowngrade:
         result = _determine_severity(_event("Phân tích vụ collapse của Terra"), cfg)
         assert result == IMPORTANT
 
+    def test_case_insensitive_vn(self):
+        """Uppercase VN analysis keyword still triggers downgrade → IMPORTANT."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("HẬU QUẢ vụ hack Bybit"), cfg)
+        assert result == IMPORTANT
+
+    def test_case_insensitive_en(self):
+        """Uppercase EN analysis keyword still triggers downgrade → IMPORTANT."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("Bybit hack — AFTERMATH and lessons"), cfg)
+        assert result == IMPORTANT
+
+    def test_no_downgrade_without_critical_keyword(self):
+        """Analysis keyword alone (no critical keyword) does not trigger downgrade logic."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("Phân tích thị trường tuần này", 30), cfg)
+        # "phân tích" is an analysis keyword but no critical keyword present →
+        # downgrade path never entered; score 30 → NOTABLE
+        assert result == NOTABLE
+
 
 class TestClassifyBatch:
     def test_classifies_all(self):

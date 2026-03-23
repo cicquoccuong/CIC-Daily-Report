@@ -27,6 +27,16 @@ def _groq_provider() -> LLMProvider:
     )
 
 
+def _gemini_lite_provider() -> LLMProvider:
+    return LLMProvider(
+        name="gemini_flash_lite",
+        api_key="test-key",
+        model="gemini-2.0-flash-lite",
+        endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent",
+        rate_limit_per_min=15,
+    )
+
+
 def _gemini_provider() -> LLMProvider:
     return LLMProvider(
         name="gemini_flash",
@@ -279,6 +289,57 @@ class TestProviderPreference:
         adapter = LLMAdapter(providers=[_groq_provider()])
         assert adapter.suggest_cooldown() == 60
 
+    def test_suggest_cooldown_zero_tokens_gemini(self):
+        adapter = LLMAdapter(providers=[_gemini_provider()])
+        adapter._last_provider = "gemini_flash"
+        adapter._last_tokens = 0
+        # Zero tokens + gemini prefix → default 15
+        assert adapter.suggest_cooldown() == 15
+
+    def test_suggest_cooldown_zero_tokens_groq(self):
+        adapter = LLMAdapter(providers=[_groq_provider()])
+        adapter._last_provider = "groq"
+        adapter._last_tokens = 0
+        # Zero tokens + non-gemini → default 60
+        assert adapter.suggest_cooldown() == 60
+
+    def test_suggest_cooldown_unknown_provider(self):
+        adapter = LLMAdapter(providers=[_groq_provider()])
+        adapter._last_provider = "unknown_model"
+        adapter._last_tokens = 5000
+        # Unknown provider uses fallback TPM 6000: int(5000/6000*60)+15 = 50+15 = 65
+        cooldown = adapter.suggest_cooldown()
+        assert cooldown == 65
+
+    def test_suggest_cooldown_boundary_min(self):
+        adapter = LLMAdapter(providers=[_gemini_provider()])
+        adapter._last_provider = "gemini_flash"
+        adapter._last_tokens = 1
+        # int(1/32000*60)+15 = 0+15 = 15 → clamped min 15
+        assert adapter.suggest_cooldown() == 15
+
+    def test_suggest_cooldown_boundary_max(self):
+        adapter = LLMAdapter(providers=[_groq_provider()])
+        adapter._last_provider = "groq"
+        adapter._last_tokens = 100000
+        # int(100000/6000*60)+15 = 1000+15 = 1015 → clamped max 180
+        assert adapter.suggest_cooldown() == 180
+
+    def test_suggest_cooldown_gemini_lite(self):
+        adapter = LLMAdapter(providers=[_gemini_lite_provider()])
+        adapter._last_provider = "gemini_flash_lite"
+        adapter._last_tokens = 5000
+        # Same TPM 32000 as gemini_flash: int(5000/32000*60)+15 = 9+15 = 24
+        cooldown = adapter.suggest_cooldown()
+        assert cooldown == 24
+
+    def test_prefer_none_keeps_order(self):
+        gemini = _gemini_provider()
+        groq = _groq_provider()
+        adapter = LLMAdapter(providers=[gemini, groq], prefer=None)
+        assert adapter._providers[0].name == "gemini_flash"
+        assert adapter._providers[1].name == "groq"
+
 
 class TestTimedCircuitBreaker:
     """v0.31.0: Time-based circuit breaker recovery."""
@@ -300,6 +361,34 @@ class TestTimedCircuitBreaker:
         # Groq failed long ago
         adapter._provider_failed["groq"] = time.monotonic() - _CIRCUIT_RECOVERY_SEC - 1
         available = adapter._get_available_providers()
+        assert len(available) == 1
+        assert available[0].name == "groq"
+
+    def test_mixed_failure_states(self):
+        """Some providers failed recently, others still available."""
+        groq = _groq_provider()
+        gemini = _gemini_provider()
+        gemini_lite = _gemini_lite_provider()
+        adapter = LLMAdapter(providers=[groq, gemini, gemini_lite])
+        # Only groq failed recently
+        adapter._provider_failed["groq"] = time.monotonic()
+        available = adapter._get_available_providers()
+        names = [p.name for p in available]
+        assert "groq" not in names
+        assert "gemini_flash" in names
+        assert "gemini_flash_lite" in names
+
+    def test_all_providers_failed_same_time(self):
+        """All providers failed at same monotonic time — returns first by min()."""
+        groq = _groq_provider()
+        gemini = _gemini_provider()
+        adapter = LLMAdapter(providers=[groq, gemini])
+        now = time.monotonic()
+        adapter._provider_failed["groq"] = now
+        adapter._provider_failed["gemini_flash"] = now
+        available = adapter._get_available_providers()
+        # All failed within recovery window → returns oldest (min).
+        # Both have same time, min() picks first in providers list = groq
         assert len(available) == 1
         assert available[0].name == "groq"
 

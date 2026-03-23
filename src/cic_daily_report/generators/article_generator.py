@@ -481,7 +481,7 @@ def _validate_and_clean_output(content: str, tier: str, onchain_data: str) -> tu
 
     # v0.31.0: Strip TL;DR prefixes that Google Sheets templates may inject.
     # Pattern: "TL;DR:" or "TL; DR:" at the start of a line (with optional whitespace)
-    tldr_pattern = re.compile(r"^(\s*)(?:TL;?\s*DR\s*:\s*)", re.IGNORECASE | re.MULTILINE)
+    tldr_pattern = re.compile(r"^(\s*)(?:TL[;/]?\s*DR\s*[:.]?\s*)", re.IGNORECASE | re.MULTILINE)
     if tldr_pattern.search(cleaned):
         cleaned = tldr_pattern.sub(r"\1", cleaned)
         warnings.append("Stripped TL;DR prefix(es) from output")
