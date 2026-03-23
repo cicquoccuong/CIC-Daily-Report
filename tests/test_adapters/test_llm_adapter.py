@@ -1,10 +1,12 @@
 """Tests for adapters/llm_adapter.py — all mocked."""
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from cic_daily_report.adapters.llm_adapter import (
+    _CIRCUIT_RECOVERY_SEC,
     LLMAdapter,
     LLMProvider,
     LLMResponse,
@@ -159,8 +161,8 @@ class TestLLMAdapter:
         groq = _groq_provider()
         gemini = _gemini_provider()
         adapter = LLMAdapter(providers=[groq, gemini])
-        # Mark groq as failed — gemini should be tried directly
-        adapter._provider_failed["groq"] = True
+        # Mark groq as recently failed — gemini should be tried directly
+        adapter._provider_failed["groq"] = time.monotonic()
 
         gemini_resp = LLMResponse(text="gemini ok", tokens_used=5, model="flash")
         with (
@@ -181,11 +183,12 @@ class TestLLMAdapter:
         assert adapter.last_provider == "gemini_flash"
         mock_groq.assert_not_called()
 
-    async def test_all_failed_resets_and_retries(self):
-        """v0.30.0: When all providers are failed, reset and retry all."""
+    async def test_all_failed_retries_oldest(self):
+        """v0.31.0: When all providers failed, try the one that failed longest ago."""
         provider = _groq_provider()
         adapter = LLMAdapter(providers=[provider])
-        adapter._provider_failed["groq"] = True
+        # Mark as failed long ago (past recovery window)
+        adapter._provider_failed["groq"] = time.monotonic() - _CIRCUIT_RECOVERY_SEC - 1
 
         groq_resp = LLMResponse(text="recovered", tokens_used=5, model="llama")
         with patch(
@@ -238,6 +241,67 @@ class TestLLMAdapter:
         groq_quota = adapter._quota._quotas.get("groq")
         assert groq_quota is not None
         assert groq_quota.last_call_time > 0
+
+
+class TestProviderPreference:
+    """v0.31.0: Provider preference reorders chain."""
+
+    def test_prefer_reorders_providers(self):
+        groq = _groq_provider()
+        gemini = _gemini_provider()
+        adapter = LLMAdapter(providers=[gemini, groq], prefer="groq")
+        assert adapter._providers[0].name == "groq"
+        assert adapter._providers[1].name == "gemini_flash"
+
+    def test_prefer_unknown_keeps_original_order(self):
+        groq = _groq_provider()
+        gemini = _gemini_provider()
+        adapter = LLMAdapter(providers=[gemini, groq], prefer="nonexistent")
+        assert adapter._providers[0].name == "gemini_flash"
+
+    def test_suggest_cooldown_gemini(self):
+        adapter = LLMAdapter(providers=[_gemini_provider()])
+        adapter._last_provider = "gemini_flash"
+        adapter._last_tokens = 5000
+        cooldown = adapter.suggest_cooldown()
+        # Gemini: 5000/32000 * 60 + 15 = ~24s
+        assert 15 <= cooldown <= 40
+
+    def test_suggest_cooldown_groq_large_response(self):
+        adapter = LLMAdapter(providers=[_groq_provider()])
+        adapter._last_provider = "groq"
+        adapter._last_tokens = 11000
+        cooldown = adapter.suggest_cooldown()
+        # Groq: 11000/6000 * 60 + 15 = ~125s
+        assert cooldown >= 100
+
+    def test_suggest_cooldown_no_previous(self):
+        adapter = LLMAdapter(providers=[_groq_provider()])
+        assert adapter.suggest_cooldown() == 60
+
+
+class TestTimedCircuitBreaker:
+    """v0.31.0: Time-based circuit breaker recovery."""
+
+    def test_recent_failure_skipped(self):
+        groq = _groq_provider()
+        gemini = _gemini_provider()
+        adapter = LLMAdapter(providers=[groq, gemini])
+        # Groq failed just now
+        adapter._provider_failed["groq"] = time.monotonic()
+        available = adapter._get_available_providers()
+        names = [p.name for p in available]
+        assert "groq" not in names
+        assert "gemini_flash" in names
+
+    def test_old_failure_recovered(self):
+        groq = _groq_provider()
+        adapter = LLMAdapter(providers=[groq])
+        # Groq failed long ago
+        adapter._provider_failed["groq"] = time.monotonic() - _CIRCUIT_RECOVERY_SEC - 1
+        available = adapter._get_available_providers()
+        assert len(available) == 1
+        assert available[0].name == "groq"
 
 
 class TestCallGroq:

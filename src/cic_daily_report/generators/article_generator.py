@@ -1,7 +1,6 @@
-"""Tier Article Generator — 5 tiers, dual-layer, cumulative (FR13-FR22).
+"""Tier Article Generator — 5 tiers, cumulative (FR13-FR22).
 
 Generates L1→L5 articles using templates + LLM adapter.
-Each article has TL;DR (simple) + Full Analysis (technical).
 """
 
 from __future__ import annotations
@@ -23,9 +22,10 @@ from cic_daily_report.generators.template_engine import (
 
 logger = get_logger("article_generator")
 
-# Inter-tier cooldown (seconds) to avoid free-tier LLM rate limits (429).
-# Set to 0 in tests via env var or when IS_PRODUCTION is False.
-_TIER_COOLDOWN = 60 if os.getenv("GITHUB_ACTIONS") == "true" else 0
+# v0.31.0: Adaptive cooldown replaces fixed 60s — see llm.suggest_cooldown().
+# Set to 0 in tests. In production, LLMAdapter.suggest_cooldown() calculates
+# based on actual tokens used and provider-specific TPM limits.
+_IS_PRODUCTION = os.getenv("GITHUB_ACTIONS") == "true"
 _TIER_RETRY_WAIT = 120  # seconds to wait before retrying a failed tier (429)
 
 # FR17: NQ05-compliant disclaimer (Vietnamese)
@@ -206,10 +206,14 @@ async def generate_tier_articles(
                 # v0.21.0: Build summary of this tier for inter-tier context
                 summary = _summarize_tier_output(tier, article.content)
                 previous_tiers_summary.append(summary)
-                # Rate limit cooldown: free-tier Gemini/Groq share RPM+TPM limits.
-                if _TIER_COOLDOWN and tier != TIERS[-1]:
-                    logger.info(f"Rate limit cooldown: waiting {_TIER_COOLDOWN}s before next tier")
-                    await asyncio.sleep(_TIER_COOLDOWN)
+                # v0.31.0: Adaptive cooldown based on provider + tokens used
+                if _IS_PRODUCTION and tier != TIERS[-1]:
+                    cooldown = llm.suggest_cooldown()
+                    logger.info(
+                        f"Adaptive cooldown: {cooldown}s "
+                        f"({llm.last_provider}, {llm.last_tokens_used} tokens)"
+                    )
+                    await asyncio.sleep(cooldown)
                 break  # success, move to next tier
             except Exception as e:
                 if attempt == 0 and "429" in str(e):
@@ -403,7 +407,17 @@ async def _generate_single_article(
         "1. SO SÁNH 2+ chỉ số → đồng thuận hay mâu thuẫn?\n"
         "2. NHÂN QUẢ: A xảy ra → B bị ảnh hưởng VÌ C\n"
         "3. Mỗi số liệu = giải thích nó quan trọng THẾ NÀO cho nhà đầu tư\n\n"
-        "⛔ KHÔNG bịa data không có trong input (MVRV, SOPR, Bloomberg, TradingView...)\n\n"
+        "CÁCH KẾT THÚC MỖI ĐOẠN:\n"
+        "- Câu cuối = HỆ QUẢ CỤ THỂ (ai bị ảnh hưởng, bao nhiêu, khi nào)\n"
+        "- KHÔNG viết câu chung chung kiểu 'Điều này cho thấy...', "
+        "'có thể ảnh hưởng đến...', 'trong bối cảnh...', "
+        "'cần theo dõi chặt chẽ...'\n"
+        "- Thay bằng HỆ QUẢ CỤ THỂ hoặc bỏ qua\n\n"
+        "⛔ KHÔNG:\n"
+        "- Bịa data không có trong input (MVRV, SOPR, Bloomberg, TradingView...)\n"
+        "- Bắt đầu section bằng 'TL;DR:' hoặc 'Tóm lược:'\n"
+        "- Viết lời khuyên đầu tư ('nên mua', 'cần theo dõi', "
+        "'quyết định đầu tư thông minh')\n\n"
         "CÁC PHẦN BÀI VIẾT:\n\n" + "\n\n".join(section_prompts)
     )
 
@@ -464,6 +478,13 @@ def _validate_and_clean_output(content: str, tier: str, onchain_data: str) -> tu
     """
     warnings = []
     cleaned = content
+
+    # v0.31.0: Strip TL;DR prefixes that Google Sheets templates may inject.
+    # Pattern: "TL;DR:" or "TL; DR:" at the start of a line (with optional whitespace)
+    tldr_pattern = re.compile(r"^(\s*)(?:TL;?\s*DR\s*:\s*)", re.IGNORECASE | re.MULTILINE)
+    if tldr_pattern.search(cleaned):
+        cleaned = tldr_pattern.sub(r"\1", cleaned)
+        warnings.append("Stripped TL;DR prefix(es) from output")
 
     # Check for fabricated metrics not in pipeline data — REMOVE sentences containing them
     for pattern_str, name in _FABRICATED_METRIC_PATTERNS:

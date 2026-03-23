@@ -8,14 +8,13 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _zero_tier_cooldown():
+def _no_production_cooldown():
     """Disable inter-tier cooldown so tests never sleep in CI.
 
-    article_generator sets _TIER_COOLDOWN=60 when GITHUB_ACTIONS=true
-    (rate-limit safeguard). Without this patch, integration tests that
-    generate 5 tiers sleep 4×60s each → 28+ minutes of real delay.
+    article_generator uses adaptive cooldown (llm.suggest_cooldown()) only
+    when _IS_PRODUCTION is True. Force it to False so tests skip all sleeps.
     """
-    with patch("cic_daily_report.generators.article_generator._TIER_COOLDOWN", 0):
+    with patch("cic_daily_report.generators.article_generator._IS_PRODUCTION", False):
         yield
 
 

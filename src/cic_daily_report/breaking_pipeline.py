@@ -182,7 +182,9 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
 
     llm = None
     try:
-        llm = LLMAdapter()
+        # v0.31.0: Prefer Groq for breaking — shorter content, faster response.
+        # Daily pipeline prefers Gemini, avoiding quota competition.
+        llm = LLMAdapter(prefer="groq")
     except Exception as e:
         logger.warning(f"LLM init failed: {e}")
 
@@ -541,7 +543,7 @@ async def _rss_fallback_detection(run_log: BreakingRunLog, llm=None) -> list:
         if rss_llm is None:
             from cic_daily_report.adapters.llm_adapter import LLMAdapter
 
-            rss_llm = LLMAdapter()
+            rss_llm = LLMAdapter(prefer="groq")
 
         events = await asyncio.wait_for(score_rss_articles(rss_articles, rss_llm), timeout=60)
         logger.info(f"RSS fallback: {len(events)} breaking events from RSS+LLM")

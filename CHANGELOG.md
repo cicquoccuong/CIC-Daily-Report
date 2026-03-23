@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.31.0] - 2026-03-23
+
+### Dual-branch Fix — Provider Management + Content Quality
+
+Root cause: Daily report produced only 3/7 outputs (2026-03-23). Investigation revealed TWO
+independent root causes: (1) rate limit exhaustion — breaking pipeline consumed Gemini quota,
+Groq exhausted after 3 articles; (2) content quality — filler phrases, TL;DR format, NQ05 violations.
+
+#### Branch 1: Provider Management (quantity)
+
+- **Provider preference**: `LLMAdapter(prefer="gemini_flash")` for daily pipeline,
+  `prefer="groq"` for breaking. Best model used first per pipeline type — consistent quality,
+  no quota competition.
+- **Adaptive cooldown**: Replaced fixed 60s with `suggest_cooldown()` — calculates based on
+  actual tokens used and provider-specific TPM limits:
+  `max(15, min(tokens_used / provider_tpm * 60 + 15, 180))`.
+  Gemini (32K TPM) gets ~15-25s, Groq (6K TPM) gets longer cooldowns.
+- **Time-based circuit breaker**: `_provider_failed` changed from `dict[str, bool]` to
+  `dict[str, float]` (failure timestamp). Provider retried after 300s recovery window.
+  When ALL providers failed, oldest-failed is retried first.
+
+#### Branch 2: Content Quality
+
+- **Anti-filler in Layer 6**: Positive instructions — "Câu cuối = HỆ QUẢ CỤ THỂ (ai bị ảnh
+  hưởng, bao nhiêu, khi nào)" replaces banned filler phrases in article prompts.
+- **TL;DR ban + strip**: Added to ⛔ KHÔNG list in prompts. Post-generation regex strips any
+  `TL;DR:` prefixes that still appear. Removed stale FR14 TL;DR validation from daily pipeline.
+- **NQ05 advisory patterns** (3 new SEMANTIC_NQ05_PATTERNS, REMOVE mode):
+  `nhà đầu tư cần theo dõi chặt chẽ`, `quyết định đầu tư thông minh/sáng suốt`,
+  `giai đoạn tích lũy trước khi tăng trưởng`.
+
+#### Bug Fixes
+
+- **ETF flows type guard**: `research_data.py` — added `isinstance(first_query, dict)` check
+  before accessing `.get()` on queries[0] (was crashing on non-dict responses).
+
 ## [0.30.1] - 2026-03-23
 
 ### Prompt Quality — NQ05 Input→Output Shift + Anti-filler + Emoji Formatting
@@ -31,6 +67,19 @@ restrictions in prompts caused LLM self-censorship → generic filler content.
 #### NQ05 Post-filter (2 new patterns)
 - `cơ hội...tích lũy/mua vào/mua thêm` — catches implicit buy recommendations.
 - `nhà đầu tư/bạn nên...mua/bán/tích lũy` — catches "should buy/sell" variants.
+
+#### Severity Classifier — Analysis Downgrade (P2)
+- Added `ANALYSIS_DOWNGRADE_KEYWORDS` (19 words, VN+EN): "hậu quả", "bài học",
+  "phân tích", "aftermath", "lesson", "analysis", "review", etc.
+- When title matches a critical keyword (e.g. "hack") AND an analysis keyword
+  (e.g. "hậu quả"), severity downgrades from CRITICAL → IMPORTANT.
+- Rationale: "Hậu quả hack Bybit" is analysis, not a live hack alert.
+- 7 new tests covering downgrade + live-event-stays-critical scenarios.
+
+#### RSS Multi-topic Handling (P3)
+- Added "NHIỀU CHỦ ĐỀ TRONG SOURCE" instruction to BREAKING_PROMPT_TEMPLATE.
+- When source article covers multiple unrelated topics, AI focuses on the single
+  most important story (priority: specific numbers > large scale > broad impact).
 
 #### Emoji & Format
 - Tier Articles: emoji guidance (📈📉⚡📊🔍💡), mobile-friendly paragraph style.

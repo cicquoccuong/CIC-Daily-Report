@@ -214,6 +214,52 @@ class TestPhase3Classification:
         assert result == IMPORTANT
 
 
+class TestAnalysisDowngrade:
+    """v0.30.1: Analysis/opinion articles with critical keywords → IMPORTANT."""
+
+    def test_hack_aftermath_downgraded(self):
+        """'Hậu quả hack Bybit' is analysis, not a live hack → IMPORTANT."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("Hậu quả hack Bybit"), cfg)
+        assert result == IMPORTANT
+
+    def test_hack_analysis_english_downgraded(self):
+        """'Aftermath of Bybit hack' → IMPORTANT."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("Aftermath of Bybit hack"), cfg)
+        assert result == IMPORTANT
+
+    def test_hack_lesson_downgraded(self):
+        """'Bài học từ vụ hack Ronin' → IMPORTANT."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("Bài học từ vụ hack Ronin"), cfg)
+        assert result == IMPORTANT
+
+    def test_exploit_review_downgraded(self):
+        """'Review: DeFi exploit trends 2026' → IMPORTANT."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("Review: DeFi exploit trends 2026"), cfg)
+        assert result == IMPORTANT
+
+    def test_live_hack_stays_critical(self):
+        """'Bybit hack — $1.5B stolen' — no analysis keyword → stays CRITICAL."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("Bybit hack — $1.5B stolen"), cfg)
+        assert result == CRITICAL
+
+    def test_live_exploit_stays_critical(self):
+        """'New DeFi exploit drains $50M' — live event → stays CRITICAL."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("New DeFi exploit drains $50M"), cfg)
+        assert result == CRITICAL
+
+    def test_collapse_analysis_downgraded(self):
+        """'Phân tích vụ collapse của Terra' → IMPORTANT."""
+        cfg = ClassificationConfig()
+        result = _determine_severity(_event("Phân tích vụ collapse của Terra"), cfg)
+        assert result == IMPORTANT
+
+
 class TestClassifyBatch:
     def test_classifies_all(self):
         events = [_event("Hack", 90), _event("Update", 30)]

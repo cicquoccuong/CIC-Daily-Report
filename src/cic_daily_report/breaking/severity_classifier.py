@@ -42,6 +42,31 @@ DEFAULT_CRITICAL_KEYWORDS = [
     "rug pull",
 ]
 
+# v0.30.1: Analysis/opinion indicators — when title contains a critical keyword
+# AND one of these, downgrade severity from CRITICAL → IMPORTANT.
+# Rationale: "Hậu quả hack Bybit" is analysis, not a live hack alert.
+ANALYSIS_DOWNGRADE_KEYWORDS = [
+    # Vietnamese
+    "hậu quả",
+    "bài học",
+    "phân tích",
+    "nhìn lại",
+    "đánh giá",
+    "tổng hợp",
+    "bình luận",
+    "ảnh hưởng sau",
+    # English
+    "aftermath",
+    "lesson",
+    "analysis",
+    "review",
+    "history",
+    "postmortem",
+    "opinion",
+    "impact of",
+    "what we learned",
+]
+
 DEFAULT_IMPORTANT_KEYWORDS = [
     "crash",  # Synced from event_detector DEFAULT_KEYWORD_TRIGGERS
     "partnership",
@@ -288,9 +313,23 @@ def _determine_severity(event: BreakingEvent, config: ClassificationConfig) -> s
     title_lower = event.title.lower()
 
     # Check critical keywords (word-boundary matching to avoid false positives)
+    has_critical_keyword = False
     for kw in config.critical_keywords:
         if re.search(r"\b" + re.escape(kw.lower()) + r"\b", title_lower):
-            return CRITICAL
+            has_critical_keyword = True
+            break
+
+    if has_critical_keyword:
+        # v0.30.1: Downgrade analysis/opinion articles that mention critical keywords
+        # e.g. "Hậu quả hack Bybit" → IMPORTANT (not a live incident)
+        for akw in ANALYSIS_DOWNGRADE_KEYWORDS:
+            if akw.lower() in title_lower:
+                logger.info(
+                    f"Downgraded '{event.title}': "
+                    f"critical keyword + analysis indicator '{akw}' → IMPORTANT"
+                )
+                return IMPORTANT
+        return CRITICAL
 
     # Check panic score for critical
     if event.panic_score >= config.critical_panic_threshold:

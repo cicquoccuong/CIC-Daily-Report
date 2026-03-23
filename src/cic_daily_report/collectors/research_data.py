@@ -330,7 +330,12 @@ async def _collect_etf_flows() -> ETFFlowData | None:
             logger.warning("ETF flows: no queries in __NEXT_DATA__")
             return None
 
-        etf_data = queries[0].get("state", {}).get("data", {}).get("data", {})
+        # v0.31.0: queries[0] may be a list instead of dict if API structure changes
+        first_query = queries[0]
+        if not isinstance(first_query, dict):
+            logger.warning(f"ETF flows: queries[0] is {type(first_query).__name__}, expected dict")
+            return None
+        etf_data = first_query.get("state", {}).get("data", {}).get("data", {})
         providers = etf_data.get("providers", {})
         chart2 = etf_data.get("chart2", {})  # USD net flows
 

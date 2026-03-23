@@ -62,6 +62,10 @@ GIỌNG VĂN TRUNG LẬP:
 - Tin xấu (hack, lỗ hổng, sụp đổ) → nêu rủi ro THẬT, KHÔNG giảm nhẹ
 - Đưa SỰ KIỆN, không đưa ý kiến
 
+NHIỀU CHỦ ĐỀ TRONG SOURCE:
+- Nếu <source> chứa NHIỀU sự kiện không liên quan → chỉ viết về sự kiện \
+QUAN TRỌNG NHẤT (ưu tiên: con số cụ thể > quy mô lớn > ảnh hưởng rộng).
+
 KHI THIẾU THÔNG TIN:
 - Source chỉ có tiêu đề → viết ngắn 2-3 câu, KHÔNG suy diễn thêm.
 - Không có số liệu → KHÔNG bịa số.

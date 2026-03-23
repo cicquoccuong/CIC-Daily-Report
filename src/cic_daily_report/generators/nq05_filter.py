@@ -102,6 +102,11 @@ SEMANTIC_NQ05_PATTERNS = [
     r"cơ hội(?:\s+\w+){0,6}\s+(?:tích lũy|mua vào|mua thêm)",
     r"(?:nhà đầu tư|bạn|trader)\s+nên\s+(?:\w+\s+){0,3}"
     r"(?:mua|bán|tích lũy|vào lệnh|chốt lời|chốt lỗ)",
+    # v0.31.0: Advisory phrases = implicit NQ05 violations (from daily output 2026-03-23)
+    r"(?:nhà đầu tư|bạn)\s+cần\s+theo dõi\s+chặt chẽ",
+    r"quyết định đầu tư\s+(?:thông minh|sáng suốt|hợp lý)",
+    r"giai đoạn\s+tích lũy\s+(?:cuối cùng\s+)?trước\s+khi\s+"
+    r"(?:tăng trưởng|phục hồi|bứt phá)",
 ]
 
 

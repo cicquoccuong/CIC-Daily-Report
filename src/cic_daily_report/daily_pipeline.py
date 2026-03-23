@@ -400,7 +400,9 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     # --- Stage 2: Content Generation (QĐ2) ---
     logger.info("Stage 2: Content Generation")
     try:
-        llm = LLMAdapter()
+        # v0.31.0: Prefer Gemini Flash for daily articles — best Vietnamese quality.
+        # Breaking pipeline prefers Groq, avoiding quota competition.
+        llm = LLMAdapter(prefer="gemini_flash")
     except Exception as e:
         logger.error(f"LLM init failed: {e}")
         errors.append(e)
@@ -638,17 +640,6 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         msg = f"Articles not generated for tiers: {sorted(missing_gen)}"
         logger.error(msg)
         errors.append(Exception(msg))
-    for article in generated:
-        # FR14 dual-layer check: Tóm lược marker should exist
-        content_lower = article.content.lower()
-        has_summary = (
-            "tóm lược" in content_lower or "tl;dr" in content_lower or "tl; dr" in content_lower
-        )
-        if not has_summary:
-            logger.warning(
-                f"[{article.tier}] Missing Tóm lược section — FR14 dual-layer may be incomplete"
-            )
-
     # Post-generation: cross-tier repetition check (log only)
     if len(generated) >= 3:
         _check_cross_tier_repetition(generated)
