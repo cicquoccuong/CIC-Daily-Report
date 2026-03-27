@@ -1,5 +1,56 @@
 # Changelog
 
+## [0.32.0] - 2026-03-27
+
+### LLM Overhaul + Data Source Fixes + Quality Fixes (3 clusters, 20+ changes)
+
+Root cause investigation after Gemini 2.0 deprecation deadline (31/03/2026) + 429 rate limit errors
++ duplicate breaking alerts. Found cascading failures across LLM provider chain, data sources,
+and dedup/NQ05 compliance layers.
+
+#### Cụm 1: LLM Overhaul (P0 — Khẩn cấp trước 31/03)
+
+- **Gemini 2.5 migration**: Replaced Gemini 2.0 Flash/Lite with 2.5 Flash/Lite — fixes 429 errors
+  from deprecated models (deadline 31/03/2026).
+- **Groq Qwen3 32B**: Replaced Groq Llama 3.3 with `qwen/qwen3-32b` (60 RPM) — fixes insufficient
+  free tier quota that caused daily pipeline to fail after 3 articles.
+- **Groq Llama 4 Scout**: Added as secondary Groq fallback (30 RPM).
+- **Cerebras Qwen3**: Added as 5th provider in fallback chain — gracefully skipped if no API key.
+- **New fallback chain**: Gemini 2.5 Flash → Flash-Lite → Groq Qwen3 32B → Groq Llama 4 Scout
+  → Cerebras Qwen3 (3 independent infra: Google, Groq, Cerebras).
+- **Shared rate groups**: Gemini group (Flash + Lite) and Groq group (Qwen3 + Llama 4) share
+  quota correctly. Added `"gemini"` shared rate group to QuotaManager — fixes rate limiting bypass
+  that caused 429 errors.
+- **Reduced cooldown**: Buffer 15s→5s, max 180s→120s — total pipeline cooldown ~200s (was ~356s).
+
+#### Cụm 2: Data Source Fixes (P1)
+
+- **CryptoPanic v2**: Migrated API v1→v2 endpoint — fixes 404 errors in breaking news detection.
+- **ETF flows defensive check**: Added type checking before accessing `__NEXT_DATA__` structure
+  on btcetffundflow.com — fixes crash when site changes response format.
+- **CoinMetrics 400 logging**: Added response body diagnostic logging for HTTP 400 errors.
+- **Binance 451 workaround**: CoinGecko fallback for Pi Cycle indicator when Binance geo-blocks.
+- **Missing env vars**: Added `CEREBRAS_API_KEY`, `GLASSNODE_API_KEY`, `WHALE_ALERT_API_KEY`,
+  `COINALYZE_API_KEY` to GitHub Actions workflows.
+- **Altcoin Season fallback**: Synthetic value (50 = neutral) when BlockchainCenter API unavailable.
+- **F&G severity fix**: Added Fear & Greed terms to severity classifier crypto relevance keywords
+  — fixes F&G events being incorrectly skipped.
+- **Breaking pipeline RSS-first**: CryptoPanic only queried when RSS finds <3 events — optimizes
+  quota usage.
+
+#### Cụm 3: Quality Fixes (P1)
+
+- **Error notification**: Truncation at 3500 chars + plain text `parse_mode` — fixes Telegram
+  400 errors on long error messages.
+- **URL dedup window**: Extended from 4 hours to 7 days — fixes duplicate breaking alerts
+  (e.g., Cardano 3x sends).
+- **Entity overlap threshold**: Lowered ≥2→≥1 entities with similarity ≥0.50 — fixes duplicate
+  alerts for single-entity news (e.g., Circle 2x sends).
+- **NQ05 pattern expansion**: Added "có thể/cần/nếu" prefixes + standalone "xem xét tích lũy"
+  pattern — fixes compliance bypass on softened phrasing.
+- **Filler phrase removal**: Top 3 patterns ("điều này cho thấy", "có thể ảnh hưởng đến",
+  "trong bối cảnh") upgraded from WARN to sentence-level REMOVE.
+
 ## [0.31.0] - 2026-03-23
 
 ### BIC Chat Summary — Story-based Digest Rewrite

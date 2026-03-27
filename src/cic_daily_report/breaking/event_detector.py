@@ -19,7 +19,8 @@ from cic_daily_report.core.quota_manager import QuotaManager
 
 logger = get_logger("event_detector")
 
-CRYPTOPANIC_API_URL = "https://cryptopanic.com/api/v1/posts/"
+# v0.32.0: Migrated from v1 to v2 — consistent with cryptopanic_client.py
+CRYPTOPANIC_API_URL = "https://cryptopanic.com/api/developer/v2/posts/"
 CACHE_KEY = "cryptopanic_breaking"
 CACHE_MAX_AGE = 7200  # 2 hours — breaking runs every 3h, so cache protects overlaps/retries
 

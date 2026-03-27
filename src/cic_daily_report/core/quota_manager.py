@@ -24,7 +24,10 @@ class ServiceQuota:
 
 # Pre-configured service quotas (free tiers)
 DEFAULT_QUOTAS: dict[str, dict[str, int]] = {
-    "groq": {"daily_limit": 14400, "rate_limit_per_min": 6},  # ~10s between calls to avoid TPM 429
+    "gemini": {"daily_limit": 1500, "rate_limit_per_min": 10},
+    "groq": {"daily_limit": 1000, "rate_limit_per_min": 60},
+    "groq_llama4": {"daily_limit": 1000, "rate_limit_per_min": 30},
+    "cerebras": {"daily_limit": 1000, "rate_limit_per_min": 30},
     "gemini_flash": {"daily_limit": 1500, "rate_limit_per_min": 15},
     "gemini_flash_lite": {"daily_limit": 1500, "rate_limit_per_min": 15},
     "cryptopanic": {"daily_limit": 15, "rate_limit_per_min": 5},

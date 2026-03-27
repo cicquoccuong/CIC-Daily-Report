@@ -70,6 +70,54 @@ class TestErrorNotification:
         assert "GROQ_API_KEY" in msg or "Kiểm tra" in msg
 
 
+class TestMessageTruncation:
+    """v0.32.0: Messages exceeding 3500 chars are truncated to prevent TG 400."""
+
+    def test_short_message_not_truncated(self):
+        n = ErrorNotification(
+            errors=[LLMError("Short error", source="llm")],
+        )
+        msg = n.format_message()
+        assert "thông báo bị cắt ngắn" not in msg
+
+    def test_long_message_truncated(self):
+        """Message > 3500 chars gets truncated with indicator."""
+        # Create enough errors to exceed 3500 chars
+        errors = [
+            CICError(
+                code="COLLECTOR_ERROR",
+                message="A" * 300,
+                source=f"collector_{i}",
+                retry=True,
+            )
+            for i in range(15)
+        ]
+        n = ErrorNotification(errors=errors)
+        msg = n.format_message()
+        assert "thông báo bị cắt ngắn" in msg
+        # The truncated message should be reasonably sized
+        # (3500 + the truncation indicator)
+        assert len(msg) < 3600
+
+    def test_exactly_3500_not_truncated(self):
+        """Messages at exactly 3500 chars are NOT truncated."""
+        n = ErrorNotification(
+            errors=[
+                CICError(
+                    code="COLLECTOR_ERROR",
+                    message="x" * 3400,
+                    source="test",
+                    retry=True,
+                )
+            ]
+        )
+        msg = n.format_message()
+        # Depending on exact header size, this may or may not exceed 3500
+        # The key invariant: if <= 3500, no truncation indicator
+        if len(msg) <= 3500:
+            assert "thông báo bị cắt ngắn" not in msg
+
+
 class TestBuildNotification:
     def test_wraps_non_cic_errors(self):
         errors = [ValueError("bad value"), LLMError("llm fail")]

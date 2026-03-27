@@ -145,6 +145,52 @@ class TestSemanticNQ05Patterns:
         assert result.violations_found == 0
 
 
+class TestExpandedNQ05Patterns:
+    """v0.32.0: Broadened NQ05 semantic patterns (Fix 3.4-3.5)."""
+
+    def test_co_the_can_nhac_mua(self):
+        """'có thể cân nhắc mua' → NQ05 violation (new trigger word)."""
+        content = "Nhà đầu tư có thể cân nhắc mua BTC." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "có thể cân nhắc" not in result.content
+
+    def test_can_xem_xet_tich_luy(self):
+        """'cần xem xét tích lũy' → NQ05 violation (new trigger word)."""
+        content = "Nhà đầu tư cần xem xét tích lũy SOL." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "cần xem xét" not in result.content
+
+    def test_neu_can_nhac_ban(self):
+        """'nếu cân nhắc bán' → NQ05 violation (new trigger word)."""
+        content = "Nếu cân nhắc bán BTC nên chờ thêm." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "nếu cân nhắc" not in result.content
+
+    def test_xem_xet_viec_tich_luy(self):
+        """'xem xét việc tích lũy' → NQ05 violation (new standalone pattern)."""
+        content = "Có thể xem xét việc tích lũy BTC ở vùng giá hiện tại." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "xem xét việc tích lũy" not in result.content
+
+    def test_xem_xet_mua_vao(self):
+        """'xem xét mua vào' → NQ05 violation (new standalone pattern)."""
+        content = "Nên xem xét mua vào khi giá giảm." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "xem xét mua vào" not in result.content
+
+    def test_xem_xet_mua_them(self):
+        """'xem xét mua thêm' → NQ05 violation (new standalone pattern)."""
+        content = "Nhà đầu tư xem xét mua thêm ETH." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "xem xét mua thêm" not in result.content
+
+
 class TestSentenceLevelRemoval:
     """v0.29.1: NQ05 removes entire SENTENCE containing violation (not just phrase).
 
@@ -185,35 +231,56 @@ class TestSentenceLevelRemoval:
         assert "BTC" not in result.content.split("---")[0]  # Before disclaimer
 
 
-class TestFillerDetection:
-    """v0.29.1: Filler phrases are WARN-only (reverted from REMOVE in v0.28.0).
+class TestFillerRemoval:
+    """v0.32.0: Top 3 filler phrases are REMOVED at sentence level.
 
-    Removing filler phrases from prose destroys Vietnamese sentence structure
-    because these patterns are structural grammar (verbs, prepositions).
-    Filler reduction is now handled via LLM prompt instructions instead.
+    "điều này cho thấy", "có thể ảnh hưởng đến", "trong bối cảnh"
+    are removed because they appear most frequently and add zero information.
+    Remaining fillers stay WARN-only.
     """
 
-    def test_filler_detected_but_kept(self):
-        """Single filler phrase → filler_count=1, content UNCHANGED."""
+    def test_top3_filler_removed(self):
+        """Top 3 fillers removed: 'có thể ảnh hưởng đến'."""
         content = "BTC tăng 5% có thể ảnh hưởng đến thị trường." + DISCLAIMER
         result = check_and_fix(content)
-        assert result.filler_count == 1
-        # v0.29.1: Filler KEPT (warn-only)
-        assert "có thể ảnh hưởng đến" in result.content
+        assert "có thể ảnh hưởng đến" not in result.content
+        assert result.auto_fixed >= 1
 
-    def test_filler_count_multiple(self):
-        """Multiple filler phrases → filler_count=3, all KEPT."""
+    def test_dieu_nay_cho_thay_removed(self):
+        """Top 3 fillers removed: 'điều này cho thấy'."""
+        content = "Điều này cho thấy xu hướng tích cực.\nBTC giá $75,000." + DISCLAIMER
+        result = check_and_fix(content)
+        assert "Điều này cho thấy" not in result.content
+        assert "BTC giá $75,000" in result.content
+
+    def test_trong_boi_canh_removed(self):
+        """Top 3 fillers removed: 'trong bối cảnh'."""
+        content = "BTC giảm trong bối cảnh thị trường biến động.\nETH tăng 3%." + DISCLAIMER
+        result = check_and_fix(content)
+        assert "trong bối cảnh" not in result.content
+        assert "ETH tăng 3%" in result.content
+
+    def test_remaining_fillers_still_warned_only(self):
+        """Non-top-3 fillers are still WARN-only (kept in content)."""
+        content = "Cần theo dõi thêm diễn biến thị trường." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.filler_count >= 1
+        assert "Cần theo dõi thêm" in result.content
+
+    def test_mixed_remove_and_warn(self):
+        """Top 3 removed, others warned only."""
         content = (
             "BTC tăng 5% có thể ảnh hưởng đến thị trường.\n"
             "Điều này cho thấy xu hướng tích cực.\n"
             "Tuy nhiên cần lưu ý rủi ro vĩ mô." + DISCLAIMER
         )
         result = check_and_fix(content)
-        assert result.filler_count == 3
-        # v0.29.1: All fillers KEPT
-        assert "có thể ảnh hưởng đến" in result.content
-        assert "Điều này cho thấy" in result.content
+        # Top 3 removed
+        assert "có thể ảnh hưởng đến" not in result.content
+        assert "Điều này cho thấy" not in result.content
+        # Remaining filler kept (warn-only)
         assert "cần lưu ý" in result.content
+        assert result.filler_count >= 1
 
     def test_filler_detection_no_filler(self):
         """Clean content → filler_count=0."""
@@ -222,7 +289,7 @@ class TestFillerDetection:
         assert result.filler_count == 0
 
     def test_filler_not_in_flagged_for_review(self):
-        """v0.29.1: Filler warn-only → NOT in flagged_for_review."""
+        """Warn-only fillers → NOT in flagged_for_review."""
         content = "Cần theo dõi thêm diễn biến thị trường." + DISCLAIMER
         result = check_and_fix(content)
         assert result.filler_count >= 1

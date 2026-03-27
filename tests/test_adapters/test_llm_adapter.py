@@ -21,8 +21,28 @@ def _groq_provider() -> LLMProvider:
     return LLMProvider(
         name="groq",
         api_key="test-key",
-        model="llama-3.3-70b-versatile",
+        model="qwen-qwq-32b",
         endpoint="https://api.groq.com/openai/v1/chat/completions",
+        rate_limit_per_min=30,
+    )
+
+
+def _groq_llama4_provider() -> LLMProvider:
+    return LLMProvider(
+        name="groq_llama4",
+        api_key="test-key",
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        endpoint="https://api.groq.com/openai/v1/chat/completions",
+        rate_limit_per_min=30,
+    )
+
+
+def _cerebras_provider() -> LLMProvider:
+    return LLMProvider(
+        name="cerebras",
+        api_key="test-key",
+        model="qwen-3-32b",
+        endpoint="https://api.cerebras.ai/v1/chat/completions",
         rate_limit_per_min=30,
     )
 
@@ -31,8 +51,8 @@ def _gemini_lite_provider() -> LLMProvider:
     return LLMProvider(
         name="gemini_flash_lite",
         api_key="test-key",
-        model="gemini-2.0-flash-lite",
-        endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent",
+        model="gemini-2.5-flash-lite",
+        endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
         rate_limit_per_min=15,
     )
 
@@ -41,8 +61,8 @@ def _gemini_provider() -> LLMProvider:
     return LLMProvider(
         name="gemini_flash",
         api_key="test-key",
-        model="gemini-2.0-flash",
-        endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        model="gemini-2.5-flash",
+        endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
         rate_limit_per_min=15,
     )
 
@@ -64,8 +84,9 @@ class TestBuildProviders:
     def test_groq_only(self):
         with patch.dict("os.environ", {"GROQ_API_KEY": "k1"}, clear=True):
             providers = _build_providers()
-        assert len(providers) == 1
+        assert len(providers) == 2
         assert providers[0].name == "groq"
+        assert providers[1].name == "groq_llama4"
 
     def test_gemini_adds_two(self):
         with patch.dict("os.environ", {"GEMINI_API_KEY": "k2"}, clear=True):
@@ -74,11 +95,28 @@ class TestBuildProviders:
         assert providers[0].name == "gemini_flash"
         assert providers[1].name == "gemini_flash_lite"
 
-    def test_all_keys_three_providers(self):
-        env = {"GROQ_API_KEY": "k1", "GEMINI_API_KEY": "k2"}
+    def test_groq_adds_two_providers(self):
+        """Groq key creates both groq (Qwen3) and groq_llama4 (Llama 4 Scout)."""
+        with patch.dict("os.environ", {"GROQ_API_KEY": "k1"}, clear=True):
+            providers = _build_providers()
+        assert len(providers) == 2
+        assert providers[0].name == "groq"
+        assert providers[1].name == "groq_llama4"
+
+    def test_all_keys_five_providers(self):
+        env = {"GROQ_API_KEY": "k1", "GEMINI_API_KEY": "k2", "CEREBRAS_API_KEY": "k3"}
         with patch.dict("os.environ", env, clear=True):
             providers = _build_providers()
-        assert len(providers) == 3
+        assert len(providers) == 5
+        names = [p.name for p in providers]
+        assert names == ["gemini_flash", "gemini_flash_lite", "groq", "groq_llama4", "cerebras"]
+
+    def test_cerebras_only(self):
+        with patch.dict("os.environ", {"CEREBRAS_API_KEY": "k3"}, clear=True):
+            providers = _build_providers()
+        assert len(providers) == 1
+        assert providers[0].name == "cerebras"
+        assert providers[0].model == "qwen-3-32b"
 
 
 class TestLLMAdapter:
@@ -274,16 +312,16 @@ class TestProviderPreference:
         adapter._last_provider = "gemini_flash"
         adapter._last_tokens = 5000
         cooldown = adapter.suggest_cooldown()
-        # Gemini: 5000/32000 * 60 + 15 = ~24s
-        assert 15 <= cooldown <= 40
+        # Gemini: int(5000/32000 * 60) + 5 = 9 + 5 = 14 → clamped min 14
+        assert 10 <= cooldown <= 30
 
     def test_suggest_cooldown_groq_large_response(self):
         adapter = LLMAdapter(providers=[_groq_provider()])
         adapter._last_provider = "groq"
         adapter._last_tokens = 11000
         cooldown = adapter.suggest_cooldown()
-        # Groq: 11000/6000 * 60 + 15 = ~125s
-        assert cooldown >= 100
+        # Groq: int(11000/12000 * 60) + 5 = 55 + 5 = 60
+        assert cooldown == 60
 
     def test_suggest_cooldown_no_previous(self):
         adapter = LLMAdapter(providers=[_groq_provider()])
@@ -293,45 +331,52 @@ class TestProviderPreference:
         adapter = LLMAdapter(providers=[_gemini_provider()])
         adapter._last_provider = "gemini_flash"
         adapter._last_tokens = 0
-        # Zero tokens + gemini prefix → default 15
-        assert adapter.suggest_cooldown() == 15
+        # Zero tokens + gemini prefix → default 10
+        assert adapter.suggest_cooldown() == 10
 
     def test_suggest_cooldown_zero_tokens_groq(self):
         adapter = LLMAdapter(providers=[_groq_provider()])
         adapter._last_provider = "groq"
         adapter._last_tokens = 0
-        # Zero tokens + non-gemini → default 60
-        assert adapter.suggest_cooldown() == 60
+        # Zero tokens + groq → default 30
+        assert adapter.suggest_cooldown() == 30
+
+    def test_suggest_cooldown_zero_tokens_cerebras(self):
+        adapter = LLMAdapter(providers=[_cerebras_provider()])
+        adapter._last_provider = "cerebras"
+        adapter._last_tokens = 0
+        # Zero tokens + cerebras → default 10
+        assert adapter.suggest_cooldown() == 10
 
     def test_suggest_cooldown_unknown_provider(self):
         adapter = LLMAdapter(providers=[_groq_provider()])
         adapter._last_provider = "unknown_model"
         adapter._last_tokens = 5000
-        # Unknown provider uses fallback TPM 6000: int(5000/6000*60)+15 = 50+15 = 65
+        # Unknown provider uses fallback TPM 6000: int(5000/6000*60)+5 = 50+5 = 55
         cooldown = adapter.suggest_cooldown()
-        assert cooldown == 65
+        assert cooldown == 55
 
     def test_suggest_cooldown_boundary_min(self):
         adapter = LLMAdapter(providers=[_gemini_provider()])
         adapter._last_provider = "gemini_flash"
         adapter._last_tokens = 1
-        # int(1/32000*60)+15 = 0+15 = 15 → clamped min 15
-        assert adapter.suggest_cooldown() == 15
+        # int(1/32000*60)+5 = 0+5 = 5 → clamped min 10
+        assert adapter.suggest_cooldown() == 10
 
     def test_suggest_cooldown_boundary_max(self):
         adapter = LLMAdapter(providers=[_groq_provider()])
         adapter._last_provider = "groq"
         adapter._last_tokens = 100000
-        # int(100000/6000*60)+15 = 1000+15 = 1015 → clamped max 180
-        assert adapter.suggest_cooldown() == 180
+        # int(100000/12000*60)+5 = 500+5 = 505 → clamped max 120
+        assert adapter.suggest_cooldown() == 120
 
     def test_suggest_cooldown_gemini_lite(self):
         adapter = LLMAdapter(providers=[_gemini_lite_provider()])
         adapter._last_provider = "gemini_flash_lite"
         adapter._last_tokens = 5000
-        # Same TPM 32000 as gemini_flash: int(5000/32000*60)+15 = 9+15 = 24
+        # Same TPM 32000 as gemini_flash: int(5000/32000*60)+5 = 9+5 = 14
         cooldown = adapter.suggest_cooldown()
-        assert cooldown == 24
+        assert cooldown == 14
 
     def test_prefer_none_keeps_order(self):
         gemini = _gemini_provider()
@@ -339,6 +384,61 @@ class TestProviderPreference:
         adapter = LLMAdapter(providers=[gemini, groq], prefer=None)
         assert adapter._providers[0].name == "gemini_flash"
         assert adapter._providers[1].name == "groq"
+
+
+class TestNewProviderRouting:
+    """New providers (groq_llama4, cerebras) route through _call_groq (OpenAI-compatible)."""
+
+    async def test_groq_llama4_uses_call_groq(self):
+        provider = _groq_llama4_provider()
+        adapter = LLMAdapter(providers=[provider])
+
+        groq_resp = LLMResponse(text="llama4 ok", tokens_used=15, model="llama-4")
+        with patch(
+            "cic_daily_report.adapters.llm_adapter._call_groq",
+            new_callable=AsyncMock,
+            return_value=groq_resp,
+        ) as mock_groq:
+            resp = await adapter.generate("test prompt")
+
+        assert resp.text == "llama4 ok"
+        assert adapter.last_provider == "groq_llama4"
+        mock_groq.assert_called_once()
+
+    async def test_cerebras_uses_call_groq(self):
+        provider = _cerebras_provider()
+        adapter = LLMAdapter(providers=[provider])
+
+        groq_resp = LLMResponse(text="cerebras ok", tokens_used=25, model="qwen-3")
+        with patch(
+            "cic_daily_report.adapters.llm_adapter._call_groq",
+            new_callable=AsyncMock,
+            return_value=groq_resp,
+        ) as mock_groq:
+            resp = await adapter.generate("test prompt")
+
+        assert resp.text == "cerebras ok"
+        assert adapter.last_provider == "cerebras"
+        mock_groq.assert_called_once()
+
+    async def test_shared_rate_group_groq(self):
+        """groq and groq_llama4 share the 'groq' rate group."""
+        groq = _groq_provider()
+        llama4 = _groq_llama4_provider()
+        adapter = LLMAdapter(providers=[groq, llama4])
+
+        groq_resp = LLMResponse(text="ok", tokens_used=5, model="qwen")
+        with patch(
+            "cic_daily_report.adapters.llm_adapter._call_groq",
+            new_callable=AsyncMock,
+            return_value=groq_resp,
+        ):
+            await adapter.generate("test")
+
+        # Both groq providers use shared "groq" rate key — check quota tracked under "groq"
+        groq_quota = adapter._quota._quotas.get("groq")
+        assert groq_quota is not None
+        assert groq_quota.calls_made >= 1
 
 
 class TestTimedCircuitBreaker:

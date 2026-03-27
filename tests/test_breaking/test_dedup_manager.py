@@ -157,6 +157,107 @@ class TestDedupManager:
         assert result.entries_written[0].url == "https://x.com"
 
 
+class TestUrlDedup7Days:
+    """v0.32.0: URL dedup uses 7-day window instead of 4h cooldown."""
+
+    def test_url_blocked_at_5h(self):
+        """Same URL at 5h old → still blocked (was passing with 4h cooldown)."""
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+        existing = DedupEntry(
+            hash="different_hash",
+            title="Different title",
+            source="OtherSource",
+            detected_at=old_time,
+            url="https://news.com/same-article",
+        )
+        mgr = DedupManager(existing_entries=[existing])
+        event = _event(
+            "New title for same article", "NewSource", url="https://news.com/same-article"
+        )
+        result = mgr.check_and_filter([event])
+        assert len(result.new_events) == 0
+        assert result.duplicates_skipped == 1
+
+    def test_url_blocked_at_3_days(self):
+        """Same URL at 3 days old → still blocked within 7-day window."""
+        old_time = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        existing = DedupEntry(
+            hash="other_hash",
+            title="Old title",
+            source="Source",
+            detected_at=old_time,
+            url="https://news.com/article",
+        )
+        mgr = DedupManager(existing_entries=[existing])
+        event = _event("Same article new run", "Source2", url="https://news.com/article")
+        result = mgr.check_and_filter([event])
+        assert len(result.new_events) == 0
+
+    def test_url_passes_after_7_days(self):
+        """Same URL at 8 days old → passes (beyond 7-day window)."""
+        old_time = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+        existing = DedupEntry(
+            hash="old_hash",
+            title="Old article",
+            source="Source",
+            detected_at=old_time,
+            url="https://news.com/old-article",
+        )
+        mgr = DedupManager(existing_entries=[existing])
+        event = _event("Old article reposted", "Source", url="https://news.com/old-article")
+        result = mgr.check_and_filter([event])
+        assert len(result.new_events) == 1
+
+    def test_hash_cooldown_still_4h(self):
+        """Hash-based dedup still uses 4h cooldown (not affected by URL change)."""
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+        existing = DedupEntry(
+            hash=compute_hash("BTC hack", "CoinDesk"),
+            title="BTC hack",
+            source="CoinDesk",
+            detected_at=old_time,
+            # No URL — only hash check applies
+            url="",
+        )
+        mgr = DedupManager(existing_entries=[existing])
+        result = mgr.check_and_filter([_event(url="")])
+        # Hash cooldown = 4h, entry is 5h old → passes
+        assert len(result.new_events) == 1
+
+
+class TestEntityOverlapSingleEntity:
+    """v0.32.0: Entity overlap works with 1 entity + title similarity >= 0.50."""
+
+    def test_single_entity_with_similar_title(self):
+        """1 entity match + similar title (>= 0.50) → dedup."""
+        entries = [
+            DedupEntry(
+                hash="h1",
+                title="Binance announces new staking rewards program",
+                source="S",
+            )
+        ]
+        # Same entity (Binance) + similar title
+        assert _is_entity_overlap("Binance launches new staking rewards feature", entries) is True
+
+    def test_single_entity_with_different_title(self):
+        """1 entity match + dissimilar title (< 0.50) → NOT dedup."""
+        entries = [
+            DedupEntry(
+                hash="h1",
+                title="Binance announces new staking rewards program",
+                source="S",
+            )
+        ]
+        # Same entity but completely different topic
+        assert _is_entity_overlap("Binance faces regulatory scrutiny in Japan", entries) is False
+
+    def test_zero_entities_still_returns_false(self):
+        """No entities extracted → False (unchanged behavior)."""
+        entries = [DedupEntry(hash="h1", title="Binance does something", source="S")]
+        assert _is_entity_overlap("No entities here at all", entries) is False
+
+
 class TestDedupManagerCleanup:
     def test_removes_old_entries(self):
         old_time = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
@@ -359,10 +460,10 @@ class TestEntityDedup:
         entries = [DedupEntry(hash="h1", title="BlackRock files for Bitcoin ETF", source="S")]
         assert _is_entity_overlap("SEC sues Binance over derivatives trading", entries) is False
 
-    def test_entity_overlap_guard_clause_few_entities(self):
-        """Title with fewer than 2 extracted entities → guard clause → False."""
+    def test_entity_overlap_guard_clause_zero_entities(self):
+        """Title with zero extracted entities → guard clause → False."""
         entries = [DedupEntry(hash="h1", title="Binance announces new staking product", source="S")]
-        # "Update" has no entity matches → _extract_entities returns set() → len < 2
+        # "Market update today" has no entity matches → _extract_entities returns set()
         assert _is_entity_overlap("Market update today", entries) is False
 
     # --- Synonym resolution (v0.28.0 fix) ---

@@ -1,7 +1,7 @@
 # CIC Daily Report
 
 ## System
-- **Version**: 0.31.0 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
+- **Version**: 0.32.0 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
 - **Purpose**: Automated crypto daily report pipeline for CIC community (BIC Group/BIC Chat)
 - **Output**: 5 tier articles (L1→L5 cumulative) + 1 BIC Chat summary + 1 Research article (BIC Group L1) + Breaking news alerts
 - **Operator**: Anh Cường (no-code user, receives on Telegram, copy-pastes to BIC)
@@ -14,7 +14,7 @@
 - **Testing**: pytest + pytest-asyncio + pytest-mock + pytest-cov (fail-under=60)
 - **CI/CD**: GitHub Actions (3 workflows: daily-pipeline, breaking-news, test)
 - **Storage**: Google Sheets (9 tabs, gspread + batch_update)
-- **AI**: Gemini Flash (primary) → Gemini Flash Lite → Groq Llama 3.3 (fallback chain)
+- **AI**: Gemini 2.5 Flash (primary) → Flash-Lite → Groq Qwen3 → Groq Llama 4 Scout → Cerebras (fallback chain)
 - **Derivatives**: Coinalyze (primary) → OKX → Binance → Bybit (fallback chain)
 - **On-chain**: CoinMetrics Community (primary) → Glassnode (fallback)
 - **Research Data**: BGeometrics (MVRV-Z/NUPL/SOPR/Puell) + btcetffundflow.com (ETF) + DefiLlama (stablecoins) + Blockchain.com (miner stats)

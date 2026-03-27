@@ -200,22 +200,25 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     # Uses shared LLM, limited by MAX_DEFERRED_PER_RUN (A8)
     await _reprocess_deferred_events(run_log, result, dedup_mgr, llm)
 
-    # Stage 1: Detect via CryptoPanic (primary)
+    # Stage 1: Detect events — RSS first, CryptoPanic only if needed (v0.32.0)
+    # WHY: CryptoPanic has tight daily quota. RSS is free and unlimited.
+    # Try RSS first; only burn a CryptoPanic API call if RSS found < 3 events.
     events: list = []
-    use_rss_fallback = False
-    try:
-        events = await asyncio.wait_for(detect_breaking_events(), timeout=60)
-    except asyncio.TimeoutError:
-        logger.warning("CryptoPanic detection timed out — will try RSS fallback")
-        use_rss_fallback = True
-    except Exception as e:
-        logger.warning(f"CryptoPanic detection failed: {e} — will try RSS fallback")
-        use_rss_fallback = True
+    rss_events = await _rss_fallback_detection(run_log, llm)
+    events.extend(rss_events)
 
-    # Stage 1b: RSS + LLM fallback (uses shared LLM — A3)
-    if use_rss_fallback:
-        rss_events = await _rss_fallback_detection(run_log, llm)
-        events.extend(rss_events)
+    if len(events) < 3:
+        # RSS insufficient — use CryptoPanic to supplement
+        logger.info(f"RSS found {len(events)} events (< 3) — querying CryptoPanic for more")
+        try:
+            cp_events = await asyncio.wait_for(detect_breaking_events(), timeout=60)
+            events.extend(cp_events)
+        except asyncio.TimeoutError:
+            logger.warning("CryptoPanic detection timed out")
+        except Exception as e:
+            logger.warning(f"CryptoPanic detection failed: {e}")
+    else:
+        logger.info(f"Skipping CryptoPanic — RSS found {len(events)} events (>= 3 sufficient)")
 
     # Stage 1c: Market triggers (always-on, additive)
     market_events = await _market_trigger_detection(run_log)

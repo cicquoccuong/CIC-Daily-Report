@@ -116,7 +116,18 @@ class ErrorNotification:
             f"Tổng: {len(self.errors)} lỗi | Mức độ: "
             f"{'Nghiêm trọng' if self.is_critical else 'Có thể phục hồi'}"
         )
-        return "\n".join(lines)
+        message = "\n".join(lines)
+
+        # WHY: Telegram 400 Bad Request when message exceeds ~4096 chars.
+        # Truncate at 3500 to leave room for UTF-8 expansion + indicator.
+        max_len = 3500
+        if len(message) > max_len:
+            message = message[:max_len] + "\n\n⚠️ (thông báo bị cắt ngắn)"
+            logger.warning(
+                f"Error notification truncated: {len(message)} chars (original exceeded {max_len})"
+            )
+
+        return message
 
 
 def build_notification(errors: list[Exception]) -> ErrorNotification:

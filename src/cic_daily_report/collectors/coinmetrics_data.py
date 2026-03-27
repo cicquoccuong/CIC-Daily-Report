@@ -113,7 +113,16 @@ async def _fetch_asset_metrics(
         return metrics
 
     except httpx.HTTPStatusError as e:
-        logger.warning(f"CoinMetrics {asset}: HTTP {e.response.status_code}")
+        # v0.32.0: Log response body for 400 errors — helps debug metric name changes
+        error_body = ""
+        try:
+            error_body = e.response.text[:500]
+        except Exception:
+            pass
+        logger.warning(
+            f"CoinMetrics {asset}: HTTP {e.response.status_code}"
+            + (f" — {error_body}" if error_body else "")
+        )
         return []
     except Exception as e:
         logger.warning(f"CoinMetrics {asset}: {e}")

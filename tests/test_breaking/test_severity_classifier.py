@@ -335,3 +335,20 @@ class TestCryptoRelevance:
 
     def test_litecoin_recognized(self):
         assert _is_crypto_relevant("Litecoin halving approaches milestone") is True
+
+    # v0.32.0: Fear & Greed Index recognized as crypto-relevant
+    def test_fear_greed_index_recognized(self):
+        """'Fear & Greed Index' is a core crypto sentiment metric → True."""
+        assert _is_crypto_relevant("Fear & Greed Index xuống 10 — Extreme Fear") is True
+
+    def test_extreme_fear_recognized(self):
+        """'Extreme Fear' alone is recognized as crypto term → True."""
+        assert _is_crypto_relevant("Extreme Fear signals bottom for crypto market") is True
+
+    def test_extreme_greed_recognized(self):
+        """'Extreme Greed' recognized as crypto term → True."""
+        assert _is_crypto_relevant("Extreme Greed reaches highest level since 2021") is True
+
+    def test_fg_abbreviation_recognized(self):
+        """'F&G' abbreviation recognized → True."""
+        assert _is_crypto_relevant("F&G drops to 10, lowest this year") is True

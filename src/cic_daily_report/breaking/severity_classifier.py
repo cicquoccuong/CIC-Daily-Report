@@ -179,6 +179,14 @@ _CRYPTO_RELEVANCE_KEYWORDS = {
     "vulnerability",
     "rug pull",
     "stolen",
+    # Sentiment indicators
+    # WHY: "Fear & Greed Index" is a core crypto sentiment metric. Without these,
+    # F&G extreme events get skipped as "non-crypto" (observed in production logs).
+    "fear & greed",
+    "fear and greed",
+    "f&g",
+    "extreme fear",
+    "extreme greed",
     # Market events
     "market",
     "crash",

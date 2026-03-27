@@ -71,15 +71,22 @@ class FilterResult:
         return "pass"
 
 
+# v0.32.0: Top 3 filler phrases REMOVED at sentence level (not just warned).
+# WHY: These 3 appear most frequently in LLM output and add zero information.
+# Sentence-level removal preserves grammar better than phrase-level removal.
+REMOVE_FILLER_PATTERNS = [
+    r"điều này cho thấy",
+    r"có thể ảnh hưởng đến",
+    r"trong bối cảnh",
+]
+
 # Filler phrases discouraged by system prompt — detected and WARNED (v0.29.1).
 # v0.28.0 upgraded to REMOVE, but removing structural Vietnamese grammar (verbs,
 # prepositions) from prose destroyed sentence structure. Reverted to WARN-only.
+# v0.32.0: Top 3 most frequent fillers moved to REMOVE_FILLER_PATTERNS above.
 FILLER_PATTERNS = [
-    r"có thể ảnh hưởng đến",
     r"cần theo dõi (?:thêm|chặt chẽ|sát sao)",
-    r"điều này cho thấy",
     r"tuy nhiên cần lưu ý",
-    r"trong bối cảnh",
     r"có thể tác động (?:trực tiếp|đến)",
     r"có thể (?:tạo ra|dẫn đến) (?:sự )?(?:thay đổi|biến động)",
 ]
@@ -90,7 +97,7 @@ SEMANTIC_NQ05_PATTERNS = [
     r"cơ hội\s+(?:tốt|vàng)\s+để\s+(?:tích lũy|mua vào)",
     r"smart money\s+(?:đang\s+)?(?:mua|tích lũy|accumulate)",
     r"thời điểm\s+(?:tốt|thích hợp)\s+để\s+(?:mua|vào lệnh|entry)",
-    r"(?:nên|hãy)\s+(?:cân nhắc|xem xét)\s+(?:mua|bán|tích lũy)",
+    r"(?:nên|hãy|có thể|cần|nếu)\s+(?:cân nhắc|xem xét)\s+(?:mua|bán|tích lũy)",
     # v0.28.0: Additional semantic patterns from QA audit
     # v0.30.0: Narrowed to avoid stripping legitimate analysis for CIC members
     r"dự báo\s+(?:giá|thị trường)\s+sẽ\s+(?:tăng|giảm|đạt)",
@@ -107,6 +114,8 @@ SEMANTIC_NQ05_PATTERNS = [
     r"quyết định đầu tư\s+(?:thông minh|sáng suốt|hợp lý)",
     r"giai đoạn\s+tích lũy\s+(?:cuối cùng\s+)?trước\s+khi\s+"
     r"(?:tăng trưởng|phục hồi|bứt phá)",
+    # v0.32.0: Broader "xem xét" + action pattern (advisory language = NQ05 violation)
+    r"xem xét\s+(?:việc\s+)?(?:tích lũy|mua vào|mua thêm)",
 ]
 
 
@@ -203,7 +212,18 @@ def check_and_fix(
         result.auto_fixed += len(cjk_matches)
         logger.warning(f"Removed {len(cjk_matches)} CJK character sequences from content")
 
-    # Step 1e: Detect filler phrases — WARN-only, do NOT remove.
+    # Step 1e-1: REMOVE top 3 filler phrases at sentence level (v0.32.0).
+    # WHY: These 3 appear most frequently and add zero information value.
+    # Sentence-level removal preserves grammar (unlike phrase-level removal in v0.28.0).
+    for pattern_str in REMOVE_FILLER_PATTERNS:
+        pattern = re.compile(pattern_str, re.IGNORECASE)
+        matches = pattern.findall(result.content)
+        if matches:
+            result.content = _remove_sentences_with_pattern(result.content, pattern)
+            result.auto_fixed += len(matches)
+            logger.info(f"NQ05 filler removed: '{pattern_str}' ({len(matches)}x)")
+
+    # Step 1e-2: Detect remaining filler phrases — WARN-only, do NOT remove.
     # v0.29.1: Reverted from REMOVE (v0.28.0) back to WARN because these patterns
     # are structural Vietnamese grammar (verbs, prepositions) — removing them from
     # prose sentences destroys sentence structure, producing unreadable text.

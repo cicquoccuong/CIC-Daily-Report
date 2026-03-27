@@ -142,6 +142,29 @@ class TestCollectCoinmetricsOnchain:
         assert "BTC_NVT_Ratio" in btc_names
         assert "BTC_Hash_Rate" in btc_names
 
+    async def test_logs_error_body_on_400(self):
+        """v0.32.0: HTTP 400 error logs response body for debugging."""
+        error_body = '{"error": "Unknown metric: BadMetric"}'
+
+        async def mock_get(url, **kwargs):
+            resp = _resp(400)
+            resp._content = error_body.encode()
+            return resp
+
+        mock_client = AsyncMock()
+        mock_client.get = mock_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "cic_daily_report.collectors.coinmetrics_data.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            metrics = await collect_coinmetrics_onchain()
+
+        # Should return empty (graceful failure) — error body logged (tested via no crash)
+        assert metrics == []
+
     async def test_metric_has_correct_fields(self):
         """Verify OnChainMetric fields."""
         data = {

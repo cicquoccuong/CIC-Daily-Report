@@ -335,7 +335,30 @@ async def _collect_etf_flows() -> ETFFlowData | None:
         if not isinstance(first_query, dict):
             logger.warning(f"ETF flows: queries[0] is {type(first_query).__name__}, expected dict")
             return None
-        etf_data = first_query.get("state", {}).get("data", {}).get("data", {})
+
+        # v0.32.0: Defensive type checks — __NEXT_DATA__ structure can change.
+        # Each nested value might be a list instead of dict after site updates.
+        state_data = first_query.get("state", {}).get("data", {})
+        if isinstance(state_data, list):
+            logger.warning(f"ETF flows: state.data is list (len={len(state_data)}), expected dict")
+            state_data = state_data[0] if state_data else {}
+        if not isinstance(state_data, dict):
+            logger.warning(f"ETF flows: state.data is {type(state_data).__name__}, expected dict")
+            return None
+
+        inner_data = state_data.get("data", {})
+        if isinstance(inner_data, list):
+            logger.warning(
+                f"ETF flows: state.data.data is list (len={len(inner_data)}), expected dict"
+            )
+            inner_data = inner_data[0] if inner_data else {}
+        if not isinstance(inner_data, dict):
+            logger.warning(
+                f"ETF flows: state.data.data is {type(inner_data).__name__}, expected dict"
+            )
+            return None
+
+        etf_data = inner_data
         providers = etf_data.get("providers", {})
         chart2 = etf_data.get("chart2", {})  # USD net flows
 
@@ -529,15 +552,38 @@ async def _collect_blockchain_stats() -> dict[str, float]:
 
 _BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 
+# v0.32.0: CoinGecko fallback for Pi Cycle — Binance returns 451 from GitHub Actions (geo-blocked)
+_COINGECKO_MARKET_CHART_URL = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart"
+
 
 async def _collect_pi_cycle() -> PiCycleData | None:
-    """Calculate Pi Cycle Top indicator from Binance BTC price data.
+    """Calculate Pi Cycle Top indicator from BTC daily price data.
 
     Fetches 365 daily candles and computes:
     - 111-day Simple Moving Average
-    - 350-day Simple Moving Average × 2
-    - Whether 111SMA has crossed above 350SMA×2 (cycle top signal)
+    - 350-day Simple Moving Average x 2
+    - Whether 111SMA has crossed above 350SMA x 2 (cycle top signal)
+
+    v0.32.0: Tries Binance first, falls back to CoinGecko on failure (451 geo-block).
     """
+    closes = await _fetch_pi_cycle_closes_binance()
+
+    if closes is None:
+        logger.info("Pi Cycle: Binance failed, falling back to CoinGecko")
+        closes = await _fetch_pi_cycle_closes_coingecko()
+
+    if closes is None:
+        return None
+
+    if len(closes) < 350:
+        logger.warning(f"Pi Cycle: only {len(closes)} prices (need 350)")
+        return None
+
+    return _calculate_pi_cycle_from_closes(closes)
+
+
+async def _fetch_pi_cycle_closes_binance() -> list[float] | None:
+    """Fetch 365 daily closing prices from Binance klines API."""
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
             resp = await client.get(
@@ -551,36 +597,67 @@ async def _collect_pi_cycle() -> PiCycleData | None:
             resp.raise_for_status()
             klines = resp.json()
 
-        if len(klines) < 350:
-            logger.warning(f"Pi Cycle: only {len(klines)} candles (need 350)")
-            return None
-
         # Extract closing prices (index 4 in kline array)
-        closes = [float(k[4]) for k in klines]
-
-        # Calculate SMAs
-        sma_111 = sum(closes[-111:]) / 111
-        sma_350 = sum(closes[-350:]) / 350
-        sma_350x2 = sma_350 * 2
-
-        # Check for cross: 111SMA > 350SMA×2
-        is_crossed = sma_111 > sma_350x2
-
-        # Distance between the two (negative = 111SMA below 350SMA×2)
-        distance_pct = ((sma_111 - sma_350x2) / sma_350x2) * 100
-
-        logger.info(
-            f"Pi Cycle: 111SMA=${sma_111:,.0f}, 350SMA×2=${sma_350x2:,.0f}, "
-            f"distance={distance_pct:+.1f}%, crossed={is_crossed}"
-        )
-
-        return PiCycleData(
-            sma_111=sma_111,
-            sma_350x2=sma_350x2,
-            is_crossed=is_crossed,
-            distance_pct=distance_pct,
-        )
+        return [float(k[4]) for k in klines]
 
     except Exception as e:
-        logger.warning(f"Pi Cycle calculation failed: {e}")
+        logger.warning(f"Pi Cycle Binance failed: {e}")
         return None
+
+
+async def _fetch_pi_cycle_closes_coingecko() -> list[float] | None:
+    """Fetch 365 daily prices from CoinGecko market_chart (free, no geo-block).
+
+    CoinGecko returns: {"prices": [[timestamp_ms, price], ...]}
+    """
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            resp = await client.get(
+                _COINGECKO_MARKET_CHART_URL,
+                params={
+                    "vs_currency": "usd",
+                    "days": "365",
+                    "interval": "daily",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        prices = data.get("prices", [])
+        if not prices:
+            logger.warning("Pi Cycle CoinGecko: no prices returned")
+            return None
+
+        # Each entry is [timestamp_ms, price] — extract prices
+        closes = [float(p[1]) for p in prices]
+        logger.info(f"Pi Cycle CoinGecko: {len(closes)} daily prices fetched")
+        return closes
+
+    except Exception as e:
+        logger.warning(f"Pi Cycle CoinGecko failed: {e}")
+        return None
+
+
+def _calculate_pi_cycle_from_closes(closes: list[float]) -> PiCycleData:
+    """Calculate Pi Cycle Top indicator from closing prices."""
+    sma_111 = sum(closes[-111:]) / 111
+    sma_350 = sum(closes[-350:]) / 350
+    sma_350x2 = sma_350 * 2
+
+    # Check for cross: 111SMA > 350SMA x 2
+    is_crossed = sma_111 > sma_350x2
+
+    # Distance between the two (negative = 111SMA below 350SMA x 2)
+    distance_pct = ((sma_111 - sma_350x2) / sma_350x2) * 100
+
+    logger.info(
+        f"Pi Cycle: 111SMA=${sma_111:,.0f}, 350SMA x 2=${sma_350x2:,.0f}, "
+        f"distance={distance_pct:+.1f}%, crossed={is_crossed}"
+    )
+
+    return PiCycleData(
+        sma_111=sma_111,
+        sma_350x2=sma_350x2,
+        is_crossed=is_crossed,
+        distance_pct=distance_pct,
+    )

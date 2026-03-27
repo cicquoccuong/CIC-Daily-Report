@@ -14,6 +14,8 @@ class TestQuotaManager:
 
     def test_default_services_registered(self, qm):
         assert qm.can_call("groq") is True
+        assert qm.can_call("groq_llama4") is True
+        assert qm.can_call("cerebras") is True
         assert qm.can_call("gemini_flash") is True
         assert qm.can_call("cryptopanic") is True
 
@@ -23,7 +25,7 @@ class TestQuotaManager:
     def test_track_increments_counter(self, qm):
         qm.track("groq", 5)
         summary = qm.get_summary()
-        assert summary["groq"] == "5/14400"
+        assert summary["groq"] == "5/1000"
 
     def test_daily_limit_blocks(self, qm):
         qm.register_service("test_svc", daily_limit=2, rate_limit_per_min=0)

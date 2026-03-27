@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from cic_daily_report.breaking.event_detector import (
+    CRYPTOPANIC_API_URL,
     BreakingEvent,
     DetectionConfig,
     _calculate_panic_score,
@@ -13,6 +14,14 @@ from cic_daily_report.breaking.event_detector import (
     detect_breaking_events,
 )
 from cic_daily_report.core.error_handler import CollectorError, ConfigError
+
+
+class TestCryptoPanicAPIURL:
+    """v0.32.0: Verify API URL is v2 (consistent with cryptopanic_client.py)."""
+
+    def test_uses_v2_api(self):
+        assert "/developer/v2/" in CRYPTOPANIC_API_URL
+        assert "/v1/" not in CRYPTOPANIC_API_URL
 
 
 def _make_item(title="BTC news", panic_votes=None, source_title="CoinDesk", image_url=None):

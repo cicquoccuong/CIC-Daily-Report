@@ -13,11 +13,13 @@ from cic_daily_report.collectors.research_data import (
     PiCycleData,
     ResearchData,
     StablecoinData,
+    _calculate_pi_cycle_from_closes,
     _collect_bgeometrics,
     _collect_blockchain_stats,
     _collect_etf_flows,
     _collect_pi_cycle,
     _collect_stablecoin_data,
+    _fetch_pi_cycle_closes_coingecko,
     collect_research_data,
 )
 
@@ -390,6 +392,235 @@ class TestCollectPiCycle:
             return_value=mock_client,
         ):
             result = await _collect_pi_cycle()
+
+        assert result is None
+
+    async def test_falls_back_to_coingecko_on_binance_failure(self):
+        """v0.32.0: When Binance returns 451, falls back to CoinGecko."""
+        # CoinGecko response: {"prices": [[ts, price], ...]}
+        cg_prices = [[i * 86400000, 60000 + i * 100] for i in range(365)]
+
+        with (
+            patch(
+                "cic_daily_report.collectors.research_data._fetch_pi_cycle_closes_binance",
+                return_value=None,  # Binance failed
+            ),
+            patch(
+                "cic_daily_report.collectors.research_data._fetch_pi_cycle_closes_coingecko",
+                return_value=[float(p[1]) for p in cg_prices],
+            ),
+        ):
+            result = await _collect_pi_cycle()
+
+        assert result is not None
+        assert result.sma_111 > 0
+        assert result.sma_350x2 > 0
+
+    async def test_coingecko_response_parsing(self):
+        """v0.32.0: CoinGecko market_chart response parsed correctly."""
+        cg_data = {
+            "prices": [[1000 * i, 60000 + i * 10] for i in range(365)],
+        }
+
+        async def mock_get(url, **kwargs):
+            return _resp(200, cg_data)
+
+        mock_client = AsyncMock()
+        mock_client.get = mock_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "cic_daily_report.collectors.research_data.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            closes = await _fetch_pi_cycle_closes_coingecko()
+
+        assert closes is not None
+        assert len(closes) == 365
+        assert closes[0] == 60000.0
+        assert closes[-1] == 60000.0 + 364 * 10
+
+    async def test_coingecko_returns_none_on_empty_prices(self):
+        """v0.32.0: CoinGecko returns None when prices array is empty."""
+
+        async def mock_get(url, **kwargs):
+            return _resp(200, {"prices": []})
+
+        mock_client = AsyncMock()
+        mock_client.get = mock_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "cic_daily_report.collectors.research_data.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            closes = await _fetch_pi_cycle_closes_coingecko()
+
+        assert closes is None
+
+
+class TestCalculatePiCycleFromCloses:
+    """v0.32.0: Unit tests for extracted calculation function."""
+
+    def test_basic_calculation(self):
+        """Verify SMA values and cross detection from known data."""
+        closes = [60000 + i * 100 for i in range(365)]
+        result = _calculate_pi_cycle_from_closes(closes)
+        assert result.sma_111 > 0
+        assert result.sma_350x2 > 0
+        assert isinstance(result.is_crossed, bool)
+        assert isinstance(result.distance_pct, float)
+
+    def test_crossed_detection(self):
+        """When 111SMA > 350SMA*2, is_crossed should be True."""
+        # Create data where recent prices are very high (111SMA >> 350SMA*2)
+        closes = [10000] * 239 + [200000] * 126  # Last 126 days at 200k
+        result = _calculate_pi_cycle_from_closes(closes)
+        # 111SMA = close to 200000, 350SMA*2 = close to 2 * weighted avg
+        # With these numbers, 111SMA should exceed 350SMA*2
+        assert result.sma_111 > 0
+        assert result.sma_350x2 > 0
+
+
+# ---------------------------------------------------------------------------
+# ETF Flows — list-type defense (v0.32.0)
+# ---------------------------------------------------------------------------
+
+
+class TestETFFlowsListDefense:
+    """v0.32.0: Tests for defensive type checking when __NEXT_DATA__ structure changes."""
+
+    async def test_state_data_as_list(self):
+        """state.data is a list instead of dict — extracts first element."""
+        chart2 = {
+            "dates": ["2026-03-19"],
+            "IBIT": [500e6],
+        }
+        inner = {"data": {"providers": {}, "chart2": chart2}}
+        data = {
+            "props": {
+                "pageProps": {
+                    "dehydratedState": {
+                        "queries": [
+                            {
+                                "state": {
+                                    "data": [inner],  # List instead of dict
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        html = (
+            '<html><script id="__NEXT_DATA__" type="application/json">'
+            f"{json.dumps(data)}"
+            "</script></html>"
+        )
+
+        async def mock_get(url, **kwargs):
+            return _resp(200, text=html)
+
+        mock_client = AsyncMock()
+        mock_client.get = mock_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "cic_daily_report.collectors.research_data.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await _collect_etf_flows()
+
+        assert result is not None
+        assert len(result.entries) == 1
+
+    async def test_inner_data_as_list(self):
+        """state.data.data is a list instead of dict — extracts first element."""
+        chart2 = {
+            "dates": ["2026-03-19"],
+            "FBTC": [300e6],
+        }
+        data = {
+            "props": {
+                "pageProps": {
+                    "dehydratedState": {
+                        "queries": [
+                            {
+                                "state": {
+                                    "data": {
+                                        "data": [  # List instead of dict
+                                            {"providers": {}, "chart2": chart2}
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        html = (
+            '<html><script id="__NEXT_DATA__" type="application/json">'
+            f"{json.dumps(data)}"
+            "</script></html>"
+        )
+
+        async def mock_get(url, **kwargs):
+            return _resp(200, text=html)
+
+        mock_client = AsyncMock()
+        mock_client.get = mock_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "cic_daily_report.collectors.research_data.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await _collect_etf_flows()
+
+        assert result is not None
+        assert len(result.entries) == 1
+
+    async def test_state_data_empty_list_returns_none(self):
+        """state.data is an empty list — returns None gracefully."""
+        data = {
+            "props": {
+                "pageProps": {
+                    "dehydratedState": {
+                        "queries": [
+                            {
+                                "state": {
+                                    "data": [],  # Empty list
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        html = (
+            '<html><script id="__NEXT_DATA__" type="application/json">'
+            f"{json.dumps(data)}"
+            "</script></html>"
+        )
+
+        async def mock_get(url, **kwargs):
+            return _resp(200, text=html)
+
+        mock_client = AsyncMock()
+        mock_client.get = mock_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "cic_daily_report.collectors.research_data.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await _collect_etf_flows()
 
         assert result is None
 

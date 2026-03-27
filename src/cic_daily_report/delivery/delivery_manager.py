@@ -137,7 +137,9 @@ class DeliveryManager:
         if pipeline_errors and self._tg:
             try:
                 notification = build_notification(pipeline_errors)
-                await self._tg.send_message(notification.format_message())
+                # WHY: Error messages contain *bold* markdown and raw text that
+                # can break HTML parsing → use plain text (parse_mode=None).
+                await self._tg.send_message(notification.format_message(), parse_mode=None)
             except Exception as e:
                 logger.error(f"Error notification failed: {e}")
 

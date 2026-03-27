@@ -135,23 +135,44 @@ def _is_entity_overlap(
 
     v0.28.0: Catches cases where different English titles describe the same event
     (e.g., "Kalshi launches crypto prediction market" and "Nevada licenses Kalshi for crypto").
+
+    v0.32.0: When only 1 entity extracted, require BOTH entity match AND title
+    similarity >= 0.50. Previously required >= 2 entities which missed single-entity
+    duplicate stories (e.g., two different articles both about "Binance").
     """
     new_entities = _extract_entities(title)
-    if len(new_entities) < 2:
-        return False  # Not enough entities to compare
+    if len(new_entities) == 0:
+        return False  # No entities to compare
+
+    title_lower = title.strip().lower()
 
     for entry in recent_entries:
         existing_entities = _extract_entities(entry.title)
         if not existing_entities:
             continue
         overlap = new_entities & existing_entities
-        # Jaccard similarity on entities
-        union = new_entities | existing_entities
-        if union and len(overlap) / len(union) >= threshold:
-            logger.info(
-                f"Entity dedup: '{title[:50]}' overlaps '{entry.title[:50]}' (entities: {overlap})"
-            )
-            return True
+
+        if len(new_entities) == 1:
+            # WHY: Single entity match alone is too aggressive (many articles mention "BTC").
+            # Require entity match + title similarity >= 0.50 as dual confirmation.
+            if overlap:
+                existing_lower = entry.title.strip().lower()
+                ratio = SequenceMatcher(None, title_lower, existing_lower).ratio()
+                if ratio >= 0.50:
+                    logger.info(
+                        f"Entity dedup (1-entity+sim): '{title[:50]}' overlaps "
+                        f"'{entry.title[:50]}' (entity: {overlap}, sim: {ratio:.2f})"
+                    )
+                    return True
+        else:
+            # Jaccard similarity on entities (original logic for >= 2 entities)
+            union = new_entities | existing_entities
+            if union and len(overlap) / len(union) >= threshold:
+                logger.info(
+                    f"Entity dedup: '{title[:50]}' overlaps "
+                    f"'{entry.title[:50]}' (entities: {overlap})"
+                )
+                return True
     return False
 
 
@@ -275,18 +296,39 @@ class DedupManager:
         return result
 
     def _is_url_duplicate(self, url: str, now: datetime) -> bool:
-        """Check if URL matches any recent entry within cooldown window.
+        """Check if URL matches any entry within 7-day window.
 
         v0.30.0: URL-based dedup catches the same article across runs even when
         the AI-generated title differs (which changes the hash). Same URL = same
         underlying article, so this is the most reliable dedup signal.
+
+        v0.32.0: Uses 7-day window (CLEANUP_DAYS) instead of 4h cooldown.
+        WHY: Same URL = same article regardless of time. Only expire when
+        the entry would be cleaned up anyway.
         """
         url_lower = url.strip().lower()
         for entry in self._entries:
             if entry.url and entry.url.strip().lower() == url_lower:
-                if not self._is_cooldown_expired(entry, now):
+                if not self._is_url_cooldown_expired(entry, now):
                     return True
         return False
+
+    def _is_url_cooldown_expired(self, entry: DedupEntry, now: datetime) -> bool:
+        """URL-based dedup uses 7-day window (same as cleanup cycle).
+
+        Same URL = same article regardless of time. Only expire when
+        the entry would be cleaned up anyway.
+        """
+        if not entry.detected_at:
+            return False
+        try:
+            detected = datetime.fromisoformat(entry.detected_at)
+            if detected.tzinfo is None:
+                detected = detected.replace(tzinfo=timezone.utc)
+            age = now - detected
+            return age >= timedelta(days=CLEANUP_DAYS)
+        except (ValueError, TypeError):
+            return False
 
     def _is_duplicate(self, hash_value: str, now: datetime) -> bool:
         """Check if hash exists within the cooldown window."""

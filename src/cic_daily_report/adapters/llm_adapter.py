@@ -1,5 +1,6 @@
-"""Multi-LLM Adapter Pattern (QĐ2) — Gemini Flash → Gemini Flash Lite → Groq.
+"""Multi-LLM Adapter Pattern (QĐ2).
 
+Chain: Gemini 2.5 Flash → Flash-Lite → Groq Qwen3 → Groq Llama 4 → Cerebras.
 Unified interface: all providers return the same response format.
 Automatic fallback when primary fails. Provider preference per pipeline.
 """
@@ -21,9 +22,11 @@ logger = get_logger("llm_adapter")
 # v0.31.0: Provider-specific token-per-minute limits (output tokens).
 # Used by suggest_cooldown() to calculate adaptive wait times.
 _PROVIDER_TPM: dict[str, int] = {
-    "gemini_flash": 32000,  # Generous TPM, RPM is the real limit
+    "gemini_flash": 32000,
     "gemini_flash_lite": 32000,
-    "groq": 6000,  # Groq free tier: ~6K output tokens/min
+    "groq": 12000,  # Groq 2026: ~12K output TPM
+    "groq_llama4": 12000,
+    "cerebras": 50000,  # Cerebras: very generous TPM
 }
 
 # v0.31.0: Circuit breaker recovery time (seconds).
@@ -68,8 +71,8 @@ def _build_providers() -> list[LLMProvider]:
             LLMProvider(
                 name="gemini_flash",
                 api_key=gemini_key,
-                model="gemini-2.0-flash",
-                endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                model="gemini-2.5-flash",
+                endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
                 rate_limit_per_min=7,
             )
         )
@@ -77,8 +80,8 @@ def _build_providers() -> list[LLMProvider]:
             LLMProvider(
                 name="gemini_flash_lite",
                 api_key=gemini_key,
-                model="gemini-2.0-flash-lite",
-                endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent",
+                model="gemini-2.5-flash-lite",
+                endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
                 rate_limit_per_min=7,
             )
         )
@@ -89,9 +92,34 @@ def _build_providers() -> list[LLMProvider]:
             LLMProvider(
                 name="groq",
                 api_key=groq_key,
-                model="llama-3.3-70b-versatile",
+                model="qwen/qwen3-32b",
                 endpoint="https://api.groq.com/openai/v1/chat/completions",
-                rate_limit_per_min=6,
+                rate_limit_per_min=60,
+            )
+        )
+
+    # Groq Llama 4 Scout — Vietnamese native, fast inference
+    if groq_key:
+        providers.append(
+            LLMProvider(
+                name="groq_llama4",
+                api_key=groq_key,
+                model="meta-llama/llama-4-scout-17b-16e-instruct",
+                endpoint="https://api.groq.com/openai/v1/chat/completions",
+                rate_limit_per_min=30,
+            )
+        )
+
+    # Cerebras — final fallback, 1M tokens/day free
+    cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
+    if cerebras_key:
+        providers.append(
+            LLMProvider(
+                name="cerebras",
+                api_key=cerebras_key,
+                model="qwen-3-32b",
+                endpoint="https://api.cerebras.ai/v1/chat/completions",
+                rate_limit_per_min=30,
             )
         )
 
@@ -101,6 +129,7 @@ def _build_providers() -> list[LLMProvider]:
 # v0.30.0: Providers sharing the same API key rate limit
 _SHARED_RATE_GROUPS: dict[str, list[str]] = {
     "gemini": ["gemini_flash", "gemini_flash_lite"],
+    "groq": ["groq", "groq_llama4"],
 }
 
 
@@ -196,14 +225,16 @@ class LLMAdapter:
 
         tpm = _PROVIDER_TPM.get(self._last_provider, 6000)
         if self._last_tokens > 0:
-            # cooldown = (tokens_used / tpm_limit) * 60s + 15s buffer
-            cooldown = int(self._last_tokens / tpm * 60) + 15
-            return max(15, min(cooldown, 180))  # clamp to 15-180s
+            # cooldown = (tokens_used / tpm_limit) * 60s + 5s buffer
+            cooldown = int(self._last_tokens / tpm * 60) + 5
+            return max(10, min(cooldown, 120))  # clamp to 10-120s
 
         # Default per provider type
         if self._last_provider.startswith("gemini"):
-            return 15  # Gemini has generous TPM
-        return 60  # Groq needs more breathing room
+            return 10  # Gemini 2.5 has generous TPM
+        if self._last_provider == "cerebras":
+            return 10  # Cerebras also generous
+        return 30  # Groq models
 
     async def generate(
         self,
@@ -230,7 +261,7 @@ class LLMAdapter:
             try:
                 await self._quota.wait_for_rate_limit(rate_key)
 
-                if provider.name == "groq":
+                if provider.name in ("groq", "groq_llama4", "cerebras"):
                     response = await _call_groq(
                         provider, prompt, max_tokens, temperature, system_prompt
                     )
