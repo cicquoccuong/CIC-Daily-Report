@@ -8,8 +8,9 @@ Automatic fallback when primary fails. Provider preference per pipeline.
 from __future__ import annotations
 
 import os
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -34,6 +35,40 @@ _PROVIDER_TPM: dict[str, int] = {
 _CIRCUIT_RECOVERY_SEC = 300  # 5 minutes
 
 
+def _strip_think_tags(text: str) -> str:
+    """Remove <think>...</think> reasoning blocks from LLM output.
+
+    WHY: Qwen3-32B (Groq/Cerebras) emits <think> reasoning tags that
+    leak to end users in BIC Chat. Strip them at adapter level so all
+    downstream consumers get clean text.
+    """
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    # Fallback: unclosed <think> tag (LLM ran out of tokens mid-thinking).
+    # WHY: If LLM hits token limit inside a <think> block, the closing tag is
+    # missing and the regex above won't match — internal reasoning leaks to users.
+    if "<think>" in text:
+        text = text[: text.index("<think>")].strip()
+    return text
+
+
+def _truncate_to_complete_sentence(text: str) -> str:
+    """Truncate text to the last complete sentence boundary.
+
+    WHY: When finish_reason=length, the LLM ran out of tokens mid-sentence.
+    Cutting at the last sentence boundary gives readable text for BIC Chat.
+    """
+    # Find last sentence-ending punctuation followed by whitespace or at end of string.
+    # We search for ALL matches and take the last one.
+    last_pos = -1
+    for m in re.finditer(r"[.!?](?:\s|\Z)", text):
+        last_pos = m.start()
+    if last_pos >= 0:
+        # Include the punctuation character itself
+        return text[: last_pos + 1].strip()
+    # No sentence boundary found — return as-is (very rare)
+    return text
+
+
 @dataclass
 class LLMResponse:
     """Normalized response from any LLM provider."""
@@ -41,6 +76,8 @@ class LLMResponse:
     text: str
     tokens_used: int
     model: str
+    # P1.24: finish reason from provider ("stop", "length", etc.)
+    finish_reason: str = field(default="")
 
 
 @dataclass
@@ -270,11 +307,27 @@ class LLMAdapter:
                         provider, prompt, max_tokens, temperature, system_prompt
                     )
 
+                # P1.23: Strip <think> tags BEFORE any other processing.
+                # WHY: Qwen3 may emit reasoning tags even when disabled;
+                # defense-in-depth ensures clean text regardless.
+                response.text = _strip_think_tags(response.text)
+
                 # Safety net: validate response is non-empty
                 if not response.text.strip():
                     raise LLMError(
                         f"{provider.name} returned empty response",
                         source="llm_adapter",
+                    )
+
+                # P1.24: Truncate to complete sentence if LLM ran out of tokens.
+                # WHY: Cut-off mid-sentence text is unreadable for BIC Chat users.
+                if response.finish_reason == "length":
+                    original_len = len(response.text)
+                    response.text = _truncate_to_complete_sentence(response.text)
+                    logger.warning(
+                        f"LLM response truncated (finish_reason=length): "
+                        f"{original_len} → {len(response.text)} chars "
+                        f"[{provider.name}]"
                     )
 
                 # Success — reset this provider's circuit breaker
@@ -312,12 +365,18 @@ async def _call_groq(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
 
-    payload = {
+    payload: dict = {
         "model": provider.model,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+
+    # P1.23: Disable Qwen3 thinking mode via Groq/Cerebras API param.
+    # WHY: Qwen3-32B defaults to thinking=enabled, which emits <think> tags.
+    # Disabling at API level is more efficient than just stripping tags.
+    if "qwen" in provider.model.lower():
+        payload["thinking"] = {"type": "disabled"}
 
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
@@ -337,8 +396,12 @@ async def _call_groq(
         raise LLMError("Groq returned empty text", source="llm_adapter")
     usage = data.get("usage", {})
     tokens = usage.get("total_tokens", 0)
+    # P1.24: Parse finish_reason — "stop" (complete) or "length" (truncated)
+    finish_reason = choice.get("finish_reason", "")
 
-    return LLMResponse(text=text, tokens_used=tokens, model=provider.model)
+    return LLMResponse(
+        text=text, tokens_used=tokens, model=provider.model, finish_reason=finish_reason
+    )
 
 
 async def _call_gemini(
@@ -386,4 +449,13 @@ async def _call_gemini(
     usage = data.get("usageMetadata", {})
     tokens = usage.get("totalTokenCount", 0)
 
-    return LLMResponse(text=text, tokens_used=tokens, model=provider.model)
+    # P1.24: Map Gemini finish reason to normalized values.
+    # WHY: Gemini uses "MAX_TOKENS"/"STOP" vs Groq's "length"/"stop".
+    # Normalize so generate() can handle both uniformly.
+    _gemini_reason_map = {"MAX_TOKENS": "length", "STOP": "stop"}
+    raw_reason = candidates[0].get("finishReason", "")
+    finish_reason = _gemini_reason_map.get(raw_reason, raw_reason.lower())
+
+    return LLMResponse(
+        text=text, tokens_used=tokens, model=provider.model, finish_reason=finish_reason
+    )

@@ -98,8 +98,10 @@ _LONG_MOCK_CONTENT = (
     "| BTC | $70,810 | Tăng nhẹ |\n\n"
     "## 8. Tổng kết & Nhận định\n"
     "Tổng hợp tín hiệu cho thấy thị trường đang trong giai đoạn tích lũy. "
+    # WHY 160 not 200: P1.25 adds RESEARCH_MAX_CHARS=12000 truncation.
+    # 160 repeats + base + DISCLAIMER = ~11285 chars (under 12000).
     + "Phân tích thêm chi tiết về thị trường tài sản mã hóa hôm nay. "
-    * 200
+    * 160
 )
 
 

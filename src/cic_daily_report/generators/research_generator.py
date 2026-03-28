@@ -22,12 +22,16 @@ from cic_daily_report.generators.article_generator import (
     DISCLAIMER,
     GenerationContext,
 )
+from cic_daily_report.generators.text_utils import truncate_to_limit
 
 logger = get_logger("research_generator")
 
 # Research article needs higher token limit for >2500 words
 RESEARCH_MAX_TOKENS = 8192
 RESEARCH_TEMPERATURE = 0.4
+# P1.25: Upper bound for research articles to prevent unbounded content.
+# 2500 Vietnamese words x ~6 chars/word + formatting + DISCLAIMER headroom
+RESEARCH_MAX_CHARS = 18000
 
 # NQ05-compliant system prompt — research-grade depth
 RESEARCH_SYSTEM_PROMPT = (
@@ -97,7 +101,21 @@ async def generate_research_article(
     )
 
     # NQ05 filtering handled by pipeline Stage 3 (consistent with tier articles)
-    content = response.text.strip() + DISCLAIMER
+    body = response.text.strip()
+
+    # P1.25: Truncate body BEFORE appending DISCLAIMER to guarantee NQ05 disclaimer
+    # is never cut. WHY: DISCLAIMER is mandatory for NQ05 compliance — if we append
+    # it first and then truncate the combined string, the disclaimer can be chopped off.
+    body_limit = RESEARCH_MAX_CHARS - len(DISCLAIMER)
+    body, was_truncated = truncate_to_limit(body, body_limit)
+    if was_truncated:
+        logger.warning(
+            f"Research article body truncated to fit DISCLAIMER: "
+            f"{len(response.text.strip())} -> {len(body)} chars"
+        )
+    content = body + DISCLAIMER
+
+    # WHY recalculate after truncation: word_count must reflect final delivered content
     word_count = len(content.split())
     elapsed = time.monotonic() - start
 

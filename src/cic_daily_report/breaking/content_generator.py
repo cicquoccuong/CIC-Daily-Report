@@ -20,8 +20,12 @@ from cic_daily_report.breaking.event_detector import BreakingEvent
 from cic_daily_report.core.logger import get_logger
 from cic_daily_report.generators.article_generator import DISCLAIMER, NQ05_SYSTEM_PROMPT
 from cic_daily_report.generators.nq05_filter import check_and_fix
+from cic_daily_report.generators.text_utils import truncate_to_limit
 
 logger = get_logger("breaking_content")
+
+# 4000 not 4096 — leave room for Telegram formatting overhead
+BREAKING_MAX_CHARS = 4000
 
 # Pattern to strip LLM-generated disclaimers (prevents double disclaimer)
 _DISCLAIMER_RE = re.compile(
@@ -238,9 +242,17 @@ async def generate_breaking_content(
 
     logger.info(f"Breaking content generated: {word_count} words via {model_used}")
 
-    # Append source hyperlink + standard disclaimer
+    # P1.25 + NQ05: Truncate body BEFORE appending suffix to guarantee the
+    # mandatory DISCLAIMER is never cut off by the character limit.
     source_html = _format_source_link(event.source, event.url)
-    content_with_disclaimer = clean_content + f"\n\n🔗 {source_html}" + DISCLAIMER
+    suffix = f"\n\n🔗 {source_html}" + DISCLAIMER
+    body_limit = BREAKING_MAX_CHARS - len(suffix)
+    clean_content, was_truncated = truncate_to_limit(clean_content, body_limit)
+    if was_truncated:
+        logger.warning(
+            f"Breaking content body truncated to fit suffix: body_limit={body_limit} chars"
+        )
+    content_with_disclaimer = clean_content + suffix
 
     return BreakingContent(
         event=event,
@@ -304,9 +316,17 @@ async def generate_digest_content(
     clean_content = _DISCLAIMER_RE.sub("", filtered.content).rstrip()
     model_used = getattr(llm, "last_provider", response.model)
 
-    # Append links for all events
+    # P1.25 + NQ05: Truncate body BEFORE appending suffix to guarantee the
+    # mandatory DISCLAIMER is never cut off by the character limit.
     links = "\n".join(f"🔗 {_format_source_link(e.source, e.url)}" for e in events if e.url)
-    content_with_links = clean_content + f"\n\n{links}" + DISCLAIMER
+    suffix = f"\n\n{links}" + DISCLAIMER
+    body_limit = BREAKING_MAX_CHARS - len(suffix)
+    clean_content, was_truncated = truncate_to_limit(clean_content, body_limit)
+    if was_truncated:
+        logger.warning(
+            f"Digest content body truncated to fit suffix: body_limit={body_limit} chars"
+        )
+    content_with_links = clean_content + suffix
 
     logger.info(f"Digest generated: {len(events)} events via {model_used}")
 

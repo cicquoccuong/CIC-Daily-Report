@@ -1,5 +1,41 @@
 # Changelog
 
+## [2.0.0-alpha.2] - 2026-03-28
+
+### Phase 1b Wave 1 — LLM Output Cleanup + Hard Character Limits (3 tasks, 58 new tests)
+
+Think tags stripped at adapter level, truncated responses cut at sentence boundaries, and hard
+character limits enforce Telegram safety and article quality for all output types.
+
+#### P1.23: Strip `<think>...</think>` Tags
+- `_strip_think_tags()` added to `llm_adapter.py` — regex strips think tags from ALL LLM responses.
+- `thinking: {type: disabled}` injected into Groq API payload for Qwen3 models to prevent
+  reasoning tokens from appearing in output.
+- Fallback handles unclosed `<think>` tags when LLM runs out of tokens mid-thinking.
+- Defense-in-depth: applied at adapter level, all callers protected automatically.
+
+#### P1.24: Sentence Boundary Truncation on `finish_reason=length`
+- `finish_reason` field added to `LLMResponse` dataclass.
+- `_truncate_to_complete_sentence()` finds last `. ` / `! ` / `? ` boundary to avoid cut-off sentences.
+- Auto-applies when `finish_reason=length` (Groq) or `MAX_TOKENS` (Gemini).
+- Warning logged when truncation occurs.
+
+#### P1.25: Hard Character Limits
+- New `generators/text_utils.py` — `truncate_to_limit()` utility with paragraph → sentence →
+  hard-cut boundary strategy.
+- Breaking news capped at 4000 chars (Telegram single-message safety limit).
+- Research articles capped at 18000 chars (2500 VN words + formatting headroom).
+- NQ05 DISCLAIMER always preserved: body truncated first, disclaimer appended after.
+
+#### B5 Review Fixes
+- Unclosed `<think>` tag fallback (strips from opening tag to end of string).
+- Sentence boundary detection expanded to include `!` and `?` markers.
+- `RESEARCH_MAX_CHARS` raised 12000 → 18000 to accommodate full research articles.
+- DISCLAIMER truncation order enforced (body first, never disclaimer).
+
+### Test Coverage
+- 953 → 1011 tests (+58 new tests), 1011/1011 pass.
+
 ## [2.0.0-alpha.1] - 2026-03-28
 
 ### Phase 1a — Research Data Pipeline + Quality Foundation (5 tasks)
