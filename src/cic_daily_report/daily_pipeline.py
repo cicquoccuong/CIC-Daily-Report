@@ -654,8 +654,25 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     if whale_data.total_count > 0:
         logger.info(f"Whale data: {whale_data.total_count} transactions for LLM context")
 
-    # v0.19.0: Load recent breaking news context for pipeline integration
-    recent_breaking_text = await _load_recent_breaking_context()
+    # P1.10: Read today's breaking events from JSON feedback file first,
+    # fall back to Sheets-based BREAKING_LOG for 24h context.
+    # WHY dual source: JSON is faster (local file) and captures same-day events
+    # from breaking_pipeline runs. Sheets provides 24h history as fallback.
+    recent_breaking_text = ""
+    try:
+        from cic_daily_report.breaking.feedback import read_breaking_summary
+
+        recent_breaking_text = read_breaking_summary()
+        if recent_breaking_text:
+            logger.info(
+                f"P1.10: Breaking context loaded from JSON: {len(recent_breaking_text)} chars"
+            )
+    except Exception as e:
+        logger.warning(f"P1.10: JSON feedback read failed (non-critical): {e}")
+
+    # v0.19.0 fallback: If no JSON feedback, load from Sheets (24h window)
+    if not recent_breaking_text:
+        recent_breaking_text = await _load_recent_breaking_context()
 
     context = GenerationContext(
         coin_lists=coin_lists,

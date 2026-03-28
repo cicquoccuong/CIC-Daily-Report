@@ -37,6 +37,9 @@ Thumbs.db
 # UV
 uv.lock
 
+# P1.10: Ephemeral data directory (breaking feedback JSON, resets daily)
+data/
+
 # Credentials (NEVER commit)
 credentials.json
 token.json

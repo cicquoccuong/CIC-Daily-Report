@@ -392,6 +392,28 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     # Final persist (covers overflow deferrals, cleanup, any remaining updates)
     await _persist_dedup_to_sheets(dedup_mgr, new_entries=dedup_result.entries_written)
 
+    # P1.10: Save breaking feedback for daily pipeline context injection.
+    # WHY here (after all sends): captures both individual + digest events in one save.
+    # Non-critical — pipeline succeeds even if feedback save fails.
+    if result.sent_events:
+        try:
+            from cic_daily_report.breaking.feedback import save_breaking_summary
+
+            feedback_events = []
+            for classified_event in result.sent_events:
+                feedback_events.append(
+                    {
+                        "title": classified_event.event.title,
+                        "source": classified_event.event.source,
+                        "severity": classified_event.severity,
+                        "timestamp": classified_event.event.detected_at.isoformat(),
+                        "summary": classified_event.event.raw_data.get("summary", "")[:200],
+                    }
+                )
+            save_breaking_summary(feedback_events)
+        except Exception as e:
+            logger.warning(f"Breaking feedback save failed (non-critical): {e}")
+
     run_log.status = "success" if run_log.events_sent > 0 else "partial"
     return result
 

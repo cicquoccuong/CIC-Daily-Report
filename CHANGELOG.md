@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.0.0-alpha.3] - 2026-03-28
+
+### Phase 1b Wave 2 — Prediction Markets + Macro RSS + Geo Keywords + Breaking Feedback Loop (4 tasks, 131 new tests)
+
+Polymarket BTC/ETH sentiment data thu thập được, 5 nguồn RSS vĩ mô thêm vào, 12 từ khóa địa chính trị
+và 5 macro trigger mới, và breaking news giờ chia sẻ context với daily pipeline qua JSON.
+
+#### P1.4: Polymarket Prediction Markets Collector
+- NEW `collectors/prediction_markets.py` — fetches BTC/ETH prediction market data from Polymarket
+  Gamma API (free, no auth required).
+- `PredictionMarketsData` dataclass with `format_for_llm()` and `format_for_consensus()` methods.
+- Scaffolding ready for P1.6 (Consensus Engine) — not yet wired into main pipeline.
+
+#### P1.8: Macro RSS Feeds
+- Added 5 macro RSS feeds to `rss_collector.py`: Reuters (via Google News proxy), AP News, CNBC,
+  OilPrice, Al Jazeera — all tagged `source_type="macro"`.
+- B5 fix: Reuters original URL (dead since 2020) replaced with Google News proxy; AP replaced with
+  direct feed.
+
+#### P1.9: Geopolitical Keywords + Macro Market Triggers
+- Added 12 geopolitical always-trigger keywords: war, invasion, blockade, sanctions, airstrike,
+  missile, nuclear, ceasefire, oil crisis, energy crisis, embargo, hormuz — no crypto context needed.
+- Added 5 macro triggers with Vietnamese titles: Oil ≥+8%, Gold ≥+3%, VIX ≥30, DXY ≥+2%,
+  SPX ≤-3%.
+
+#### P1.10: Breaking Feedback Loop
+- NEW `breaking/feedback.py` — persists sent breaking events to `data/breaking_today.json` (JSON).
+- `breaking_pipeline.py` saves events after send; `daily_pipeline.py` reads JSON to inject context
+  into LLM prompt.
+- Auto-resets on new day; graceful degrade if file missing.
+
+### Test Coverage
+- 1011 → 1142 tests (+131 new tests), 1142/1142 pass.
+
 ## [2.0.0-alpha.2] - 2026-03-28
 
 ### Phase 1b Wave 1 — LLM Output Cleanup + Hard Character Limits (3 tasks, 58 new tests)

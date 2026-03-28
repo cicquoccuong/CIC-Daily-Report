@@ -35,6 +35,25 @@ ALWAYS_TRIGGER_KEYWORDS = [
     "bankrupt",
 ]
 
+# P1.9: Geopolitical keywords — always trigger (high-impact events).
+# WHY always-trigger: Geopolitical events (war, sanctions, energy crises)
+# ALWAYS affect crypto markets via risk-off sentiment, regardless of whether
+# the title mentions crypto explicitly.
+GEOPOLITICAL_KEYWORDS = [
+    "war",
+    "invasion",
+    "blockade",
+    "sanctions",
+    "airstrike",
+    "missile",
+    "nuclear",
+    "ceasefire",
+    "oil crisis",
+    "energy crisis",
+    "embargo",
+    "hormuz",  # Strait of Hormuz — critical oil chokepoint (Spec 2.7)
+]
+
 CONTEXT_REQUIRED_KEYWORDS = [
     "crash",
     "collapse",
@@ -43,8 +62,11 @@ CONTEXT_REQUIRED_KEYWORDS = [
     "emergency",
 ]
 
-# Combined list for backward compat (DetectionConfig default)
-DEFAULT_KEYWORD_TRIGGERS = ALWAYS_TRIGGER_KEYWORDS + CONTEXT_REQUIRED_KEYWORDS
+# Combined list for backward compat (DetectionConfig default).
+# WHY order: always-trigger first (crypto + geo), then context-required.
+DEFAULT_KEYWORD_TRIGGERS = (
+    ALWAYS_TRIGGER_KEYWORDS + GEOPOLITICAL_KEYWORDS + CONTEXT_REQUIRED_KEYWORDS
+)
 
 DEFAULT_PANIC_THRESHOLD = 70
 
@@ -290,13 +312,18 @@ def _match_keywords(title: str, keywords: list[str]) -> list[str]:
     title_lower = title.lower()
     has_crypto_context = any(w in title_lower for w in _CRYPTO_CONTEXT_WORDS)
 
+    # P1.9: Pre-compute always-trigger sets (crypto + geopolitical)
+    _always_trigger = {k.lower() for k in ALWAYS_TRIGGER_KEYWORDS} | {
+        k.lower() for k in GEOPOLITICAL_KEYWORDS
+    }
+
     matched: list[str] = []
     for kw in keywords:
         kw_lower = kw.lower()
         if kw_lower not in title_lower:
             continue
-        # Always-trigger keywords fire regardless of context
-        if kw_lower in {k.lower() for k in ALWAYS_TRIGGER_KEYWORDS}:
+        # Always-trigger keywords fire regardless of context (crypto + geo)
+        if kw_lower in _always_trigger:
             matched.append(kw)
         # Context-required keywords need a crypto word in the same title
         elif has_crypto_context:

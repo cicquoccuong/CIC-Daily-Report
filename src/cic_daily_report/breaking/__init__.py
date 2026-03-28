@@ -7,6 +7,7 @@ from cic_daily_report.breaking.event_detector import (
     DetectionConfig,
     detect_breaking_events,
 )
+from cic_daily_report.breaking.feedback import read_breaking_summary, save_breaking_summary
 from cic_daily_report.breaking.severity_classifier import (
     ClassificationConfig,
     ClassifiedEvent,
@@ -27,4 +28,6 @@ __all__ = [
     "compute_hash",
     "detect_breaking_events",
     "generate_breaking_content",
+    "read_breaking_summary",
+    "save_breaking_summary",
 ]

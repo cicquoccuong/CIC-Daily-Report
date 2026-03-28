@@ -1,6 +1,7 @@
 """RSS News Collector — parallel fetch from 15+ feeds (FR1, QĐ5).
 
-Enhanced with research feeds layer (Messari, Glassnode, CoinMetrics, Galaxy Digital)
+Enhanced with research feeds layer (Messari, Glassnode, CoinMetrics, Galaxy Digital),
+macro feeds layer (Reuters, AP, CNBC, OilPrice, Al Jazeera — P1.8),
 and og:image extraction for research articles.
 """
 
@@ -70,12 +71,40 @@ DEFAULT_FEEDS: list[FeedConfig] = [
     FeedConfig("https://cryptopotato.com/feed/", "CryptoPotato", "en"),
     FeedConfig("https://blogtienao.com/feed/", "BlogTienAo", "vi"),
     FeedConfig("https://dlnews.com/feed/", "DLNews", "en", enabled=False),  # 404
+    # Macro RSS feeds — global economy, energy, geopolitics (P1.8)
+    # WHY Google News proxy: Reuters killed direct RSS feeds in June 2020;
+    # this searches reuters.com content via Google News RSS.
     FeedConfig(
-        "https://feeds.reuters.com/reuters/businessNews",
-        "Reuters",
+        "https://news.google.com/rss/search?q=site:reuters.com+business&hl=en",
+        "Reuters_Business",
         "en",
-        enabled=False,
-    ),  # DNS fail
+        source_type="macro",
+    ),
+    # WHY direct AP RSS: previous rsshub.app proxy was unreliable (frequent timeouts).
+    FeedConfig(
+        "https://apnews.com/business.rss",
+        "AP_Business",
+        "en",
+        source_type="macro",
+    ),
+    FeedConfig(
+        "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258",
+        "CNBC_Economy",
+        "en",
+        source_type="macro",
+    ),
+    FeedConfig(
+        "https://oilprice.com/rss/main",
+        "OilPrice",
+        "en",
+        source_type="macro",
+    ),
+    FeedConfig(
+        "https://www.aljazeera.com/xml/rss/all.xml",
+        "AlJazeera_Economy",
+        "en",
+        source_type="macro",
+    ),
     FeedConfig("https://banklesshq.substack.com/feed/", "Bankless", "en", enabled=False),  # 403
     # Research feeds — deep analysis, typically weekly (source_type="research")
     FeedConfig(
