@@ -567,3 +567,195 @@ async def _collect_altcoin_season() -> list[MarketDataPoint]:
             source="SYNTHETIC (BlockchainCenter unavailable)",
         )
     ]
+
+
+# ---------------------------------------------------------------------------
+# Technical Indicators: RSI 14d, MA50, MA200 for BTC/ETH (P1.11)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TechnicalIndicators:
+    """Technical analysis indicators for a single asset (P1.11).
+
+    Computed from yfinance daily OHLCV data using standard formulas:
+    - RSI uses Wilder's smoothing (matches TradingView default)
+    - MA = Simple Moving Average of daily close prices
+    """
+
+    symbol: str  # "BTC" or "ETH"
+    rsi_14d: float
+    ma_50: float
+    ma_200: float
+    price_vs_ma50: str  # "above" or "below"
+    price_vs_ma200: str  # "above" or "below"
+    golden_cross: bool  # MA50 > MA200
+    rsi_signal: str  # "overbought" / "neutral" / "oversold"
+    source: str = "yfinance"
+
+
+def _calculate_rsi(closes: list[float], period: int = 14) -> float:
+    """Calculate RSI using Wilder's smoothing (exponential moving average).
+
+    WHY Wilder's: This matches TradingView's default RSI, which is the industry
+    standard CIC members compare against. Simple-average RSI diverges significantly.
+
+    Args:
+        closes: List of closing prices, oldest first. Needs >= period+1 values.
+        period: RSI lookback period (default 14).
+
+    Returns:
+        RSI value (0-100). Returns 50.0 if insufficient data.
+    """
+    if len(closes) < period + 1:
+        return 50.0  # neutral fallback when insufficient data
+
+    # Calculate price changes
+    deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+
+    # Seed: simple average of first `period` gains/losses
+    gains = [max(d, 0) for d in deltas[:period]]
+    losses = [abs(min(d, 0)) for d in deltas[:period]]
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+
+    # Wilder's smoothing for remaining deltas
+    for d in deltas[period:]:
+        gain = max(d, 0)
+        loss = abs(min(d, 0))
+        avg_gain = (avg_gain * (period - 1) + gain) / period
+        avg_loss = (avg_loss * (period - 1) + loss) / period
+
+    # WHY: Flat prices (no movement) means avg_gain=0 AND avg_loss=0.
+    # This is neutral (50.0), not bullish. Must check before avg_loss==0.
+    if avg_gain == 0 and avg_loss == 0:
+        return 50.0  # flat prices — no gains, no losses → neutral
+    if avg_loss == 0:
+        return 100.0  # all gains, no losses
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+def _yf_get_technical(ticker: str) -> dict | None:
+    """Sync yfinance fetch for technical indicator computation (run in thread).
+
+    Fetches 210 daily candles — enough for MA200 + 10 buffer days for weekends/holidays.
+    Returns dict with closes list and current price, or None on failure.
+    """
+    import yfinance as yf
+
+    t = yf.Ticker(ticker)
+    # WHY 250 days: MA200 needs 200 points. yfinance "1y" = ~252 trading days.
+    # Using explicit period to ensure enough data even with holidays.
+    hist = t.history(period="1y")
+    if hist.empty or len(hist) < 50:
+        # Need at least 50 for MA50; fewer means data is unreliable
+        return None
+
+    closes = hist["Close"].tolist()
+    return {"closes": closes, "current_price": closes[-1]}
+
+
+async def collect_technical_indicators() -> list[TechnicalIndicators]:
+    """Collect RSI 14d, MA50, MA200 for BTC and ETH (P1.11).
+
+    Separate from collect_market_data() to keep return types clean.
+    Uses asyncio.to_thread() since yfinance is synchronous (established pattern).
+
+    Returns:
+        List of TechnicalIndicators (0-2 items). Empty list on total failure.
+    """
+    try:
+        import yfinance as _yf  # noqa: F401
+    except ImportError:
+        logger.warning("yfinance not installed — skipping technical indicators")
+        return []
+
+    # WHY BTC-USD and ETH-USD: These are the two core assets CIC tracks.
+    # Spec Section 2.5 explicitly requires these two.
+    targets = [("BTC-USD", "BTC"), ("ETH-USD", "ETH")]
+    indicators: list[TechnicalIndicators] = []
+
+    async def _fetch_one(ticker: str, label: str) -> TechnicalIndicators | None:
+        try:
+            data = await asyncio.to_thread(_yf_get_technical, ticker)
+            if not data:
+                logger.warning(f"Technical indicators: no data for {label}")
+                return None
+
+            closes = data["closes"]
+            current = data["current_price"]
+
+            rsi = _calculate_rsi(closes, 14)
+
+            # MA50 and MA200 — use as many closes as available
+            ma_50 = sum(closes[-50:]) / min(len(closes), 50) if len(closes) >= 50 else 0.0
+            ma_200 = sum(closes[-200:]) / min(len(closes), 200) if len(closes) >= 200 else 0.0
+
+            # Determine signals
+            if rsi > 70:
+                rsi_signal = "overbought"
+            elif rsi < 30:
+                rsi_signal = "oversold"
+            else:
+                rsi_signal = "neutral"
+
+            return TechnicalIndicators(
+                symbol=label,
+                rsi_14d=round(rsi, 1),
+                ma_50=round(ma_50, 2),
+                ma_200=round(ma_200, 2) if ma_200 > 0 else 0.0,
+                price_vs_ma50="above" if current > ma_50 else "below",
+                price_vs_ma200=("above" if ma_200 > 0 and current > ma_200 else "below"),
+                golden_cross=ma_50 > ma_200 if ma_200 > 0 else False,
+                rsi_signal=rsi_signal,
+            )
+        except Exception as e:
+            logger.warning(f"Technical indicators for {label} failed: {e}")
+            return None
+
+    tasks = [_fetch_one(ticker, label) for ticker, label in targets]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for r in results:
+        if isinstance(r, TechnicalIndicators):
+            indicators.append(r)
+        elif isinstance(r, Exception):
+            logger.warning(f"Technical indicator task failed: {r}")
+
+    logger.info(f"Technical indicators collected: {len(indicators)} assets")
+    return indicators
+
+
+def format_technical_for_llm(indicators: list[TechnicalIndicators]) -> str:
+    """Format technical indicators as LLM-readable text block.
+
+    Output example:
+        === CHI BAO KY THUAT (nguon: yfinance) ===
+        BTC: RSI(14) = 45.2 (Trung tinh) | MA50 = $68,500 | MA200 = $62,300 | Golden Cross
+        ETH: RSI(14) = 38.7 (Trung tinh) | MA50 = $3,200 | MA200 = $2,800 | Golden Cross
+    """
+    if not indicators:
+        return ""
+
+    # WHY Vietnamese labels: matches existing market_text format for LLM consistency
+    signal_labels = {
+        "overbought": "Qua mua",
+        "oversold": "Qua ban",
+        "neutral": "Trung tinh",
+    }
+
+    lines = ["=== CHI BAO KY THUAT (nguon: yfinance) ==="]
+    for ind in indicators:
+        label = signal_labels.get(ind.rsi_signal, ind.rsi_signal)
+        cross = "Golden Cross" if ind.golden_cross else "Death Cross"
+        # WHY conditional MA200: if 0, data insufficient — don't show misleading "MA200 = $0"
+        ma200_str = f" | MA200 = ${ind.ma_200:,.0f}" if ind.ma_200 > 0 else ""
+        line = (
+            f"{ind.symbol}: RSI(14) = {ind.rsi_14d} ({label}) | MA50 = ${ind.ma_50:,.0f}{ma200_str}"
+        )
+        if ind.ma_200 > 0:
+            line += f" | {cross}"
+        lines.append(line)
+
+    return "\n".join(lines)

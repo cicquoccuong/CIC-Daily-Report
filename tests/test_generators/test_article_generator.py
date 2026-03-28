@@ -6,6 +6,9 @@ from cic_daily_report.adapters.llm_adapter import LLMResponse
 from cic_daily_report.generators.article_generator import (
     DISCLAIMER,
     GenerationContext,
+    _filter_data_for_tier,
+    _get_tier_data_sources,
+    _validate_and_clean_output,
     generate_tier_articles,
 )
 from cic_daily_report.generators.template_engine import (
@@ -390,3 +393,345 @@ class TestValidateAndClean:
             assert match and int(match.group(1)) >= 5, (
                 f"Expected ≥5 coins counted, got: {coin_warnings[0]}"
             )
+
+
+class TestResearchDataInContext:
+    """v2.0 P1.1: research_data_text flows into GenerationContext and tier articles."""
+
+    _SAMPLE_RESEARCH = (
+        "=== ON-CHAIN NANG CAO (nguon: BGeometrics) ===\n"
+        "  MVRV_Z_Score: 2.1500 (BGeometrics, 2026-03-27)\n"
+        "  NUPL: 0.5800 (BGeometrics, 2026-03-27)\n"
+        "  SOPR: 1.0200 (BGeometrics, 2026-03-27)\n"
+        "  Puell_Multiple: 1.3000 (BGeometrics, 2026-03-27)\n\n"
+        "=== SPOT BITCOIN ETF FLOW (nguon: btcetffundflow.com) ===\n"
+        "  Tong dong tien: $150,000,000\n"
+    )
+
+    def test_generation_context_accepts_research_data_text(self):
+        """GenerationContext dataclass can be instantiated with research_data_text."""
+        ctx = GenerationContext(research_data_text=self._SAMPLE_RESEARCH)
+        assert ctx.research_data_text == self._SAMPLE_RESEARCH
+
+    def test_generation_context_defaults_empty_research_data(self):
+        """research_data_text defaults to empty string when not provided."""
+        ctx = GenerationContext()
+        assert ctx.research_data_text == ""
+
+    def test_filter_l1_excludes_research_data(self):
+        """L1 (beginners) must NOT receive research data."""
+        ctx = GenerationContext(
+            market_data="BTC: $105,000",
+            research_data_text=self._SAMPLE_RESEARCH,
+        )
+        filtered = _filter_data_for_tier("L1", ctx, "")
+        assert filtered["research_data"] == ""
+
+    def test_filter_l2_excludes_research_data(self):
+        """L2 (altcoin overview) must NOT receive research data."""
+        ctx = GenerationContext(
+            market_data="BTC: $105,000",
+            research_data_text=self._SAMPLE_RESEARCH,
+        )
+        filtered = _filter_data_for_tier("L2", ctx, "")
+        assert filtered["research_data"] == ""
+
+    def test_filter_l3_includes_research_data(self):
+        """L3 (deep analysis) MUST receive full research data."""
+        ctx = GenerationContext(
+            market_data="BTC: $105,000",
+            news_summary="Some news\n" * 15,
+            research_data_text=self._SAMPLE_RESEARCH,
+        )
+        filtered = _filter_data_for_tier("L3", ctx, "")
+        assert filtered["research_data"] == self._SAMPLE_RESEARCH
+
+    def test_filter_l4_includes_research_data(self):
+        """L4 (risk analysis) MUST receive full research data."""
+        ctx = GenerationContext(
+            market_data="BTC: $105,000",
+            news_summary="Some news\n" * 10,
+            research_data_text=self._SAMPLE_RESEARCH,
+        )
+        filtered = _filter_data_for_tier("L4", ctx, "")
+        assert filtered["research_data"] == self._SAMPLE_RESEARCH
+
+    def test_filter_l5_includes_research_data(self):
+        """L5 (master investor) MUST receive full research data."""
+        ctx = GenerationContext(
+            market_data="BTC: $105,000",
+            news_summary="Some news\n" * 25,
+            research_data_text=self._SAMPLE_RESEARCH,
+        )
+        filtered = _filter_data_for_tier("L5", ctx, "")
+        assert filtered["research_data"] == self._SAMPLE_RESEARCH
+
+    async def test_prompt_contains_research_data_for_l3(self):
+        """L3 prompt sent to LLM must contain research data section header + content."""
+        templates = _make_templates("L3")
+        ctx = GenerationContext(
+            coin_lists={"L3": ["BTC", "ETH"]},
+            market_data="BTC: $105,000",
+            news_summary="Some news\n" * 15,
+            research_data_text=self._SAMPLE_RESEARCH,
+        )
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=100, model="test")
+        )
+
+        await generate_tier_articles(mock_llm, templates, ctx)
+
+        call_args = mock_llm.generate.call_args
+        prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
+        assert "DU LIEU NGHIEN CUU NANG CAO" in prompt or "NGHIÊN CỨU NÂNG CAO" in prompt
+        assert "BGeometrics" in prompt
+        assert "MVRV_Z_Score" in prompt
+
+    async def test_prompt_excludes_research_data_for_l1(self):
+        """L1 prompt must NOT contain research data section."""
+        templates = _make_templates("L1")
+        ctx = GenerationContext(
+            coin_lists={"L1": ["BTC", "ETH"]},
+            market_data="BTC: $105,000",
+            news_summary="Some news",
+            research_data_text=self._SAMPLE_RESEARCH,
+        )
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=100, model="test")
+        )
+
+        await generate_tier_articles(mock_llm, templates, ctx)
+
+        call_args = mock_llm.generate.call_args
+        prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
+        assert "MVRV_Z_Score" not in prompt
+        assert "NGHIÊN CỨU NÂNG CAO" not in prompt
+
+    async def test_prompt_no_research_block_when_empty(self):
+        """When research_data_text is empty, no research block appears in prompt."""
+        templates = _make_templates("L3")
+        ctx = GenerationContext(
+            coin_lists={"L3": ["BTC", "ETH"]},
+            market_data="BTC: $105,000",
+            news_summary="Some news\n" * 15,
+            research_data_text="",  # empty
+        )
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=100, model="test")
+        )
+
+        await generate_tier_articles(mock_llm, templates, ctx)
+
+        call_args = mock_llm.generate.call_args
+        prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
+        assert "NGHIÊN CỨU NÂNG CAO" not in prompt
+
+    def test_l3_sources_include_research_providers(self):
+        """L3 source attribution must include BGeometrics, btcetffundflow.com, DefiLlama."""
+        result = _get_tier_data_sources("L3")
+        assert "BGeometrics" in result
+        assert "btcetffundflow.com" in result
+        assert "DefiLlama" in result
+
+    def test_l5_sources_include_research_providers(self):
+        """L5 source attribution must include BGeometrics, btcetffundflow.com, DefiLlama."""
+        result = _get_tier_data_sources("L5")
+        assert "BGeometrics" in result
+        assert "btcetffundflow.com" in result
+        assert "DefiLlama" in result
+
+    def test_l1_sources_exclude_research_providers(self):
+        """L1 source attribution must NOT include research providers."""
+        result = _get_tier_data_sources("L1")
+        assert "BGeometrics" not in result
+        assert "btcetffundflow.com" not in result
+        assert "DefiLlama" not in result
+
+    def test_l2_sources_exclude_research_providers(self):
+        """L2 source attribution must NOT include research providers."""
+        result = _get_tier_data_sources("L2")
+        assert "BGeometrics" not in result
+        assert "btcetffundflow.com" not in result
+        assert "DefiLlama" not in result
+
+
+class TestContextAwareFabricationFilter:
+    """v2.0 P1.2: Fabrication filter must be context-aware.
+
+    When research_data contains a metric (e.g. MVRV_Z_Score), the LLM mentioning
+    that metric should NOT be flagged as fabrication. Only strip metrics that
+    were truly NOT provided in input data.
+    """
+
+    _RESEARCH_DATA = (
+        "=== ON-CHAIN NANG CAO (nguon: BGeometrics) ===\n"
+        "  MVRV_Z_Score: 2.1500 (BGeometrics, 2026-03-27)\n"
+        "  NUPL: 0.5800 (BGeometrics, 2026-03-27)\n"
+        "  SOPR: 1.0200 (BGeometrics, 2026-03-27)\n"
+        "  Puell_Multiple: 1.3000 (BGeometrics, 2026-03-27)\n"
+    )
+
+    def test_mvrv_preserved_when_in_research_data(self):
+        """MVRV in output + MVRV_Z_Score in research_data => NOT stripped."""
+        content = (
+            "BTC tiep tuc tang.\n"
+            "MVRV Z-Score hien tai la 2.15, cho thay thi truong chua qua nong.\n"
+            "Nha dau tu nen tiep tuc theo doi."
+        )
+        cleaned, warnings = _validate_and_clean_output(
+            content, "L3", onchain_data="", research_data=self._RESEARCH_DATA
+        )
+        assert "MVRV" in cleaned, "MVRV should be preserved when research_data contains it"
+        assert not any("MVRV" in w for w in warnings), (
+            f"MVRV should NOT trigger warning when in research_data, got: {warnings}"
+        )
+
+    def test_mvrv_stripped_when_no_research_data(self):
+        """MVRV in output + empty research_data => SHOULD strip (fabricated)."""
+        content = (
+            "BTC tiep tuc tang.\n"
+            "MVRV Z-Score hien tai la 2.15, cho thay thi truong chua qua nong.\n"
+            "Nha dau tu nen tiep tuc theo doi."
+        )
+        cleaned, warnings = _validate_and_clean_output(
+            content, "L3", onchain_data="", research_data=""
+        )
+        assert "MVRV" not in cleaned, "MVRV should be stripped when not in any input data"
+        assert any("MVRV" in w for w in warnings)
+
+    def test_nupl_preserved_when_in_research_data(self):
+        """NUPL in output + NUPL in research_data => NOT stripped."""
+        content = (
+            "Chi so NUPL dang o muc 0.58, phan anh tam ly lac quan.\n"
+            "Dieu nay dong nhat voi xu huong tich luy dai han."
+        )
+        cleaned, warnings = _validate_and_clean_output(
+            content, "L3", onchain_data="", research_data=self._RESEARCH_DATA
+        )
+        assert "NUPL" in cleaned, "NUPL should be preserved when research_data contains it"
+        assert not any("NUPL" in w for w in warnings)
+
+    def test_sopr_preserved_when_in_research_data(self):
+        """SOPR in output + SOPR in research_data => NOT stripped."""
+        content = (
+            "SOPR = 1.02, cho thay loi nhuan cua nguoi ban dang duong.\n"
+            "Day la tin hieu tich cuc cho nha dau tu dai han."
+        )
+        cleaned, warnings = _validate_and_clean_output(
+            content, "L3", onchain_data="", research_data=self._RESEARCH_DATA
+        )
+        assert "SOPR" in cleaned
+        assert not any("SOPR" in w for w in warnings)
+
+    def test_puell_preserved_when_in_research_data(self):
+        """Puell Multiple in output + Puell_Multiple in research_data => NOT stripped."""
+        content = (
+            "Puell Multiple hien tai la 1.30, cho thay doanh thu mining on dinh.\n"
+            "Khong co ap luc ban tu phia tho dao."
+        )
+        cleaned, warnings = _validate_and_clean_output(
+            content, "L3", onchain_data="", research_data=self._RESEARCH_DATA
+        )
+        assert "Puell Multiple" in cleaned
+        assert not any("Puell" in w for w in warnings)
+
+    def test_bloomberg_still_stripped_even_with_research_data(self):
+        """Bloomberg is a banned SOURCE, not a metric — always stripped regardless."""
+        content = "Theo Bloomberg, dong tien ETF vao BTC dat $500M.\nDay la tin hieu tich cuc."
+        cleaned, warnings = _validate_and_clean_output(
+            content, "L3", onchain_data="", research_data=self._RESEARCH_DATA
+        )
+        assert "Bloomberg" not in cleaned, "Bloomberg must always be stripped (banned source)"
+        assert any("Bloomberg" in w for w in warnings)
+
+    def test_exchange_reserves_stripped_when_not_in_data(self):
+        """Exchange Reserves not in research_data => still stripped."""
+        content = "Exchange Reserve giam manh, cho thay nha dau tu rut coin.\nBTC tiep tuc on dinh."
+        cleaned, warnings = _validate_and_clean_output(
+            content, "L3", onchain_data="", research_data=self._RESEARCH_DATA
+        )
+        assert "Exchange Reserve" not in cleaned
+        assert any("Exchange Reserves" in w for w in warnings)
+
+    def test_multiple_metrics_mixed_preserved_and_stripped(self):
+        """When some metrics are in research_data and some are not, handle both correctly."""
+        content = (
+            "MVRV Z-Score la 2.15 — thi truong chua qua nong.\n"
+            "NUPL = 0.58, tam ly lac quan.\n"
+            "Exchange Reserve giam manh, rut coin khoi san.\n"
+            "BTC on dinh quanh $105K."
+        )
+        cleaned, warnings = _validate_and_clean_output(
+            content, "L3", onchain_data="", research_data=self._RESEARCH_DATA
+        )
+        # MVRV, NUPL in research_data => preserved
+        assert "MVRV" in cleaned
+        assert "NUPL" in cleaned
+        # Exchange Reserve NOT in research_data => stripped
+        assert "Exchange Reserve" not in cleaned
+        # BTC line always preserved
+        assert "BTC on dinh" in cleaned
+
+    def test_onchain_data_still_works_without_research(self):
+        """Backward compat: metrics in onchain_data are preserved (regression test)."""
+        content = "BTC tiep tuc tang.\nMVRV hien tai cho thay gia tri hop ly.\nKet luan: on dinh."
+        # MVRV present in onchain_data (old behavior) => NOT stripped
+        cleaned, warnings = _validate_and_clean_output(
+            content, "L3", onchain_data="MVRV: 2.1", research_data=""
+        )
+        assert "MVRV" in cleaned
+        assert not any("MVRV" in w for w in warnings)
+
+    async def test_prompt_fabrication_examples_context_aware_with_research(self):
+        """When research_data is present, prompt should NOT list MVRV/SOPR as banned examples."""
+        templates = _make_templates("L3")
+        ctx = GenerationContext(
+            coin_lists={"L3": ["BTC", "ETH"]},
+            market_data="BTC: $105,000",
+            news_summary="Some news\n" * 15,
+            research_data_text=self._RESEARCH_DATA,
+        )
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=100, model="test")
+        )
+
+        await generate_tier_articles(mock_llm, templates, ctx)
+
+        call_args = mock_llm.generate.call_args
+        prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
+        # When research data IS provided, MVRV/SOPR should NOT be in banned examples
+        # (they're legitimate data now, not fabrication)
+        # The prompt should list Bloomberg/TradingView instead
+        assert "Bloomberg" in prompt
+        assert "TradingView" in prompt
+
+    async def test_prompt_fabrication_examples_include_mvrv_without_research(self):
+        """When research_data is empty, prompt should list MVRV/SOPR as banned examples."""
+        templates = _make_templates("L3")
+        ctx = GenerationContext(
+            coin_lists={"L3": ["BTC", "ETH"]},
+            market_data="BTC: $105,000",
+            news_summary="Some news\n" * 15,
+            research_data_text="",  # no research data
+        )
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=100, model="test")
+        )
+
+        await generate_tier_articles(mock_llm, templates, ctx)
+
+        call_args = mock_llm.generate.call_args
+        prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
+        # When research data is NOT provided, MVRV/SOPR should be in banned examples
+        assert "MVRV" in prompt
+        assert "SOPR" in prompt

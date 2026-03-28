@@ -116,6 +116,8 @@ class GenerationContext:
     sector_data: str = ""  # v0.21.0: sector/DeFi data from CoinGecko + DefiLlama
     data_quality_notes: str = ""  # v0.21.0: quality warnings for LLM
     whale_data: str = ""  # v0.24.0: whale transaction summary from Whale Alert
+    research_data_text: str = ""  # v2.0 P1.1: advanced research data (MVRV, NUPL, ETF, etc.)
+    historical_context: str = ""  # v2.0 P1.3: 7d/30d historical metrics for comparative analysis
 
 
 async def generate_tier_articles(
@@ -192,6 +194,8 @@ async def generate_tier_articles(
             "narratives": filtered["narratives"],
             "sector_data": filtered["sector_data"],
             "whale_data": filtered["whale_data"],
+            "research_data": filtered["research_data"],
+            "historical_context": filtered["historical_context"],
         }
 
         # Try generation with 1 retry on 429 rate limit errors
@@ -235,12 +239,24 @@ def _get_tier_data_sources(tier: str) -> str:
     Prevents L1 from claiming CoinGecko sector data it doesn't receive,
     and ensures each tier only cites sources whose data it actually gets.
     """
+    # v2.0 P1.1: L3-L5 now include BGeometrics, btcetffundflow.com, DefiLlama
+    # WHY: research_data (MVRV, NUPL, SOPR, Puell, ETF flows, stablecoins) is now
+    # passed to L3+ tiers — source attribution must match actual data provided
     sources = {
         "L1": "CoinLore, alternative.me",
         "L2": "CoinLore, CoinGecko, MEXC",
-        "L3": "CoinLore, CoinGecko, yfinance, Coinalyze, CoinMetrics, FairEconomy, Whale Alert",
-        "L4": "CoinLore, CoinGecko, yfinance, Coinalyze, CoinMetrics, FairEconomy, Whale Alert",
-        "L5": "CoinLore, CoinGecko, yfinance, Coinalyze, CoinMetrics, FairEconomy, Whale Alert",
+        "L3": (
+            "CoinLore, CoinGecko, yfinance, Coinalyze, CoinMetrics, FairEconomy, "
+            "Whale Alert, BGeometrics, btcetffundflow.com, DefiLlama"
+        ),
+        "L4": (
+            "CoinLore, CoinGecko, yfinance, Coinalyze, CoinMetrics, FairEconomy, "
+            "Whale Alert, BGeometrics, btcetffundflow.com, DefiLlama"
+        ),
+        "L5": (
+            "CoinLore, CoinGecko, yfinance, Coinalyze, CoinMetrics, FairEconomy, "
+            "Whale Alert, BGeometrics, btcetffundflow.com, DefiLlama"
+        ),
     }
     return sources.get(tier, "CoinLore, CoinGecko")
 
@@ -267,6 +283,10 @@ def _filter_data_for_tier(
         "narratives": context.narratives_text,
         "sector_data": context.sector_data,
         "whale_data": context.whale_data,
+        # v2.0 P1.1: research data for L3+ tiers (MVRV, NUPL, SOPR, Puell, ETF, stablecoins)
+        "research_data": context.research_data_text,
+        # v2.0 P1.3: historical context for L3+ tiers (7d/30d comparison)
+        "historical_context": context.historical_context,
     }
 
     if tier == "L1":
@@ -284,12 +304,16 @@ def _filter_data_for_tier(
         full["sector_data"] = ""  # L1 doesn't analyze sectors
         full["narratives"] = ""  # L1 just reports, doesn't need narrative context
         full["whale_data"] = ""  # L1 doesn't analyze whale activity
+        full["research_data"] = ""  # L1 doesn't analyze advanced on-chain/ETF
+        full["historical_context"] = ""  # L1 doesn't need historical comparison
 
     elif tier == "L2":
         # Altcoin overview: full market + sector, no on-chain details
         full["onchain_data"] = ""  # L2 focuses on coins, not derivatives
         full["economic_events"] = ""  # macro is for L3+
         full["whale_data"] = ""  # L2 focuses on altcoins, not whale flow
+        full["research_data"] = ""  # L2 doesn't analyze advanced on-chain/ETF
+        full["historical_context"] = ""  # L2 doesn't need historical comparison
 
     elif tier == "L3":
         # Deep analysis: full market + on-chain + macro, less news (already in L1/L2)
@@ -352,6 +376,17 @@ async def _generate_single_article(
     whale = variables.get("whale_data", "")
     if whale and "Không có dữ liệu" not in whale:
         full_prompt += f"=== WHALE ALERT (nguồn: Whale Alert) ===\n{whale}\n\n"
+    # v2.0 P1.1: Advanced research data (MVRV, NUPL, SOPR, Puell, ETF flows, stablecoins)
+    research = variables.get("research_data", "")
+    if research:
+        full_prompt += (
+            f"=== DỮ LIỆU NGHIÊN CỨU NÂNG CAO "
+            f"(nguồn: BGeometrics, btcetffundflow.com, DefiLlama) ===\n{research}\n\n"
+        )
+    # v2.0 P1.3: Historical market context (7d detail + 30d comparison)
+    hist_ctx = variables.get("historical_context", "")
+    if hist_ctx:
+        full_prompt += f"=== LICH SU THI TRUONG ===\n{hist_ctx}\n\n"
     sector = variables.get("sector_data", "")
     if sector:
         full_prompt += f"{sector}\n\n"
@@ -397,6 +432,17 @@ async def _generate_single_article(
 
     # Layer 6: FORMAT + QUALITY RULES (concise, positive-first)
     # v0.28.0: Removed dual "Tóm lược/Phân tích chi tiết" format that caused within-tier repetition
+    # v2.0 P1.2: Anti-fabrication examples are context-aware — only list metrics
+    # as banned examples when they were NOT provided in input data.
+    # WHY: MVRV/SOPR/NUPL/Puell are now provided via research_data for L3+.
+    # Telling the LLM "don't fabricate MVRV" when we just gave it MVRV data is contradictory.
+    if research:
+        # research_data present → only cite sources we truly don't have
+        fabrication_examples = "Bloomberg, TradingView, CryptoQuant, Santiment"
+    else:
+        # no research_data → on-chain metrics are still fabrication-prone
+        fabrication_examples = "MVRV, SOPR, Bloomberg, TradingView"
+
     full_prompt += (
         "ĐỊNH DẠNG:\n"
         "- ## cho tiêu đề section (kèm emoji: 📈📉⚡📊🔍💡 tùy nội dung)\n"
@@ -414,7 +460,7 @@ async def _generate_single_article(
         "'cần theo dõi chặt chẽ...'\n"
         "- Thay bằng HỆ QUẢ CỤ THỂ hoặc bỏ qua\n\n"
         "⛔ KHÔNG:\n"
-        "- Bịa data không có trong input (MVRV, SOPR, Bloomberg, TradingView...)\n"
+        f"- Bịa data không có trong input ({fabrication_examples}...)\n"
         "- Bắt đầu section bằng 'TL;DR:' hoặc 'Tóm lược:'\n"
         "- Viết lời khuyên đầu tư ('nên mua', 'cần theo dõi', "
         "'quyết định đầu tư thông minh')\n\n"
@@ -439,7 +485,10 @@ async def _generate_single_article(
         )
 
     # Post-generation validation: detect AND strip fabricated data (v0.28.0)
-    content, warnings = _validate_and_clean_output(content, tier, variables.get("onchain_data", ""))
+    # v2.0 P1.2: Pass research_data so metrics from BGeometrics etc. aren't flagged as fabricated
+    content, warnings = _validate_and_clean_output(
+        content, tier, variables.get("onchain_data", ""), variables.get("research_data", "")
+    )
     for w in warnings:
         logger.warning(f"[{tier}] Post-gen validation: {w}")
 
@@ -470,10 +519,16 @@ _FABRICATED_METRIC_PATTERNS = [
 ]
 
 
-def _validate_and_clean_output(content: str, tier: str, onchain_data: str) -> tuple[str, list[str]]:
+def _validate_and_clean_output(
+    content: str, tier: str, onchain_data: str, research_data: str = ""
+) -> tuple[str, list[str]]:
     """Post-generation validation: detect AND strip fabricated data.
 
     v0.28.0: Upgraded from warn-only to actively removing fabricated sentences.
+    v2.0 P1.2: Context-aware — checks both onchain_data AND research_data before
+    flagging a metric as fabricated. If research_data contains "MVRV_Z_Score",
+    the LLM mentioning "MVRV" is legitimate, not fabrication.
+
     Returns (cleaned_content, list_of_warnings).
     """
     warnings = []
@@ -486,12 +541,18 @@ def _validate_and_clean_output(content: str, tier: str, onchain_data: str) -> tu
         cleaned = tldr_pattern.sub(r"\1", cleaned)
         warnings.append("Stripped TL;DR prefix(es) from output")
 
+    # v2.0 P1.2: Combine onchain + research data for fabrication check
+    # WHY: research_data now provides MVRV, NUPL, SOPR, Puell to L3+ tiers.
+    # If the data WAS provided, LLM mentioning it is legitimate — not fabrication.
+    # Normalize underscores to spaces so "Puell_Multiple" matches name "Puell Multiple"
+    combined_data = (onchain_data + " " + research_data).upper().replace("_", " ")
+
     # Check for fabricated metrics not in pipeline data — REMOVE sentences containing them
     for pattern_str, name in _FABRICATED_METRIC_PATTERNS:
         pattern = re.compile(pattern_str, re.IGNORECASE)
         if pattern.search(cleaned):
-            # Only act if metric is NOT in the actual onchain data
-            if name.upper() not in onchain_data.upper():
+            # Only act if metric is NOT in the actual combined input data
+            if name.upper() not in combined_data:
                 warnings.append(f"Fabricated metric REMOVED: {name} (not in input data)")
                 # Remove lines containing the fabricated metric
                 lines = cleaned.split("\n")

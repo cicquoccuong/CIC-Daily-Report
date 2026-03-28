@@ -21,8 +21,9 @@ class TestSheetsClientInit:
 
 
 class TestTabSchema:
-    def test_has_9_tabs(self):
-        assert len(TABS) == 9
+    def test_has_10_tabs(self):
+        # WHY: 9 original + 1 LICH_SU_METRICS (v2.0 P1.3)
+        assert len(TABS) == 10
 
     def test_tab_names_are_upper_snake_case(self):
         for name in TABS:
@@ -109,8 +110,8 @@ class TestSheetsClientOperations:
 
         client.create_schema()
 
-        # Should create 8 tabs (9 total - 1 existing)
-        assert mock_ss.add_worksheet.call_count == 8
+        # Should create 9 tabs (10 total - 1 existing)
+        assert mock_ss.add_worksheet.call_count == 9
 
 
 class TestSeedSetting:

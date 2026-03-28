@@ -178,7 +178,11 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     from cic_daily_report.collectors.cryptopanic_client import collect_cryptopanic
     from cic_daily_report.collectors.data_cleaner import clean_articles
     from cic_daily_report.collectors.economic_calendar import collect_economic_calendar
-    from cic_daily_report.collectors.market_data import collect_market_data
+    from cic_daily_report.collectors.market_data import (
+        collect_market_data,
+        collect_technical_indicators,
+        format_technical_for_llm,
+    )
     from cic_daily_report.collectors.onchain_data import collect_onchain
     from cic_daily_report.collectors.research_data import ResearchData, collect_research_data
     from cic_daily_report.collectors.rss_collector import collect_rss
@@ -212,6 +216,26 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
 
     # --- Stage 1: Data Collection (parallel, QĐ5) ---
     logger.info("Stage 1: Data Collection")
+
+    # v2.0 P1.3: Read historical metrics in parallel with data collection
+    # WHY: Historical context lets LLM write "F&G=13 — last below 15 was day X"
+    from cic_daily_report.storage.historical_metrics import (
+        build_snapshot_from_pipeline,
+        format_historical_for_llm,
+        read_historical,
+        save_daily_snapshot,
+    )
+
+    historical_text = ""
+    try:
+        hist_sheets = SheetsClient()
+        historical = await asyncio.to_thread(read_historical, hist_sheets, 30)
+        historical_text = format_historical_for_llm(historical)
+        if historical:
+            logger.info(f"Historical context: {len(historical)} days loaded")
+    except Exception as e:
+        logger.warning(f"Historical read failed (non-critical): {e}")
+
     results = await asyncio.gather(
         collect_rss(),
         collect_cryptopanic(),
@@ -222,6 +246,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         collect_sector_data(),
         collect_whale_alerts(),
         collect_research_data(),
+        collect_technical_indicators(),  # P1.11: RSI, MA50, MA200
         return_exceptions=True,
     )
 
@@ -241,6 +266,12 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     )
     research_data: ResearchData = (
         results[8] if not isinstance(results[8], Exception) else ResearchData()
+    )
+    # P1.11: Technical indicators (separate from market_data for clean return types)
+    from cic_daily_report.collectors.market_data import TechnicalIndicators
+
+    technical_indicators: list[TechnicalIndicators] = (
+        results[9] if not isinstance(results[9], Exception) else []
     )
 
     for r in results:
@@ -369,6 +400,23 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     for p in market_data:
         if p.symbol == "BTC" and p.data_type == "crypto" and abs(p.change_24h) >= 5:
             key_metrics["⚠️ BTC Move"] = f"{p.change_24h:+.1f}% — significant daily move"
+
+    # P1.11: Append technical indicators to market_text and key_metrics
+    if technical_indicators:
+        tech_text = format_technical_for_llm(technical_indicators)
+        if tech_text:
+            market_text = market_text + "\n\n" + tech_text if market_text else tech_text
+        for ind in technical_indicators:
+            if ind.symbol == "BTC":
+                key_metrics["BTC RSI(14)"] = str(round(ind.rsi_14d, 1))
+                key_metrics["BTC MA50"] = f"${ind.ma_50:,.0f}"
+                if ind.ma_200 > 0:
+                    key_metrics["BTC MA200"] = f"${ind.ma_200:,.0f}"
+            elif ind.symbol == "ETH":
+                key_metrics["ETH RSI(14)"] = str(round(ind.rsi_14d, 1))
+                key_metrics["ETH MA50"] = f"${ind.ma_50:,.0f}"
+                if ind.ma_200 > 0:
+                    key_metrics["ETH MA200"] = f"${ind.ma_200:,.0f}"
 
     # v0.21.0: Data quality assessment (Phase 3b)
     quality = assess_data_quality(
@@ -624,6 +672,11 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         sector_data=sector_text,  # v0.21.0: Sector + DeFi data (Phase 2)
         data_quality_notes=quality.format_for_llm(),  # v0.21.0: Quality warnings
         whale_data=whale_text,  # v0.24.0: Whale Alert transactions
+        # v2.0 P1.1: Pass research data (MVRV, NUPL, ETF, stablecoins, Pi Cycle)
+        # to tier articles — previously only used by research_generator
+        research_data_text=research_data.format_for_llm(),
+        # v2.0 P1.3: Historical market context (7d detail + 30d comparison)
+        historical_context=historical_text,
     )
 
     generated = []
@@ -643,6 +696,27 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     # Post-generation: cross-tier repetition check (log only)
     if len(generated) >= 3:
         _check_cross_tier_repetition(generated)
+
+    # P1.22: Quality Gate — factual consistency + insight density (Phase 1a: LOG-ONLY)
+    # WHY: Detect LLM hallucinations (e.g. "no events" when calendar has data)
+    # and filler articles (low data-backed sentence ratio) BEFORE delivery.
+    # Phase 1a measures and logs only — does NOT block or retry.
+    if generated:
+        from cic_daily_report.generators.quality_gate import run_quality_gate
+
+        qg_input_data = {
+            "economic_events": economic_events_text,
+            "market_data": market_text,
+            "key_metrics": key_metrics,
+        }
+        for article in generated:
+            qg_result = run_quality_gate(article.content, article.tier, qg_input_data)
+            if not qg_result.passed:
+                logger.warning(
+                    f"Quality gate [{article.tier}]: "
+                    f"density={qg_result.insight_density:.0%}, "
+                    f"issues={qg_result.factual_issues}"
+                )
 
     # v0.30.0: Cooldown before summary/research — tier generation already consumed
     # most of the per-minute rate limit; wait 60s to let the window reset.
@@ -768,6 +842,23 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     llm_models = sorted({a.llm_used for a in generated})
     if research_article:
         llm_models = sorted(set(llm_models) | {research_article.llm_used})
+
+    # v2.0 P1.3: Save today's historical snapshot (after all generation, before return)
+    # WHY: Spec Section 9 says "Write: 1 row per daily pipeline run (Stage 7)"
+    try:
+        snapshot = build_snapshot_from_pipeline(
+            market_data_points=market_data,
+            onchain_text=onchain_text,
+            key_metrics=key_metrics,
+            research_data=research_data,
+            technical_indicators=technical_indicators,
+        )
+        hist_save_sheets = SheetsClient()
+        saved = await asyncio.to_thread(save_daily_snapshot, hist_save_sheets, snapshot)
+        if saved:
+            logger.info(f"Historical snapshot saved for {snapshot.date}")
+    except Exception as e:
+        logger.warning(f"Historical snapshot save failed (non-critical): {e}")
 
     research_wc = research_article.word_count if research_article else 0
     logger.info(f"Pipeline stages complete: {len(articles_out)} articles ready")

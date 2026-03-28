@@ -1,7 +1,7 @@
 # CIC Daily Report
 
 ## System
-- **Version**: 0.32.0 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
+- **Version**: 2.0.0-alpha.1 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
 - **Purpose**: Automated crypto daily report pipeline for CIC community (BIC Group/BIC Chat)
 - **Output**: 5 tier articles (L1→L5 cumulative) + 1 BIC Chat summary + 1 Research article (BIC Group L1) + Breaking news alerts
 - **Operator**: Anh Cường (no-code user, receives on Telegram, copy-pastes to BIC)
@@ -13,7 +13,7 @@
 - **Linting**: ruff (line-length=100)
 - **Testing**: pytest + pytest-asyncio + pytest-mock + pytest-cov (fail-under=60)
 - **CI/CD**: GitHub Actions (3 workflows: daily-pipeline, breaking-news, test)
-- **Storage**: Google Sheets (9 tabs, gspread + batch_update)
+- **Storage**: Google Sheets (10 tabs, gspread + batch_update)
 - **AI**: Gemini 2.5 Flash (primary) → Flash-Lite → Groq Qwen3 → Groq Llama 4 Scout → Cerebras (fallback chain)
 - **Derivatives**: Coinalyze (primary) → OKX → Binance → Bybit (fallback chain)
 - **On-chain**: CoinMetrics Community (primary) → Glassnode (fallback)
@@ -27,11 +27,11 @@
 src/cic_daily_report/
 ├── core/           # error_handler, logger, config, quota_manager, retry_utils, coin_mapping
 ├── collectors/     # rss, cryptopanic, market_data, onchain_data, coinalyze_data, coinmetrics_data, research_data, whale_alert, telegram_scraper, economic_calendar, data_cleaner
-├── generators/     # article_generator, summary_generator, research_generator, template_engine, nq05_filter
+├── generators/     # article_generator, summary_generator, research_generator, template_engine, nq05_filter, quality_gate
 ├── adapters/       # llm_adapter (multi-provider)
 ├── delivery/       # telegram_bot, email_backup, delivery_manager
 ├── breaking/       # event_detector, content_generator, dedup_manager, severity_classifier, llm_scorer, market_trigger
-├── storage/        # sheets_client, config_loader
+├── storage/        # sheets_client, config_loader, historical_metrics
 ├── dashboard/      # data_generator
 ├── daily_pipeline.py
 └── breaking_pipeline.py
@@ -44,7 +44,7 @@ docs/               # planning docs, guides
 .github/workflows/  # daily-pipeline.yml, breaking-news.yml, test.yml
 ```
 
-## Google Sheets Schema (9 tabs - Vietnamese no-diacritics UPPER_SNAKE_CASE)
+## Google Sheets Schema (10 tabs - Vietnamese no-diacritics UPPER_SNAKE_CASE)
 | Tab | Purpose |
 |-----|---------|
 | TIN_TUC_THO | Raw news data |
@@ -56,6 +56,7 @@ docs/               # planning docs, guides
 | DANH_SACH_COIN | Coin list per tier (cumulative) |
 | CAU_HINH | System configuration |
 | BREAKING_LOG | Breaking news dedup & history |
+| LICH_SU_METRICS | Historical daily snapshots (23 cols, 7d/30d trend comparison) |
 
 ## Pipelines
 | Pipeline | Schedule | Duration Target |
@@ -85,7 +86,7 @@ docs/               # planning docs, guides
 ## Architectural Decisions (QĐ1-QĐ8)
 | QĐ | Decision |
 |----|----------|
-| QĐ1 | Google Sheets 9-tab schema |
+| QĐ1 | Google Sheets 10-tab schema |
 | QĐ2 | Multi-LLM Adapter Pattern (Gemini Flash → Flash Lite → Groq) |
 | QĐ3 | Centralized Error Handler (CICError class) |
 | QĐ4 | NQ05 Dual-layer compliance (Prompt + Post-filter) |

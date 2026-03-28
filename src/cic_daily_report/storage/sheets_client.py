@@ -121,6 +121,32 @@ TABS = {
         "URL",
         "Thời gian gửi",
     ],
+    # v2.0 P1.3: Historical metrics — daily snapshot for 7d/30d LLM context
+    "LICH_SU_METRICS": [
+        "Ngay",
+        "BTC_Gia",
+        "ETH_Gia",
+        "F_and_G",
+        "DXY",
+        "Vang",
+        "Dau",
+        "VIX",
+        "Funding_Rate",
+        "BTC_Dominance",
+        "Altcoin_Season",
+        "Consensus_Score",
+        "Consensus_Label",
+        "RSI_BTC",
+        "MA50_BTC",
+        "MA200_BTC",
+        "MVRV_Z",
+        "NUPL",
+        "SOPR",
+        "Puell_Multiple",
+        "Pi_Cycle_Gap_Pct",
+        "ETF_Net_Flow",
+        "Stablecoin_Total_Chg_7d",
+    ],
 }
 
 

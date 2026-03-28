@@ -1,5 +1,41 @@
 # Changelog
 
+## [2.0.0-alpha.1] - 2026-03-28
+
+### Phase 1a — Research Data Pipeline + Quality Foundation (5 tasks)
+
+First alpha release of v2.0 architecture: on-chain research data now flows through to article
+generation, fabrication filter made context-aware, historical metrics storage added, technical
+indicators (RSI/MA) integrated, and quality gate scaffolding in place.
+
+#### P1.1: Research Data → Article Generation
+- `GenerationContext` dataclass added to `article_generator.py` — carries `research_data`
+  (MVRV, NUPL, SOPR, Puell Multiple, ETF flows, stablecoin supply) alongside existing fields.
+- L3–L5 tier article generation now receives research_data; L1–L2 remain unaffected.
+- `daily_pipeline.py` passes collected research data through GenerationContext.
+
+#### P1.2: Context-Aware Fabrication Filter
+- Fabrication filter in `article_generator.py` now reads actual input data before filtering.
+- Only strips metrics genuinely absent from input — previously removed valid on-chain data
+  that was present but not explicitly listed in a hardcoded allowlist.
+
+#### P1.3: Historical Metrics Storage (LICH_SU_METRICS tab)
+- New `storage/historical_metrics.py` — saves daily snapshot of 23 on-chain/market columns.
+- New `LICH_SU_METRICS` tab added to Google Sheets schema (10th tab).
+- Provides 7-day and 30-day comparison context to LLM prompt for trend analysis.
+- `sheets_client.py` updated with LICH_SU_METRICS tab schema.
+
+#### P1.11: Technical Indicators (RSI + Moving Averages)
+- `collectors/market_data.py` gains `TechnicalIndicators` dataclass: RSI 14d, MA50, MA200
+  for BTC and ETH via yfinance.
+- Golden cross / death cross detection (MA50 vs MA200).
+- Integrated into `daily_pipeline.py` collection phase.
+
+#### P1.22: Quality Gate (log-only)
+- New `generators/quality_gate.py` — two checks: factual consistency (metrics cited vs
+  metrics provided) and insight density (analyst language ratio).
+- Log-only mode in Phase 1a — no articles blocked yet. Blocking enabled in Phase 1b.
+
 ## [0.32.0] - 2026-03-27
 
 ### LLM Overhaul + Data Source Fixes + Quality Fixes (3 clusters, 20+ changes)
