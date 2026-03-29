@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.0.0-alpha.4] - 2026-03-28
+
+### Added — Phase 1b Wave 3: Expert Consensus Engine (P1.6)
+- Expert Consensus Engine with 3-layer weighted scoring (Polymarket=3.0, Smart Money=2.5, Expert=2.0, Social=1.0)
+- 5 source extractors: Polymarket probabilities, Fear & Greed Index, Funding Rate, Whale Flows, ETF Flows
+- 3 consensus assets: BTC, ETH, market_overall (composite BTC×0.6 + ETH×0.3 + F&G×0.1)
+- Contrarian detection and divergence alerts (smart money vs social sentiment)
+- ETH proxy transparency: BTC-specific signals tagged "(BTC proxy)" with -0.1 confidence penalty
+- ETF neutral band: flows below $50M treated as noise (confidence=0.3)
+- Score labels with asymmetric boundaries: STRONG_BULLISH (≥0.6) → STRONG_BEARISH (≤-0.6)
+- 79 new tests (total: 1221)
+
 ## [2.0.0-alpha.3] - 2026-03-28
 
 ### Phase 1b Wave 2 — Prediction Markets + Macro RSS + Geo Keywords + Breaking Feedback Loop (4 tasks, 131 new tests)
