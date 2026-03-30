@@ -247,6 +247,10 @@ async def generate_breaking_content(
     source_html = _format_source_link(event.source, event.url)
     suffix = f"\n\n🔗 {source_html}" + DISCLAIMER
     body_limit = BREAKING_MAX_CHARS - len(suffix)
+    # BUG-15: Floor at 500 chars — if suffix is extremely long, body_limit
+    # could go negative, causing text[:negative] → empty string → content lost.
+    if body_limit < 500:
+        body_limit = 500
     clean_content, was_truncated = truncate_to_limit(clean_content, body_limit)
     if was_truncated:
         logger.warning(
@@ -321,6 +325,14 @@ async def generate_digest_content(
     links = "\n".join(f"🔗 {_format_source_link(e.source, e.url)}" for e in events if e.url)
     suffix = f"\n\n{links}" + DISCLAIMER
     body_limit = BREAKING_MAX_CHARS - len(suffix)
+    # BUG-15: Floor at 500 chars — too many event links can make suffix huge,
+    # pushing body_limit negative → text[:negative] → empty body → content lost.
+    # When this happens, truncate the links list to fit.
+    if body_limit < 500:
+        max_link_chars = BREAKING_MAX_CHARS - 500 - len(DISCLAIMER)
+        links = links[:max_link_chars].rsplit("\n", 1)[0]  # Cut at last complete link
+        suffix = f"\n\n{links}" + DISCLAIMER
+        body_limit = BREAKING_MAX_CHARS - len(suffix)
     clean_content, was_truncated = truncate_to_limit(clean_content, body_limit)
     if was_truncated:
         logger.warning(

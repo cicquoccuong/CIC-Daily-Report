@@ -184,6 +184,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         format_technical_for_llm,
     )
     from cic_daily_report.collectors.onchain_data import collect_onchain
+    from cic_daily_report.collectors.prediction_markets import collect_prediction_markets
     from cic_daily_report.collectors.research_data import ResearchData, collect_research_data
     from cic_daily_report.collectors.rss_collector import collect_rss
     from cic_daily_report.collectors.sector_data import SectorSnapshot, collect_sector_data
@@ -192,6 +193,10 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     from cic_daily_report.generators.article_generator import (
         GenerationContext,
         generate_tier_articles,
+    )
+    from cic_daily_report.generators.consensus_engine import (
+        build_consensus,
+        format_consensus_for_llm,
     )
     from cic_daily_report.generators.data_quality import assess_data_quality
     from cic_daily_report.generators.metrics_engine import (
@@ -247,6 +252,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         collect_whale_alerts(),
         collect_research_data(),
         collect_technical_indicators(),  # P1.11: RSI, MA50, MA200
+        collect_prediction_markets(),  # v2.0 P1.6: Polymarket prediction markets
         return_exceptions=True,
     )
 
@@ -273,6 +279,12 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     technical_indicators: list[TechnicalIndicators] = (
         results[9] if not isinstance(results[9], Exception) else []
     )
+    # v2.0 P1.6: Polymarket prediction markets
+    from cic_daily_report.collectors.prediction_markets import PredictionMarketsData
+
+    prediction_data: PredictionMarketsData = (
+        results[10] if not isinstance(results[10], Exception) else PredictionMarketsData()
+    )
 
     for r in results:
         if isinstance(r, Exception):
@@ -282,6 +294,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     # Clean & dedup news (FR11, FR12, FR55)
     all_news = []
     for a in rss_articles:
+        _source_type = getattr(a, "source_type", "news")
         all_news.append(
             {
                 "title": a.title,
@@ -289,7 +302,10 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
                 "source_name": a.source_name,
                 "summary": a.summary,
                 "full_text": getattr(a, "full_text", ""),
-                "source_type": getattr(a, "source_type", "news"),
+                "source_type": _source_type,
+                # G4: Derive news_type from source_type so line 342
+                # `if a.get("news_type") == "macro"` works for RSS macro articles.
+                "news_type": "macro" if _source_type == "macro" else "crypto",
                 "og_image": getattr(a, "og_image", None),
             }
         )
@@ -436,6 +452,25 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         f"{len(market_data)} market, {len(onchain_data)} onchain "
         f"| Quality: {quality.grade} ({quality.score}/100)"
     )
+
+    # --- Stage 1.5: Expert Consensus (P1.6 — aggregate multi-source sentiment) ---
+    logger.info("Stage 1.5: Expert Consensus")
+    consensus_list = []
+    consensus_text = ""
+    try:
+        consensus_list = await build_consensus(
+            prediction_data=prediction_data,
+            market_data=market_data,
+            onchain_data=onchain_data,
+            whale_data=whale_data,
+            research_data=research_data,
+        )
+        consensus_text = format_consensus_for_llm(consensus_list)
+        if consensus_list:
+            logger.info(f"Consensus: {len(consensus_list)} assets scored")
+    except Exception as e:
+        logger.warning(f"Consensus engine failed (non-critical): {e}")
+        errors.append(e)
 
     # --- Write raw data to Sheets (A1-A3) ---
     try:
@@ -694,6 +729,9 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         research_data_text=research_data.format_for_llm(),
         # v2.0 P1.3: Historical market context (7d detail + 30d comparison)
         historical_context=historical_text,
+        # v2.0 P1.6: Expert Consensus for LLM context
+        consensus_text=consensus_text,
+        consensus_data=consensus_list,
     )
 
     generated = []
@@ -757,6 +795,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
                 metrics_interp=metrics_interp,
                 narratives_text=narratives_text,
                 whale_data=whale_data,
+                consensus_text=consensus_text,  # v2.0 P1.6
             )
         except Exception as e:
             logger.error(f"Summary generation failed: {e}")
@@ -772,6 +811,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
                 llm=llm,
                 context=context,
                 research_data=research_data,
+                consensus_text=consensus_text,  # v2.0 P1.6
             )
             if research_article:
                 logger.info(
@@ -863,12 +903,23 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     # v2.0 P1.3: Save today's historical snapshot (after all generation, before return)
     # WHY: Spec Section 9 says "Write: 1 row per daily pipeline run (Stage 7)"
     try:
+        # v2.0 P1.6: Extract BTC consensus score/label from consensus_list
+        _btc_consensus_score = 0.0
+        _btc_consensus_label = "N/A"
+        for _c in consensus_list:
+            if getattr(_c, "asset", "") == "BTC":
+                _btc_consensus_score = getattr(_c, "score", 0.0)
+                _btc_consensus_label = getattr(_c, "label", "N/A")
+                break
+
         snapshot = build_snapshot_from_pipeline(
             market_data_points=market_data,
             onchain_text=onchain_text,
             key_metrics=key_metrics,
             research_data=research_data,
             technical_indicators=technical_indicators,
+            consensus_score=_btc_consensus_score,  # v2.0 P1.6
+            consensus_label=_btc_consensus_label,  # v2.0 P1.6
         )
         hist_save_sheets = SheetsClient()
         saved = await asyncio.to_thread(save_daily_snapshot, hist_save_sheets, snapshot)

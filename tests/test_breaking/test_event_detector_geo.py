@@ -213,3 +213,114 @@ class TestGeoInEvaluateItems:
         cfg = DetectionConfig(panic_threshold=99)
         events = _evaluate_items(items, cfg)
         assert len(events) == 0
+
+
+class TestNuclearFalsePositive:
+    """BUG-16: 'nuclear' should NOT trigger on energy-related articles."""
+
+    def test_nuclear_energy_startup_skipped(self):
+        """'Nuclear energy startup raises $100M' should NOT trigger."""
+        result = _match_keywords(
+            "Nuclear energy startup raises $100M",
+            DEFAULT_KEYWORD_TRIGGERS,
+        )
+        assert "nuclear" not in result
+
+    def test_nuclear_power_plant_skipped(self):
+        """'Nuclear power plant construction approved' should NOT trigger."""
+        result = _match_keywords(
+            "Nuclear power plant construction approved",
+            DEFAULT_KEYWORD_TRIGGERS,
+        )
+        assert "nuclear" not in result
+
+    def test_nuclear_fusion_skipped(self):
+        """'Nuclear fusion breakthrough announced' should NOT trigger."""
+        result = _match_keywords(
+            "Nuclear fusion breakthrough announced",
+            DEFAULT_KEYWORD_TRIGGERS,
+        )
+        assert "nuclear" not in result
+
+    def test_nuclear_reactor_skipped(self):
+        """'Nuclear reactor deal signed with utility' should NOT trigger."""
+        result = _match_keywords(
+            "Nuclear reactor deal signed with utility",
+            DEFAULT_KEYWORD_TRIGGERS,
+        )
+        assert "nuclear" not in result
+
+    def test_nuclear_threat_still_triggers(self):
+        """'Nuclear test conducted by North Korea' SHOULD trigger."""
+        result = _match_keywords(
+            "Nuclear test conducted by North Korea",
+            DEFAULT_KEYWORD_TRIGGERS,
+        )
+        assert "nuclear" in result
+
+    def test_nuclear_war_still_triggers(self):
+        """'Nuclear war fears rise amid tensions' SHOULD trigger."""
+        result = _match_keywords(
+            "Nuclear fears rise amid global tensions",
+            DEFAULT_KEYWORD_TRIGGERS,
+        )
+        assert "nuclear" in result
+
+    def test_nuclear_with_fission_in_evaluate_items(self):
+        """End-to-end: nuclear + fission -> no BreakingEvent."""
+        items = [_make_item("Nuclear fission research gets new funding")]
+        cfg = DetectionConfig(panic_threshold=99)
+        events = _evaluate_items(items, cfg)
+        assert len(events) == 0
+
+
+class TestCryptoContextNeutralizer:
+    """SEC-04: Geopolitical keywords neutralized when crypto-context words present."""
+
+    def test_nuclear_energy_deal_mining_skipped(self):
+        """'Nuclear energy deal boosts mining stocks' — both nuclear-energy AND crypto."""
+        result = _match_keywords(
+            "Nuclear energy deal boosts mining stocks",
+            DEFAULT_KEYWORD_TRIGGERS,
+        )
+        assert "nuclear" not in result
+
+    def test_sanctions_with_crypto_context_skipped(self):
+        """'Sanctions impact crypto exchange operations' — geo keyword + crypto."""
+        result = _match_keywords(
+            "Sanctions impact crypto exchange operations",
+            DEFAULT_KEYWORD_TRIGGERS,
+        )
+        assert "sanctions" not in result
+
+    def test_embargo_with_mining_skipped(self):
+        """'Embargo affects mining equipment exports' — geo + crypto neutralizer."""
+        result = _match_keywords(
+            "Embargo affects mining equipment exports",
+            DEFAULT_KEYWORD_TRIGGERS,
+        )
+        assert "embargo" not in result
+
+    def test_war_without_crypto_context_still_triggers(self):
+        """'War erupts in Middle East' — no crypto neutralizer, should trigger."""
+        result = _match_keywords(
+            "War erupts in Middle East",
+            DEFAULT_KEYWORD_TRIGGERS,
+        )
+        assert "war" in result
+
+    def test_blockade_with_defi_skipped(self):
+        """'Blockade threat pushes defi users to alternatives' — geo + crypto."""
+        result = _match_keywords(
+            "Blockade threat pushes defi users to alternatives",
+            DEFAULT_KEYWORD_TRIGGERS,
+        )
+        assert "blockade" not in result
+
+    def test_crypto_always_trigger_unaffected(self):
+        """'hack' is ALWAYS_TRIGGER (crypto), not geo — should still fire with mining."""
+        result = _match_keywords(
+            "DeFi mining protocol hack exposes $50M",
+            DEFAULT_KEYWORD_TRIGGERS,
+        )
+        assert "hack" in result

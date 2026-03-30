@@ -10,7 +10,9 @@ The JSON file is ephemeral -- it resets daily and is never committed to git.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+import os
+import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cic_daily_report.core.logger import get_logger
@@ -22,6 +24,12 @@ logger = get_logger("breaking_feedback")
 # so 4 parents up = project root, then into data/
 _FEEDBACK_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data"
 _FEEDBACK_FILE = _FEEDBACK_DIR / "breaking_today.json"
+
+# SEC-02: Reject feedback files larger than 1MB to prevent memory issues.
+MAX_FEEDBACK_FILE_SIZE = 1_000_000
+
+# SEC-06: Cap events per day to prevent unbounded list growth.
+MAX_EVENTS_PER_DAY = 100
 
 
 def save_breaking_summary(events: list[dict]) -> None:
@@ -46,14 +54,40 @@ def save_breaking_summary(events: list[dict]) -> None:
 
     existing.extend(events)
 
+    # SEC-06: Cap events per day to prevent unbounded list growth.
+    if len(existing) > MAX_EVENTS_PER_DAY:
+        existing = existing[-MAX_EVENTS_PER_DAY:]
+
     payload = {
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "events": existing,
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
 
-    _FEEDBACK_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # BUG-10: Atomic write — write to temp file then rename.
+    # WHY: Direct write_text() can corrupt JSON if process crashes mid-write.
+    # os.replace() is atomic on most OS (POSIX guaranteed, Windows best-effort).
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(_FEEDBACK_DIR), suffix=".tmp")
+    try:
+        os.write(tmp_fd, json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
+        os.close(tmp_fd)
+        os.replace(tmp_path, str(_FEEDBACK_FILE))
+    except Exception:
+        os.close(tmp_fd) if not _is_fd_closed(tmp_fd) else None
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
     logger.info(f"Breaking feedback saved: {len(events)} new events ({len(existing)} total today)")
+
+
+def _is_fd_closed(fd: int) -> bool:
+    """Check if a file descriptor is already closed."""
+    try:
+        os.fstat(fd)
+        return False
+    except OSError:
+        return True
 
 
 def read_breaking_summary() -> str:
@@ -65,11 +99,22 @@ def read_breaking_summary() -> str:
     if not _FEEDBACK_FILE.exists():
         return ""
 
+    # SEC-02: Reject oversized feedback files to prevent memory issues.
+    file_size = _FEEDBACK_FILE.stat().st_size
+    if file_size > MAX_FEEDBACK_FILE_SIZE:
+        logger.warning(f"Feedback file too large ({file_size} bytes), skipping")
+        return ""
+
     try:
         data = json.loads(_FEEDBACK_FILE.read_text(encoding="utf-8"))
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if data.get("date") != today:
-            return ""  # WHY: Stale data from yesterday — don't inject outdated context
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+        file_date = data.get("date", "")
+        # R5-06: Include yesterday's events to catch late UTC breaking news.
+        # WHY: Breaking uses UTC dates but daily pipeline runs at 01:05 UTC (08:05 VN).
+        # Events detected at e.g. 23:00 UTC would be dated yesterday but still relevant.
+        if file_date != today and file_date != yesterday:
+            return ""  # WHY: Stale data from >1 day ago — don't inject outdated context
 
         events = data.get("events", [])
         if not events:

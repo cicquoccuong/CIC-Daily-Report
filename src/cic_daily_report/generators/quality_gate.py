@@ -53,7 +53,7 @@ _DATA_PATTERNS = [
     re.compile(p)
     for p in [
         r"\d+[.,]\d+%",  # percentages like 5.2%
-        r"\$[\d,]+",  # dollar amounts like $87,500
+        r"\$[\d,.]+\d",  # dollar amounts: $87,500 (US) or $87.500 (VN format)
         r"(?:BTC|ETH|Bitcoin|Ethereum)\s*[\$\d]",  # crypto + number
         r"\d+[.,]\d+\s*(?:tỷ|triệu|nghìn)",  # Vietnamese number words
         # metrics with values (e.g. "RSI = 52", "F&G Index = 45", "Fear & Greed = 72")
@@ -148,10 +148,19 @@ def check_factual_consistency(content: str, input_data: dict) -> list[str]:
     # Check 3: Content claims "quiet market" but data shows >5% moves
     # WHY: A >5% daily move in BTC is significant — calling the market "quiet"
     # is factually wrong.
-    has_large_move = bool(re.search(r"\([+-]?\d*[5-9]\d*[.,]\d*%\)", market_data))
-    # Also check for double-digit moves
-    if not has_large_move:
-        has_large_move = bool(re.search(r"\([+-]?\d{2,}[.,]\d*%\)", market_data))
+    # BUG-06 fix: Match actual numeric value >= 5%, not digits containing 5-9.
+    # Old regex `[5-9]` caught 3.5% because '5' after decimal matched.
+    # New approach: extract all percentages and check numerically.
+    has_large_move = False
+    for m in re.finditer(r"\([+-]?(\d+[.,]?\d*)%\)", market_data):
+        try:
+            val = float(m.group(1).replace(",", "."))
+            if val >= 5.0:
+                has_large_move = True
+                break
+        except ValueError:
+            pass
+    # NOTE: Double-digit check now redundant — numeric >= 5.0 covers it.
 
     if has_large_move:
         for pattern in _QUIET_MARKET_PATTERNS:
@@ -247,8 +256,13 @@ def run_quality_gate(content: str, tier: str, input_data: dict) -> QualityGateRe
     )
 
     # Phase 1a: Log results — do NOT block pipeline
+    # G8: Explicit RETRY RECOMMENDED message for log-only mode clarity.
+    # Actual retry logic deferred to Phase 2 (Master Analysis architecture).
     if not result.passed:
-        logger.warning(f"Quality gate WARN [{tier}]: {details}")
+        logger.warning(
+            f"Quality gate [{tier}]: RETRY RECOMMENDED — "
+            f"density={density:.0%}, issues={len(factual_issues)}"
+        )
         for issue in factual_issues:
             logger.warning(f"  Factual: {issue}")
     else:

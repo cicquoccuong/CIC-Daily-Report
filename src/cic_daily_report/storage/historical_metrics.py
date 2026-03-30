@@ -346,6 +346,8 @@ def build_snapshot_from_pipeline(
     key_metrics: dict,
     research_data,
     technical_indicators: list,
+    consensus_score: float = 0.0,  # v2.0 P1.6: from consensus engine
+    consensus_label: str = "N/A",  # v2.0 P1.6: from consensus engine
 ) -> HistoricalSnapshot:
     """Build a HistoricalSnapshot from pipeline data structures.
 
@@ -470,8 +472,8 @@ def build_snapshot_from_pipeline(
         funding_rate=funding_rate,
         btc_dominance=btc_dominance,
         altcoin_season=altcoin_season,
-        consensus_score=0.0,  # Phase 1a: consensus engine not built yet
-        consensus_label="N/A",  # Phase 1a: consensus engine not built yet
+        consensus_score=consensus_score,  # v2.0 P1.6: from consensus engine
+        consensus_label=consensus_label,  # v2.0 P1.6: from consensus engine
         rsi_btc=rsi_btc,
         ma50_btc=ma50_btc,
         ma200_btc=ma200_btc,

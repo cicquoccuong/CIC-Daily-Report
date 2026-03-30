@@ -7,6 +7,7 @@ from cic_daily_report.collectors.rss_collector import (
     DEFAULT_FEEDS,
     FeedConfig,
     NewsArticle,
+    _sanitize_text,
     collect_rss,
 )
 
@@ -163,3 +164,26 @@ class TestPhase4FeedEnhancements:
         assert feed.enrich is True
         default = FeedConfig("https://test.com/rss", "Test", "en")
         assert default.enrich is False
+
+
+class TestSanitizeText:
+    """SEC-05: _sanitize_text strips HTML tags."""
+
+    def test_strips_html_tags(self):
+        assert _sanitize_text("<p>Hello</p>") == "Hello"
+
+    def test_strips_anchor_tags(self):
+        assert _sanitize_text('<a href="http://x.com">link</a> text') == "link text"
+
+    def test_preserves_plain_text(self):
+        assert _sanitize_text("No HTML here") == "No HTML here"
+
+    def test_strips_nested_tags(self):
+        assert _sanitize_text("<div><p>nested</p></div>") == "nested"
+
+    def test_html_entities_decoded(self):
+        """HTML entities are decoded AFTER tag stripping — &lt;tag&gt; becomes literal <tag>."""
+        result = _sanitize_text("&amp; &lt;tag&gt;")
+        assert "&" in result
+        # &lt;tag&gt; decodes to literal text "<tag>" — this is desired user content
+        assert "<tag>" in result

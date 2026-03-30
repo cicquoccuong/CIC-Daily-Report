@@ -70,6 +70,41 @@ DEFAULT_KEYWORD_TRIGGERS = (
 
 DEFAULT_PANIC_THRESHOLD = 70
 
+# BUG-16: Nuclear energy false-positive exclusion.
+# WHY: "nuclear" in GEOPOLITICAL_KEYWORDS triggers on "nuclear energy startup"
+# or "nuclear power plant" — these are energy topics, not geopolitical threats.
+_NUCLEAR_ENERGY_WORDS = {
+    "energy",
+    "power",
+    "reactor",
+    "plant",
+    "fusion",
+    "fission",
+    "startup",
+}
+
+# SEC-04: Crypto-context neutralizers for geopolitical keywords.
+# WHY: CryptoPanic articles like "nuclear energy deal boosts mining stocks"
+# contain geopolitical keywords in a crypto/business context, not a threat context.
+# If the title has BOTH a geopolitical keyword AND a crypto-context word,
+# we skip the geopolitical trigger (the article is about crypto, not geopolitics).
+_CRYPTO_CONTEXT_NEUTRALIZERS = {
+    "mining",
+    "crypto",
+    "blockchain",
+    "defi",
+    "token",
+    "coin",
+    "nft",
+    "protocol",
+    "exchange",
+    "wallet",
+    "etf",
+    "staking",
+    "yield",
+    "airdrop",
+}
+
 # Crypto context words — if title contains at least one, CONTEXT_REQUIRED keywords fire.
 # Reuses severity_classifier._CRYPTO_RELEVANCE_KEYWORDS concept but minimal set here.
 _CRYPTO_CONTEXT_WORDS = {
@@ -310,20 +345,31 @@ def _match_keywords(title: str, keywords: list[str]) -> list[str]:
     triggering breaking alerts for a crypto community).
     """
     title_lower = title.lower()
+    title_words = set(title_lower.split())
     has_crypto_context = any(w in title_lower for w in _CRYPTO_CONTEXT_WORDS)
 
     # P1.9: Pre-compute always-trigger sets (crypto + geopolitical)
-    _always_trigger = {k.lower() for k in ALWAYS_TRIGGER_KEYWORDS} | {
-        k.lower() for k in GEOPOLITICAL_KEYWORDS
-    }
+    _always_crypto = {k.lower() for k in ALWAYS_TRIGGER_KEYWORDS}
+    _always_geo = {k.lower() for k in GEOPOLITICAL_KEYWORDS}
 
     matched: list[str] = []
     for kw in keywords:
         kw_lower = kw.lower()
         if kw_lower not in title_lower:
             continue
-        # Always-trigger keywords fire regardless of context (crypto + geo)
-        if kw_lower in _always_trigger:
+
+        # Crypto-specific always-trigger (hack, exploit, etc.) — fire regardless
+        if kw_lower in _always_crypto:
+            matched.append(kw)
+        # Geopolitical always-trigger — with BUG-16 + SEC-04 guards
+        elif kw_lower in _always_geo:
+            # BUG-16: "nuclear" false positive — skip if energy-related context
+            if kw_lower == "nuclear" and title_words & _NUCLEAR_ENERGY_WORDS:
+                continue
+            # SEC-04: If title has crypto-context neutralizers alongside geo keyword,
+            # the article is about crypto/business, not a geopolitical threat — skip.
+            if title_words & _CRYPTO_CONTEXT_NEUTRALIZERS:
+                continue
             matched.append(kw)
         # Context-required keywords need a crypto word in the same title
         elif has_crypto_context:

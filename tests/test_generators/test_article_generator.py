@@ -735,3 +735,126 @@ class TestContextAwareFabricationFilter:
         # When research data is NOT provided, MVRV/SOPR should be in banned examples
         assert "MVRV" in prompt
         assert "SOPR" in prompt
+
+
+class TestConsensusDataInTierArticles:
+    """v2.0 P1.6: consensus_text flows into GenerationContext and tier articles."""
+
+    _SAMPLE_CONSENSUS = (
+        "=== EXPERT CONSENSUS ===\n"
+        "BTC: BULLISH (+0.45) — 5 sources, 60% bullish\n"
+        "  Polymarket: BULLISH (conf: 80%, weight: 3.0) — Avg YES 72%\n"
+        "  Fear&Greed: BEARISH (conf: 60%, weight: 1.0) — F&G Index = 25\n"
+    )
+
+    def test_generation_context_accepts_consensus_text(self):
+        """GenerationContext dataclass can be instantiated with consensus_text."""
+        ctx = GenerationContext(consensus_text=self._SAMPLE_CONSENSUS)
+        assert ctx.consensus_text == self._SAMPLE_CONSENSUS
+
+    def test_generation_context_defaults_empty_consensus(self):
+        """consensus_text defaults to empty string when not provided."""
+        ctx = GenerationContext()
+        assert ctx.consensus_text == ""
+
+    def test_filter_l1_excludes_consensus(self):
+        """L1 (beginners) must NOT receive consensus data."""
+        ctx = GenerationContext(
+            market_data="BTC: $105,000",
+            consensus_text=self._SAMPLE_CONSENSUS,
+        )
+        filtered = _filter_data_for_tier("L1", ctx, "")
+        assert filtered["consensus_data"] == ""
+
+    def test_filter_l2_excludes_consensus(self):
+        """L2 (altcoin overview) must NOT receive consensus data."""
+        ctx = GenerationContext(
+            market_data="BTC: $105,000",
+            consensus_text=self._SAMPLE_CONSENSUS,
+        )
+        filtered = _filter_data_for_tier("L2", ctx, "")
+        assert filtered["consensus_data"] == ""
+
+    def test_filter_l3_includes_consensus(self):
+        """L3 (deep analysis) MUST receive full consensus data."""
+        ctx = GenerationContext(
+            market_data="BTC: $105,000",
+            news_summary="Some news\n" * 15,
+            consensus_text=self._SAMPLE_CONSENSUS,
+        )
+        filtered = _filter_data_for_tier("L3", ctx, "")
+        assert filtered["consensus_data"] == self._SAMPLE_CONSENSUS
+
+    def test_filter_l5_includes_consensus(self):
+        """L5 (master investor) MUST receive full consensus data."""
+        ctx = GenerationContext(
+            market_data="BTC: $105,000",
+            news_summary="Some news\n" * 25,
+            consensus_text=self._SAMPLE_CONSENSUS,
+        )
+        filtered = _filter_data_for_tier("L5", ctx, "")
+        assert filtered["consensus_data"] == self._SAMPLE_CONSENSUS
+
+    async def test_prompt_contains_consensus_for_l3(self):
+        """L3 prompt sent to LLM must contain consensus data."""
+        templates = _make_templates("L3")
+        ctx = GenerationContext(
+            coin_lists={"L3": ["BTC", "ETH"]},
+            market_data="BTC: $105,000",
+            news_summary="Some news\n" * 15,
+            consensus_text=self._SAMPLE_CONSENSUS,
+        )
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=100, model="test")
+        )
+
+        await generate_tier_articles(mock_llm, templates, ctx)
+
+        call_args = mock_llm.generate.call_args
+        prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
+        assert "EXPERT CONSENSUS" in prompt
+        assert "Polymarket" in prompt
+
+    async def test_prompt_excludes_consensus_for_l1(self):
+        """L1 prompt must NOT contain consensus data."""
+        templates = _make_templates("L1")
+        ctx = GenerationContext(
+            coin_lists={"L1": ["BTC", "ETH"]},
+            market_data="BTC: $105,000",
+            news_summary="Some news",
+            consensus_text=self._SAMPLE_CONSENSUS,
+        )
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=100, model="test")
+        )
+
+        await generate_tier_articles(mock_llm, templates, ctx)
+
+        call_args = mock_llm.generate.call_args
+        prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
+        assert "EXPERT CONSENSUS" not in prompt
+
+    async def test_prompt_no_consensus_block_when_empty(self):
+        """When consensus_text is empty, no consensus block appears in prompt."""
+        templates = _make_templates("L3")
+        ctx = GenerationContext(
+            coin_lists={"L3": ["BTC", "ETH"]},
+            market_data="BTC: $105,000",
+            news_summary="Some news\n" * 15,
+            consensus_text="",  # empty
+        )
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(text=_MOCK_ARTICLE, tokens_used=100, model="test")
+        )
+
+        await generate_tier_articles(mock_llm, templates, ctx)
+
+        call_args = mock_llm.generate.call_args
+        prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
+        assert "EXPERT CONSENSUS" not in prompt

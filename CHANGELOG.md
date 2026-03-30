@@ -1,5 +1,88 @@
 # Changelog
 
+## [2.0.0-alpha.5] - 2026-03-30
+
+### Fixed — 32 issues from Phase 1 comprehensive audit (5 scan rounds)
+
+Root cause: spec defined modules not data flows; tasks assigned as "create module" without
+"connect + prove"; no integration gate. Fixed by wiring consensus into pipeline, fixing 3 APIs,
+correcting edge cases, and hardening security.
+
+#### Wave 0+1: Core wiring + API fixes (15 issues)
+- **G1** Wire Expert Consensus into daily pipeline (collect → build → format → pass to generators)
+- **G2** Summary generator receives consensus_text for BIC Chat digest
+- **G3** Research generator receives consensus_text for deep analysis
+- **G4** RSS macro articles now carry `news_type="macro"` (was only `source_type`)
+- **G5** Historical metrics store real consensus score/label (was hardcoded 0.0/"N/A")
+- **BUG-01** Polymarket API: removed non-existent `slug_contains` param, use volume sort + single call
+- **BUG-02** Groq API: `reasoning_effort: "none"` instead of wrong `thinking` param (Groq-only)
+- **BUG-03** AP News RSS: switched to Google News proxy (apnews.com RSS returns 404)
+- **BUG-07** Consensus weights per-category: smart_money 2.5÷N sources (was 2.5 each = 65% dominance)
+- **BUG-14** Symmetric score boundaries: score ≥ −0.2 = NEUTRAL (was asymmetric)
+- **SEC-01** NaN/Infinity validation in consensus weighted score calculation
+- ETH proxy sources now get per-category weight (was missed by `startswith` name matching)
+- Tier articles L3-L5 receive consensus data (L1-L2 excluded by design)
+- Prediction markets: single API call instead of duplicate
+
+#### Wave 2: LLM adapter + text processing (5 issues)
+- **BUG-04** Gemini SAFETY/RECITATION finish_reason mapped to `content_filter` with truncation
+- **BUG-05** Nested `<think>` tags: iterative `[^<]*` regex strips from inside out
+- **BUG-08** `_truncate_to_complete_sentence` falls back to last whitespace + "..." when no boundary
+- **BUG-09** `text_utils` sentence boundary at position 0 handled with length guard
+- **BUG-15** Breaking content `body_limit` floored at 500 chars (was negative with long suffix)
+
+#### Wave 3-5: Event detection, consensus, feedback, security (12 issues)
+- **BUG-06** Quality Gate regex: numeric ≥5.0% check replaces digit-pattern `[5-9]` false positive
+- **BUG-16** "nuclear" keyword skips energy context (nuclear energy ≠ geopolitical threat)
+- **BUG-20** Vietnamese dollar format `$87.500` now recognized as data-backed sentence
+- **BUG-23** market_overall F&G weight redistributed to BTC/ETH when F&G data missing
+- **BUG-10** Atomic file write (tempfile + os.replace) for breaking feedback JSON
+- **G8** Quality Gate logs "RETRY RECOMMENDED" with density + issues
+- **SEC-02** Feedback file size limit (1MB) before read
+- **SEC-04** Crypto-context neutralization for geopolitical keywords (prevents false positives)
+- **SEC-05** RSS `_sanitize_text` strips HTML tags before entity decoding
+- **SEC-06** Breaking events capped at 100/day
+- **R5-06** Yesterday's events included in daily pipeline read (catches late UTC breaking news)
+- **R5-09** Version synced: pyproject.toml + config.py + CLAUDE.md → 2.0.0-alpha.5
+
+### Stats
+- Tests: 1221 → 1284 (+63 new tests)
+- Files changed: 24 (13 source + 11 test)
+- 3 review rounds per wave (build → review → fix → verify)
+
+### Deferred (10 items — Phase 1c / Phase 2 / P1.7)
+- G6 (metrics_engine consensus expansion) → P1.7 Master Analysis
+- G7 (integration tests) → B7 Phase Gate
+- G9 (consensus monitoring), G10 (Telegram scraper), G11 (breaking↔daily feedback)
+- BUG-17 (CNBC old URL), SEC-03 (rate limit), R5-04 (graceful degradation)
+- R5-05 (Polymarket fallback), R5-10 (Sheets timeout)
+
+## [2.0.0-alpha.4+docs] - 2026-03-29
+
+### Docs — Spec + Workflow updated to prevent 40-issue root causes (DA findings)
+
+Added interface contracts, DoD per task, B3.5 DA Design Review, B7 Phase Gate, and Golden Rule #22
+to close the 3 structural gaps that caused 40 issues: missing data flow contracts, no pipeline
+integration gate, and tasks defined as "create module" without a "connect + prove" requirement.
+
+#### v2.0 Spec (`docs/specs/v2.0-architecture-redesign.md`)
+- Section 2.2: Added explicit weight-per-category clarification and symmetric score boundaries
+  (STRONG_BULLISH ≥0.6, BULLISH ≥0.2, NEUTRAL ≥-0.2, BEARISH ≥-0.6, STRONG_BEARISH <-0.6)
+- Section 3.7 (NEW): Interface Contracts — Unified News Item field names, `news_type` not
+  `source_type`, Consensus→Generator contract via `GenerationContext`, field naming convention
+- Section 3.8 (NEW): Definition of Done per task — 5 mandatory criteria (code, tests, pipeline
+  connected, data flows to output, integration test). Scaffolding status rules.
+
+#### Workflow (`_bmad/_config/custom/optimized-team-flow/QUY-TRINH-LAM-VIEC-CHUAN.md`) — v1.8
+- B3.5 (NEW): Devil's Advocate Design Review gate before B4 — required for algorithms, data flows,
+  API integrations. DA must verify weights, boundaries, endpoint existence, field consistency.
+- B7 Phase Gate (NEW): Integration Verification after all waves in a Phase — Pipeline Trace,
+  Data Flow Test, Cross-wave Integration, Field Consistency, Spec Compliance (Winston + Quinn + DA)
+- Old B7 Report → renamed B8 Report (numbering shift)
+- Golden Rule #22 (NEW): Task creating new files MUST include (1) create file, (2) import into
+  pipeline, (3) integration test proving data flows. Module without pipeline connection = not done.
+- Section 10 NEVER list: 3 new rules for B3.5 skip, B7 Phase Gate bypass, split-task scaffolding
+
 ## [2.0.0-alpha.4] - 2026-03-28
 
 ### Added — Phase 1b Wave 3: Expert Consensus Engine (P1.6)

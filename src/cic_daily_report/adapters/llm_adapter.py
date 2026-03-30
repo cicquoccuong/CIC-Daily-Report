@@ -42,7 +42,15 @@ def _strip_think_tags(text: str) -> str:
     leak to end users in BIC Chat. Strip them at adapter level so all
     downstream consumers get clean text.
     """
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    # BUG-05: Iteratively strip innermost <think> tags until none remain.
+    # WHY iterative: non-greedy regex .*? fails on nested <think> tags
+    # (e.g., Qwen3 occasionally nests reasoning blocks).
+    # [^<]* matches text without any '<', so it targets the INNERMOST tags
+    # first. The while loop strips from inside out.
+    prev = None
+    while prev != text:
+        prev = text
+        text = re.sub(r"<think>[^<]*</think>", "", text, flags=re.DOTALL).strip()
     # Fallback: unclosed <think> tag (LLM ran out of tokens mid-thinking).
     # WHY: If LLM hits token limit inside a <think> block, the closing tag is
     # missing and the regex above won't match — internal reasoning leaks to users.
@@ -65,7 +73,12 @@ def _truncate_to_complete_sentence(text: str) -> str:
     if last_pos >= 0:
         # Include the punctuation character itself
         return text[: last_pos + 1].strip()
-    # No sentence boundary found — return as-is (very rare)
+    # BUG-08: No sentence boundary — try last whitespace to avoid mid-word cut.
+    # WHY: Returning text as-is means a word could be cut mid-way (e.g., "analy"),
+    # which looks broken in BIC Chat. Truncating at last space + "..." is cleaner.
+    last_space = text.rfind(" ")
+    if last_space > 0:
+        return text[:last_space].rstrip() + "..."
     return text
 
 
@@ -330,6 +343,18 @@ class LLMAdapter:
                         f"[{provider.name}]"
                     )
 
+                # BUG-04: Handle content_filter (Gemini SAFETY/RECITATION).
+                # WHY: Gemini may return partial text when content is filtered.
+                # Truncate to last complete sentence like finish_reason=length.
+                if response.finish_reason == "content_filter":
+                    original_len = len(response.text)
+                    response.text = _truncate_to_complete_sentence(response.text)
+                    logger.warning(
+                        f"LLM response filtered (finish_reason=content_filter): "
+                        f"{original_len} → {len(response.text)} chars "
+                        f"[{provider.name}]"
+                    )
+
                 # Success — reset this provider's circuit breaker
                 self._provider_failed.pop(provider.name, None)
                 self._quota.track(rate_key)
@@ -372,11 +397,12 @@ async def _call_groq(
         "temperature": temperature,
     }
 
-    # P1.23: Disable Qwen3 thinking mode via Groq/Cerebras API param.
+    # P1.23: Disable Qwen3 thinking mode via provider-specific API param.
     # WHY: Qwen3-32B defaults to thinking=enabled, which emits <think> tags.
-    # Disabling at API level is more efficient than just stripping tags.
-    if "qwen" in provider.model.lower():
-        payload["thinking"] = {"type": "disabled"}
+    # Groq API expects `reasoning_effort: "none"` (NOT `thinking: {type: disabled}`).
+    # Cerebras Qwen3: no special param needed — _strip_think_tags() handles it.
+    if "qwen" in provider.model.lower() and "groq" in provider.name.lower():
+        payload["reasoning_effort"] = "none"
 
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
@@ -452,7 +478,14 @@ async def _call_gemini(
     # P1.24: Map Gemini finish reason to normalized values.
     # WHY: Gemini uses "MAX_TOKENS"/"STOP" vs Groq's "length"/"stop".
     # Normalize so generate() can handle both uniformly.
-    _gemini_reason_map = {"MAX_TOKENS": "length", "STOP": "stop"}
+    # WHY SAFETY/RECITATION → content_filter: Gemini returns these when output
+    # is blocked for policy violations. Must handle like "length" (truncated).
+    _gemini_reason_map = {
+        "MAX_TOKENS": "length",
+        "STOP": "stop",
+        "SAFETY": "content_filter",
+        "RECITATION": "content_filter",
+    }
     raw_reason = candidates[0].get("finishReason", "")
     finish_reason = _gemini_reason_map.get(raw_reason, raw_reason.lower())
 

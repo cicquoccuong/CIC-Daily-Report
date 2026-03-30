@@ -53,9 +53,12 @@ def truncate_to_limit(
     if max_chars - 1 > best_sentence_idx and search_region[-1:] in ".!?":
         best_sentence_idx = max_chars - 1
 
-    if best_sentence_idx > 0:
-        # Include the punctuation itself in the output
-        return (search_region[: best_sentence_idx + 1].rstrip(), True)
+    # BUG-09: Changed > 0 to >= 0 to handle boundary at position 0.
+    # Guard: don't return just a punctuation mark (len <= 1).
+    if best_sentence_idx >= 0:
+        result = search_region[: best_sentence_idx + 1].rstrip()
+        if len(result) > 1:
+            return (result, True)
 
     # Hard cut — no boundary found (e.g., one giant word block)
     return (search_region.rstrip(), True)

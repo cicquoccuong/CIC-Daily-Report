@@ -118,6 +118,8 @@ class GenerationContext:
     whale_data: str = ""  # v0.24.0: whale transaction summary from Whale Alert
     research_data_text: str = ""  # v2.0 P1.1: advanced research data (MVRV, NUPL, ETF, etc.)
     historical_context: str = ""  # v2.0 P1.3: 7d/30d historical metrics for comparative analysis
+    consensus_text: str = ""  # v2.0 P1.6: Expert Consensus formatted text
+    consensus_data: list = field(default_factory=list)  # v2.0 P1.6: list[MarketConsensus] raw data
 
 
 async def generate_tier_articles(
@@ -196,6 +198,8 @@ async def generate_tier_articles(
             "whale_data": filtered["whale_data"],
             "research_data": filtered["research_data"],
             "historical_context": filtered["historical_context"],
+            # v2.0 P1.6: Expert consensus data for tier articles
+            "consensus_data": filtered["consensus_data"],
         }
 
         # Try generation with 1 retry on 429 rate limit errors
@@ -287,6 +291,8 @@ def _filter_data_for_tier(
         "research_data": context.research_data_text,
         # v2.0 P1.3: historical context for L3+ tiers (7d/30d comparison)
         "historical_context": context.historical_context,
+        # v2.0 P1.6: Expert consensus for L3+ tiers (multi-source sentiment)
+        "consensus_data": context.consensus_text,
     }
 
     if tier == "L1":
@@ -306,6 +312,7 @@ def _filter_data_for_tier(
         full["whale_data"] = ""  # L1 doesn't analyze whale activity
         full["research_data"] = ""  # L1 doesn't analyze advanced on-chain/ETF
         full["historical_context"] = ""  # L1 doesn't need historical comparison
+        full["consensus_data"] = ""  # L1 doesn't need expert consensus
 
     elif tier == "L2":
         # Altcoin overview: full market + sector, no on-chain details
@@ -314,6 +321,7 @@ def _filter_data_for_tier(
         full["whale_data"] = ""  # L2 focuses on altcoins, not whale flow
         full["research_data"] = ""  # L2 doesn't analyze advanced on-chain/ETF
         full["historical_context"] = ""  # L2 doesn't need historical comparison
+        full["consensus_data"] = ""  # L2 doesn't need expert consensus
 
     elif tier == "L3":
         # Deep analysis: full market + on-chain + macro, less news (already in L1/L2)
@@ -387,6 +395,10 @@ async def _generate_single_article(
     hist_ctx = variables.get("historical_context", "")
     if hist_ctx:
         full_prompt += f"=== LICH SU THI TRUONG ===\n{hist_ctx}\n\n"
+    # v2.0 P1.6: Expert consensus — multi-source sentiment aggregation
+    consensus = variables.get("consensus_data", "")
+    if consensus:
+        full_prompt += f"{consensus}\n\n"
     sector = variables.get("sector_data", "")
     if sector:
         full_prompt += f"{sector}\n\n"

@@ -9,8 +9,8 @@ in P1.6 (Consensus Engine) — see docs/epics.md for integration plan.
 
 from __future__ import annotations
 
-import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -136,11 +136,14 @@ async def collect_prediction_markets() -> PredictionMarketsData:
     """Collect BTC/ETH prediction market data from Polymarket.
 
     Strategy:
-    1. Search for BTC-related markets (keywords: "bitcoin", "btc")
-    2. Search for ETH-related markets (keywords: "ethereum", "eth")
+    1. Fetch top 100 crypto markets by volume (single API call)
+    2. Classify BTC/ETH/CRYPTO via _detect_asset() client-side
     3. Filter: only active markets with volume > $10K
     4. Sort by volume (highest first)
     5. Return top 10 markets per asset
+
+    WHY single call: Gamma API ignores keyword params — both "bitcoin" and
+    "ethereum" searches return identical results. One call is sufficient.
 
     Free API, no auth needed. Rate limit: be respectful (1 req/sec).
     Graceful degrade: return empty PredictionMarketsData on failure.
@@ -148,15 +151,13 @@ async def collect_prediction_markets() -> PredictionMarketsData:
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     try:
-        # WHY: parallel fetch for both keyword groups to minimize latency
-        btc_raw, eth_raw = await asyncio.gather(
-            _fetch_markets("bitcoin"),
-            _fetch_markets("ethereum"),
-        )
+        # WHY: single fetch — Gamma API ignores keyword params (slug_contains broken).
+        # _detect_asset() handles BTC/ETH classification client-side.
+        raw_markets = await _fetch_markets()
 
-        all_markets = _parse_and_filter(btc_raw + eth_raw)
+        all_markets = _parse_and_filter(raw_markets)
 
-        # Deduplicate by question text (same market may appear in both searches)
+        # Deduplicate by question text (API may return duplicate entries)
         seen_questions: set[str] = set()
         unique_markets: list[PredictionMarket] = []
         for m in all_markets:
@@ -180,16 +181,23 @@ async def collect_prediction_markets() -> PredictionMarketsData:
 # --- Internal helpers ---
 
 
-async def _fetch_markets(keyword: str) -> list[dict]:
-    """Fetch markets from Gamma API for a given keyword.
+async def _fetch_markets() -> list[dict]:
+    """Fetch top crypto markets from Gamma API by volume.
 
     Returns raw market dicts, or empty list on failure.
+    WHY: `slug_contains` is silently ignored by Gamma API — it fetches random
+    crypto markets instead of BTC/ETH ones. Instead, fetch the most liquid
+    crypto markets via tag=crypto + order=volume descending, then rely on
+    client-side _detect_asset() filtering.
     """
     url = f"{GAMMA_API_BASE}/markets"
-    params = {"tag": "crypto", "closed": "false", "limit": "50"}
-    # WHY: Gamma API uses 'slug_contains' for keyword search
-    if keyword:
-        params["slug_contains"] = keyword
+    params = {
+        "tag": "crypto",
+        "closed": "false",
+        "order": "volume",
+        "ascending": "false",
+        "limit": "100",
+    }
 
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
@@ -201,10 +209,10 @@ async def _fetch_markets(keyword: str) -> list[dict]:
                 return data
             return []
     except httpx.TimeoutException:
-        logger.warning(f"Polymarket API timeout for keyword '{keyword}'")
+        logger.warning("Polymarket API timeout")
         return []
     except Exception as exc:
-        logger.warning(f"Polymarket API error for keyword '{keyword}': {exc}")
+        logger.warning(f"Polymarket API error: {exc}")
         return []
 
 
@@ -278,16 +286,25 @@ def _parse_outcome_prices(raw: str) -> tuple[float, float] | None:
 def _detect_asset(question: str) -> str:
     """Detect asset type from market question text.
 
-    WHY: Simple keyword match is sufficient — Polymarket questions are explicit
-    about which crypto asset they reference.
+    WHY: Short keywords like "eth" can match substrings ("method", "whether").
+    Use word-boundary regex for keywords <= 3 chars to avoid false positives.
+    Longer keywords like "bitcoin", "ethereum" are safe with simple `in` check.
     """
     q_lower = question.lower()
     for kw in BTC_KEYWORDS:
-        if kw in q_lower:
-            return "BTC"
+        if len(kw) <= 3:
+            if re.search(rf"\b{re.escape(kw)}\b", q_lower):
+                return "BTC"
+        else:
+            if kw in q_lower:
+                return "BTC"
     for kw in ETH_KEYWORDS:
-        if kw in q_lower:
-            return "ETH"
+        if len(kw) <= 3:
+            if re.search(rf"\b{re.escape(kw)}\b", q_lower):
+                return "ETH"
+        else:
+            if kw in q_lower:
+                return "ETH"
     return "CRYPTO"
 
 

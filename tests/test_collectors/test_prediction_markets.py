@@ -78,7 +78,7 @@ def _mock_httpx_client(response_data: list[dict]):
 
 class TestCollectPredictionMarkets:
     async def test_collect_success(self):
-        """Mock API returns valid BTC + ETH markets."""
+        """Mock API returns valid BTC + ETH markets in a single call."""
         btc_market = _make_raw_market(
             question="Will Bitcoin exceed $100K by April 2026?",
             volume="500000",
@@ -91,19 +91,8 @@ class TestCollectPredictionMarkets:
             slug="eth-5k",
         )
 
-        mock_client = AsyncMock()
-        # WHY: gather calls _fetch_markets twice — first for bitcoin, then ethereum
-        mock_resp_btc = MagicMock()
-        mock_resp_btc.json.return_value = [btc_market]
-        mock_resp_btc.raise_for_status = MagicMock()
-
-        mock_resp_eth = MagicMock()
-        mock_resp_eth.json.return_value = [eth_market]
-        mock_resp_eth.raise_for_status = MagicMock()
-
-        mock_client.get = AsyncMock(side_effect=[mock_resp_btc, mock_resp_eth])
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        # WHY: single _fetch_markets() call — API ignores keyword param
+        mock_client = _mock_httpx_client([btc_market, eth_market])
 
         with patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client):
             result = await collect_prediction_markets()
@@ -414,3 +403,124 @@ class TestParseAndFilter:
         raw_market["volume"] = None
         result = _parse_and_filter([raw_market])
         assert len(result) == 0
+
+
+# --- Tests: BUG-01 fixes (v2.0 Wave 0+1) ---
+
+
+class TestBug01NoSlugContains:
+    """BUG-01: slug_contains is silently ignored by Gamma API."""
+
+    async def test_no_slug_contains_in_params(self):
+        """_fetch_markets must NOT include slug_contains in API params."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        from cic_daily_report.collectors.prediction_markets import _fetch_markets
+
+        with patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client):
+            await _fetch_markets()
+
+        # Inspect the params sent to httpx.get()
+        call_args = mock_client.get.call_args
+        params = call_args.kwargs.get("params") or (call_args[1] if len(call_args) > 1 else {})
+        assert "slug_contains" not in params
+
+    async def test_params_include_volume_ordering(self):
+        """_fetch_markets should order by volume descending."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        from cic_daily_report.collectors.prediction_markets import _fetch_markets
+
+        with patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client):
+            await _fetch_markets()
+
+        call_args = mock_client.get.call_args
+        params = call_args.kwargs.get("params") or (call_args[1] if len(call_args) > 1 else {})
+        assert params.get("order") == "volume"
+        assert params.get("ascending") == "false"
+        assert params.get("limit") == "100"
+
+
+class TestBug01WordBoundary:
+    """BUG-01: Word boundary matching for short keywords like 'eth'."""
+
+    def test_method_does_not_match_eth(self):
+        """'method' should NOT trigger ETH detection."""
+        assert _detect_asset("Will the new method work?") == "CRYPTO"
+
+    def test_whether_does_not_match_eth(self):
+        """'whether' should NOT trigger ETH detection."""
+        assert _detect_asset("Whether prices rise or fall") == "CRYPTO"
+
+    def test_eth_price_matches_eth(self):
+        """'eth price' should match ETH."""
+        assert _detect_asset("Will ETH price reach $5K?") == "ETH"
+
+    def test_eth_standalone_matches(self):
+        """Standalone 'eth' should match."""
+        assert _detect_asset("eth staking rewards") == "ETH"
+
+    def test_ethereum_still_matches_eth(self):
+        """Longer keyword 'ethereum' still works."""
+        assert _detect_asset("Ethereum merge update") == "ETH"
+
+    def test_btc_word_boundary(self):
+        """'btc' as standalone word matches BTC."""
+        assert _detect_asset("BTC dominance increasing") == "BTC"
+
+    def test_bitcoin_still_matches(self):
+        """Longer keyword 'bitcoin' still works."""
+        assert _detect_asset("Bitcoin halving 2028") == "BTC"
+
+
+# --- Tests: Single API call (v2.0 — duplicate fetch fix) ---
+
+
+class TestSingleApiCall:
+    """_fetch_markets takes no keyword param — single call replaces duplicate gather."""
+
+    async def test_fetch_markets_no_keyword_param(self):
+        """_fetch_markets() accepts no arguments."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        from cic_daily_report.collectors.prediction_markets import _fetch_markets
+
+        with patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client):
+            result = await _fetch_markets()
+
+        assert result == []
+        # Only 1 HTTP call, not 2
+        assert mock_client.get.call_count == 1
+
+    async def test_collect_makes_single_http_call(self):
+        """collect_prediction_markets makes exactly 1 HTTP call (not 2)."""
+        btc_market = _make_raw_market(question="Will Bitcoin exceed $100K?", volume="100000")
+        mock_client = _mock_httpx_client([btc_market])
+
+        with patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client):
+            result = await collect_prediction_markets()
+
+        assert len(result.markets) == 1
+        # WHY: single _fetch_markets() call — only 1 httpx.get()
+        assert mock_client.get.call_count == 1

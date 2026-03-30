@@ -306,14 +306,18 @@ class TestLabelMapping:
         assert _score_to_label(0.0) == "NEUTRAL"
         assert _score_to_label(0.19) == "NEUTRAL"
         assert _score_to_label(-0.19) == "NEUTRAL"
+        # BUG-14: -0.2 is now NEUTRAL (symmetric with +0.2 = BULLISH)
+        assert _score_to_label(-0.2) == "NEUTRAL"
 
     def test_label_bearish(self):
-        assert _score_to_label(-0.2) == "BEARISH"
+        assert _score_to_label(-0.21) == "BEARISH"
         assert _score_to_label(-0.5) == "BEARISH"
         assert _score_to_label(-0.59) == "BEARISH"
+        # BUG-14: -0.6 is now BEARISH (symmetric with +0.6 = STRONG_BULLISH)
+        assert _score_to_label(-0.6) == "BEARISH"
 
     def test_label_strong_bearish(self):
-        assert _score_to_label(-0.6) == "STRONG_BEARISH"
+        assert _score_to_label(-0.61) == "STRONG_BEARISH"
         assert _score_to_label(-0.9) == "STRONG_BEARISH"
         assert _score_to_label(-1.0) == "STRONG_BEARISH"
 
@@ -606,13 +610,15 @@ class TestMarketOverallConsensus:
         assert result.score == pytest.approx(expected, abs=0.001)
 
     def test_market_overall_no_fg(self):
-        """Without F&G data, F&G component is 0."""
+        """BUG-23: Without F&G data, weight redistributed to BTC/ETH."""
         btc = MarketConsensus(asset="BTC", score=0.8, label="STRONG_BULLISH", source_count=5)
         eth = MarketConsensus(asset="ETH", score=0.4, label="BULLISH", source_count=3)
 
         result = _build_market_overall_consensus([btc, eth], None)
         assert result is not None
-        expected = 0.8 * 0.6 + 0.4 * 0.3 + 0.0 * 0.1  # 0.48 + 0.12 = 0.60
+        # BUG-23: F&G missing -> 0.1 weight redistributed proportionally
+        # btc_weight = 0.6/0.9 ≈ 0.667, eth_weight = 0.3/0.9 ≈ 0.333
+        expected = 0.8 * (0.6 / 0.9) + 0.4 * (0.3 / 0.9)  # ≈ 0.667
         assert result.score == pytest.approx(expected, abs=0.001)
 
     def test_market_overall_returns_none_when_no_assets(self):
@@ -645,6 +651,40 @@ class TestMarketOverallConsensus:
         """MARKET_OVERALL_WEIGHTS sums to 1.0."""
         total = sum(MARKET_OVERALL_WEIGHTS.values())
         assert total == pytest.approx(1.0, abs=0.001)
+
+    def test_market_overall_fg_present_uses_original_weights(self):
+        """BUG-23: When F&G IS present, original weights (0.6, 0.3, 0.1) used."""
+        btc = MarketConsensus(asset="BTC", score=0.5, label="BULLISH", source_count=3)
+        eth = MarketConsensus(asset="ETH", score=0.3, label="BULLISH", source_count=2)
+        fg_data = _make_fg(80)  # (80-50)/50 = +0.6
+
+        result = _build_market_overall_consensus([btc, eth], fg_data)
+        assert result is not None
+        expected = 0.5 * 0.6 + 0.3 * 0.3 + 0.6 * 0.1  # 0.30 + 0.09 + 0.06 = 0.45
+        assert result.score == pytest.approx(expected, abs=0.001)
+
+    def test_market_overall_fg_missing_higher_score_than_wasted_weight(self):
+        """BUG-23: F&G missing -> score higher than before (no wasted 0.1 weight)."""
+        btc = MarketConsensus(asset="BTC", score=0.6, label="BULLISH", source_count=3)
+        eth = MarketConsensus(asset="ETH", score=0.6, label="BULLISH", source_count=2)
+
+        result = _build_market_overall_consensus([btc, eth], None)
+        assert result is not None
+        # With redistribution: 0.6 * (0.6/0.9) + 0.6 * (0.3/0.9) = 0.6 * 1.0 = 0.6
+        # Without redistribution (old): 0.6*0.6 + 0.6*0.3 + 0*0.1 = 0.54
+        assert result.score == pytest.approx(0.6, abs=0.001)
+
+    def test_market_overall_fg_at_neutral_50_uses_original_weights(self):
+        """BUG-23: F&G at 50 (score=0.0) but PRESENT -> original weights used."""
+        btc = MarketConsensus(asset="BTC", score=0.5, label="BULLISH", source_count=3)
+        eth = MarketConsensus(asset="ETH", score=0.3, label="BULLISH", source_count=2)
+        fg_data = _make_fg(50)  # (50-50)/50 = 0.0
+
+        result = _build_market_overall_consensus([btc, eth], fg_data)
+        assert result is not None
+        # F&G present (even though score=0.0), so original weights
+        expected = 0.5 * 0.6 + 0.3 * 0.3 + 0.0 * 0.1  # 0.39
+        assert result.score == pytest.approx(expected, abs=0.001)
 
 
 # ===========================================================================
@@ -946,3 +986,135 @@ class TestFormatConsensusForLlm:
         assert "market_overall" in text
         assert "BULLISH" in text
         assert "NEUTRAL" in text
+
+
+# ===========================================================================
+# BUG-14: Symmetric boundary tests (v2.0 Wave 0+1)
+# ===========================================================================
+
+
+class TestBug14SymmetricBoundaries:
+    """BUG-14: _score_to_label must use >= for negative boundaries too."""
+
+    def test_score_to_label_boundary_minus_02(self):
+        """score=-0.2 must be NEUTRAL (symmetric with +0.2=BULLISH)."""
+        assert _score_to_label(-0.2) == "NEUTRAL"
+
+    def test_score_to_label_boundary_minus_06(self):
+        """score=-0.6 must be BEARISH (symmetric with +0.6=STRONG_BULLISH)."""
+        assert _score_to_label(-0.6) == "BEARISH"
+
+
+# ===========================================================================
+# SEC-01: NaN/Infinity validation tests (v2.0 Wave 0+1)
+# ===========================================================================
+
+
+class TestSec01NanInfValidation:
+    """SEC-01: _calculate_weighted_score skips sources with NaN/Inf."""
+
+    def test_weighted_score_nan_confidence(self):
+        """Source with NaN confidence is skipped, not poisoning the score."""
+        sources = [
+            ConsensusSource("Good", "BULLISH", 0.8, weight=1.0),
+            ConsensusSource("Bad_NaN", "BEARISH", float("nan"), weight=1.0),
+        ]
+        score = _calculate_weighted_score(sources)
+        # Only "Good" BULLISH contributes -> score = +1.0
+        assert score == 1.0
+
+    def test_weighted_score_inf_weight(self):
+        """Source with Infinity weight is skipped, not poisoning the score."""
+        sources = [
+            ConsensusSource("Good", "BEARISH", 0.8, weight=1.0),
+            ConsensusSource("Bad_Inf", "BULLISH", 0.8, weight=float("inf")),
+        ]
+        score = _calculate_weighted_score(sources)
+        # Only "Good" BEARISH contributes -> score = -1.0
+        assert score == -1.0
+
+
+# ===========================================================================
+# BUG-07: Smart money per-category weight adjustment (v2.0 Wave 0+1)
+# ===========================================================================
+
+
+class TestBug07SmartMoneyWeightPerCategory:
+    """BUG-07: N smart_money sources each get WEIGHTS['smart_money'] / N."""
+
+    @pytest.mark.asyncio
+    async def test_smart_money_weight_per_category(self):
+        """3 smart_money sources -> each gets 2.5/3 weight."""
+        results = await build_consensus(
+            market_data=_make_fg(50),  # NEUTRAL social
+            onchain_data=_make_funding_rate(0.001),  # smart_money: Funding_Rate
+            whale_data=_make_whale_summary(inflow=5e6, outflow=80e6),  # smart_money: Whale_Flows
+            research_data=_make_etf_research(200_000_000),  # smart_money: ETF_Flows
+        )
+        btc = results[0]
+        assert btc.asset == "BTC"
+
+        # WHY: 3 smart_money sources in BTC -> 2.5/3 each
+        expected_weight = round(WEIGHTS["smart_money"] / 3, 10)
+        sm_sources = [
+            s for s in btc.sources if s.name in ("Funding_Rate", "Whale_Flows", "ETF_Flows")
+        ]
+        assert len(sm_sources) == 3
+        for s in sm_sources:
+            assert round(s.weight, 10) == expected_weight, (
+                f"{s.name} weight {s.weight} != expected {expected_weight}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_eth_proxy_smart_money_weight_per_category(self):
+        """ETH proxy sources (e.g. 'Funding_Rate (BTC proxy)') still get per-category weight.
+
+        WHY: _maybe_proxy() renames sources to e.g. "Funding_Rate (BTC proxy)".
+        BUG-07 weight fix must use startswith matching so proxied names are recognized
+        as smart_money and get WEIGHTS['smart_money'] / N weight instead of full 2.5.
+        """
+        results = await build_consensus(
+            market_data=_make_fg(50),  # NEUTRAL social
+            onchain_data=_make_funding_rate(0.001),  # smart_money: Funding_Rate
+            whale_data=_make_whale_summary(inflow=5e6, outflow=80e6),  # smart_money: Whale_Flows
+        )
+        eth = results[1]
+        assert eth.asset == "ETH"
+
+        # ETH gets: F&G(proxy) + FR(proxy) + Whale(proxy) = 3 sources
+        # 2 of those are smart_money: Funding_Rate, Whale_Flows
+        sm_sources = [s for s in eth.sources if s.name.startswith(("Funding_Rate", "Whale_Flows"))]
+        assert len(sm_sources) == 2, (
+            f"Expected 2 smart_money proxy sources, got {[s.name for s in eth.sources]}"
+        )
+
+        # WHY: 2 smart_money sources in ETH -> 2.5/2 each
+        expected_weight = round(WEIGHTS["smart_money"] / 2, 10)
+        for s in sm_sources:
+            assert round(s.weight, 10) == expected_weight, (
+                f"{s.name} weight {s.weight} != expected {expected_weight}"
+            )
+
+
+class TestEthProxyDivergenceAlerts:
+    """ETH proxy sources must be recognized by _detect_divergence_alerts."""
+
+    def test_divergence_detected_with_proxy_names(self):
+        """Proxied smart money sources still trigger divergence alerts for ETH."""
+        sources = [
+            ConsensusSource("Funding_Rate (BTC proxy)", "BULLISH", 0.7, weight=1.25),
+            ConsensusSource("Whale_Flows (BTC proxy)", "BULLISH", 0.5, weight=1.25),
+            ConsensusSource("Fear&Greed (BTC proxy)", "BEARISH", 0.6, weight=1.0),
+        ]
+        alerts = _detect_divergence_alerts(sources)
+        assert len(alerts) == 1
+        assert "Smart money BULLISH" in alerts[0]
+        assert "retail BEARISH" in alerts[0]
+
+    def test_no_divergence_with_aligned_proxy_names(self):
+        """No alert when proxied smart money and social agree."""
+        sources = [
+            ConsensusSource("Funding_Rate (BTC proxy)", "BULLISH", 0.7, weight=1.25),
+            ConsensusSource("Fear&Greed (BTC proxy)", "BULLISH", 0.6, weight=1.0),
+        ]
+        assert _detect_divergence_alerts(sources) == []

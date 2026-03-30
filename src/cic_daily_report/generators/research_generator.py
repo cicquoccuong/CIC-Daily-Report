@@ -71,6 +71,7 @@ async def generate_research_article(
     llm: LLMAdapter,
     context: GenerationContext,
     research_data: ResearchData,
+    consensus_text: str = "",  # v2.0 P1.6: Expert Consensus formatted text
 ) -> GeneratedResearchArticle | None:
     """Generate a >2500 word CIC Market Insight research article.
 
@@ -90,7 +91,7 @@ async def generate_research_article(
     today = datetime.now(timezone.utc).strftime("%d/%m/%Y")
 
     # Build comprehensive data context
-    data_context = _build_research_context(context, research_data)
+    data_context = _build_research_context(context, research_data, consensus_text)
     prompt = _build_research_prompt(today, data_context)
 
     response: LLMResponse = await llm.generate(
@@ -147,6 +148,7 @@ async def generate_research_article(
 def _build_research_context(
     context: GenerationContext,
     research_data: ResearchData,
+    consensus_text: str = "",  # v2.0 P1.6
 ) -> str:
     """Assemble all data sources into structured LLM context for research article."""
     parts: list[str] = []
@@ -223,6 +225,10 @@ def _build_research_context(
     # 11. Narratives (from existing pipeline)
     if context.narratives_text:
         parts.append(context.narratives_text)
+
+    # 12. Expert Consensus (v2.0 P1.6)
+    if consensus_text:
+        parts.append(consensus_text)
 
     return "\n\n".join(parts)
 

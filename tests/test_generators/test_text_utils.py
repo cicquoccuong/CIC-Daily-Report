@@ -158,3 +158,42 @@ class TestTruncateStripsTrailingWhitespace:
         result, was_truncated = truncate_to_limit(text, 50)
         assert was_truncated is True
         assert not result.endswith(" ")
+
+
+# ===========================================================================
+# BUG-09 — Sentence boundary at position 0
+# ===========================================================================
+
+
+class TestBoundaryAtPositionZero:
+    def test_boundary_at_pos_zero_single_char(self):
+        """Boundary at position 0 with just punctuation → falls through to hard cut.
+
+        WHY: A single '.' at position 0 would result in returning just '.',
+        which is useless. The guard (len > 1) prevents this.
+        """
+        text = ". rest of the text that goes beyond the limit and overflows"
+        # Max chars cuts within the text
+        result, was_truncated = truncate_to_limit(text, 5)
+        assert was_truncated is True
+        # Should NOT return just "." — guard skips boundary at pos 0 when result is 1 char
+        assert len(result) <= 5
+
+    def test_boundary_at_pos_zero_with_content(self):
+        """Boundary at position 0 can still work when search region ends at sentence.
+
+        When search_region[-1] is '.', best_sentence_idx = max_chars - 1,
+        which is > 0 for any realistic text — handled by existing logic.
+        """
+        text = "Short." + "x" * 100
+        result, was_truncated = truncate_to_limit(text, 6)
+        assert was_truncated is True
+        assert result == "Short."
+
+    def test_sentence_boundary_near_start(self):
+        """Sentence boundary very close to start still works correctly."""
+        text = "OK. This is a very long text that exceeds the limit by a lot."
+        result, was_truncated = truncate_to_limit(text, 10)
+        assert was_truncated is True
+        # "OK." is at position 2, fits within limit 10
+        assert result == "OK."

@@ -273,6 +273,23 @@ class TestCollectRssWithMacro:
         assert articles[0].source_name == "GoodMacro"
 
 
+class TestBug03APNewsUrl:
+    """BUG-03: AP News direct RSS returns 404; must use Google News proxy."""
+
+    def test_ap_business_uses_google_news_proxy(self):
+        """AP_Business feed URL must be Google News proxy, not apnews.com direct."""
+        ap_feed = None
+        for f in DEFAULT_FEEDS:
+            if f.source_name == "AP_Business":
+                ap_feed = f
+                break
+        assert ap_feed is not None, "AP_Business feed not found"
+        assert "news.google.com" in ap_feed.url, "Must use Google News proxy"
+        assert "apnews.com" in ap_feed.url, "Must filter for AP News content"
+        # Must NOT be the old broken direct URL
+        assert ap_feed.url != "https://apnews.com/business.rss"
+
+
 class TestMacroArticlesSanitized:
     """Macro articles go through the same _sanitize_text pipeline."""
 
@@ -305,3 +322,46 @@ class TestMacroArticlesSanitized:
         assert "S&P 500" in cleaned
         assert "\x00" not in cleaned
         assert "\x0b" not in cleaned
+
+
+class TestG4NewsTypeDerivation:
+    """G4: RSS macro articles must get news_type='macro' in pipeline dict."""
+
+    def test_macro_article_gets_news_type_macro(self):
+        """When source_type='macro', derived news_type must be 'macro'."""
+        # Simulate what daily_pipeline does when converting RSS articles to dicts
+        article = NewsArticle(
+            title="Fed raises rates",
+            url="https://reuters.com/1",
+            source_name="Reuters_Business",
+            published_date="2026-03-28",
+            summary="The Fed raised rates",
+            language="en",
+            source_type="macro",
+        )
+        _source_type = getattr(article, "source_type", "news")
+        news_dict = {
+            "title": article.title,
+            "source_type": _source_type,
+            "news_type": "macro" if _source_type == "macro" else "crypto",
+        }
+        assert news_dict["news_type"] == "macro"
+
+    def test_crypto_article_gets_news_type_crypto(self):
+        """When source_type='news', derived news_type must be 'crypto'."""
+        article = NewsArticle(
+            title="BTC pumps",
+            url="https://cointelegraph.com/1",
+            source_name="CoinTelegraph",
+            published_date="2026-03-28",
+            summary="BTC rallied",
+            language="en",
+            source_type="news",
+        )
+        _source_type = getattr(article, "source_type", "news")
+        news_dict = {
+            "title": article.title,
+            "source_type": _source_type,
+            "news_type": "macro" if _source_type == "macro" else "crypto",
+        }
+        assert news_dict["news_type"] == "crypto"

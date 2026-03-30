@@ -589,3 +589,83 @@ class TestCallGemini:
         ):
             with pytest.raises(LLMError, match="Gemini returned no candidates"):
                 await _call_gemini(provider, "prompt", 1024, 0.7, "")
+
+
+# ===========================================================================
+# BUG-02: Groq Qwen reasoning_effort test (v2.0 Wave 0+1)
+# ===========================================================================
+
+
+class TestBug02GroqQwenReasoningEffort:
+    """BUG-02: Groq Qwen must get reasoning_effort='none', NOT thinking param."""
+
+    async def test_groq_qwen_reasoning_effort(self):
+        """Groq Qwen3 payload has reasoning_effort='none' and no 'thinking' key."""
+        # WHY: Groq API rejects `thinking: {type: disabled}` — it expects
+        # `reasoning_effort: "none"` for Qwen3 models.
+        provider = LLMProvider(
+            name="groq",
+            api_key="test-key",
+            model="qwen/qwen3-32b",
+            endpoint="https://api.groq.com/openai/v1/chat/completions",
+            rate_limit_per_min=30,
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "test response"}, "finish_reason": "stop"}],
+            "usage": {"total_tokens": 10},
+        }
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "cic_daily_report.adapters.llm_adapter.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            await _call_groq(provider, "test prompt", 1024, 0.7, "system")
+
+        call_args = mock_client.post.call_args
+        payload = call_args.kwargs.get("json") or call_args[1].get("json")
+        # Must have reasoning_effort="none"
+        assert payload.get("reasoning_effort") == "none"
+        # Must NOT have the old thinking param
+        assert "thinking" not in payload
+
+    async def test_cerebras_qwen_no_reasoning_effort(self):
+        """Cerebras Qwen3 does NOT get reasoning_effort (handled by strip_think_tags)."""
+        provider = LLMProvider(
+            name="cerebras",
+            api_key="test-key",
+            model="qwen-3-32b",
+            endpoint="https://api.cerebras.ai/v1/chat/completions",
+            rate_limit_per_min=30,
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "test"}, "finish_reason": "stop"}],
+            "usage": {"total_tokens": 5},
+        }
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "cic_daily_report.adapters.llm_adapter.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            await _call_groq(provider, "test", 1024, 0.7, "")
+
+        call_args = mock_client.post.call_args
+        payload = call_args.kwargs.get("json") or call_args[1].get("json")
+        # Cerebras should NOT have reasoning_effort
+        assert "reasoning_effort" not in payload
+        assert "thinking" not in payload

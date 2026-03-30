@@ -51,6 +51,7 @@ async def generate_bic_summary(
     metrics_interp: object | None = None,
     narratives_text: str = "",
     whale_data: object | None = None,
+    consensus_text: str = "",  # v2.0 P1.6: Expert Consensus formatted text
 ) -> GeneratedSummary:
     """Generate BIC Chat summary with full data context.
 
@@ -72,6 +73,7 @@ async def generate_bic_summary(
         narratives_text=narratives_text,
         whale_data=whale_data,
         articles=articles,
+        consensus_text=consensus_text,
     )
 
     prompt = _build_prompt(today, data_context)
@@ -117,6 +119,7 @@ def _build_data_context(
     narratives_text: str,
     whale_data: object | None,
     articles: list[GeneratedArticle],
+    consensus_text: str = "",  # v2.0 P1.6: Expert Consensus
 ) -> str:
     """Assemble all data sources into structured LLM context."""
     parts: list[str] = []
@@ -196,6 +199,10 @@ def _build_data_context(
     # 8. Narratives
     if narratives_text:
         parts.append(f"=== XU HƯỚNG TIN TỨC ===\n{narratives_text}")
+
+    # 8.5. Expert Consensus (v2.0 P1.6)
+    if consensus_text:
+        parts.append(consensus_text)
 
     # 9. News articles (top 15 for summary)
     if cleaned_news:

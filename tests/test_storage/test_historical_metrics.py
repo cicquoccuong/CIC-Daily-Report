@@ -319,6 +319,32 @@ class TestBuildSnapshotFromPipeline:
         assert snap.btc_price == 90000.0
         assert snap.eth_price == 0.0  # not available -> default
 
+    def test_consensus_score_label_passed_to_snapshot(self):
+        """G5: consensus_score and consensus_label params override defaults."""
+        snap = build_snapshot_from_pipeline(
+            market_data_points=[],
+            onchain_text="",
+            key_metrics={},
+            research_data=None,
+            technical_indicators=[],
+            consensus_score=0.45,
+            consensus_label="BULLISH",
+        )
+        assert snap.consensus_score == 0.45
+        assert snap.consensus_label == "BULLISH"
+
+    def test_consensus_defaults_when_not_passed(self):
+        """G5: Without consensus params, defaults to 0.0 / 'N/A'."""
+        snap = build_snapshot_from_pipeline(
+            market_data_points=[],
+            onchain_text="",
+            key_metrics={},
+            research_data=None,
+            technical_indicators=[],
+        )
+        assert snap.consensus_score == 0.0
+        assert snap.consensus_label == "N/A"
+
 
 # --- format_historical_for_llm tests ---
 

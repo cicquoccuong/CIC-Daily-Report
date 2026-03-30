@@ -1,7 +1,7 @@
 # CIC Daily Report
 
 ## System
-- **Version**: 2.0.0-alpha.4 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
+- **Version**: 2.0.0-alpha.5 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
 - **Purpose**: Automated crypto daily report pipeline for CIC community (BIC Group/BIC Chat)
 - **Output**: 5 tier articles (L1→L5 cumulative) + 1 BIC Chat summary + 1 Research article (BIC Group L1) + Breaking news alerts
 - **Operator**: Anh Cường (no-code user, receives on Telegram, copy-pastes to BIC)

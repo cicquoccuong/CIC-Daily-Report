@@ -99,17 +99,17 @@ class TestStripThinkTags:
         assert _strip_think_tags(text) == "Clean text with no tags."
 
     def test_strip_think_tags_nested(self):
-        """Handles edge case: <think> inside <think> — greedy-minimal match.
+        """Handles edge case: <think> inside <think> — iterative inside-out stripping.
 
-        WHY: re.DOTALL with .*? (non-greedy) will match from first <think>
-        to first </think>, which is correct for nested-like content.
+        WHY (BUG-05): Old non-greedy .*? left outer tags behind. New iterative
+        approach strips innermost first, then outer, so everything is cleaned.
+        Unclosed outer <think> is handled by the fallback truncation.
         """
         text = "<think>outer <think>inner</think> rest"
-        # Non-greedy .*? matches from first <think> to first </think>
+        # After stripping inner: "<think>outer  rest" — unclosed <think>
+        # Fallback truncates at first <think> → empty string (nothing before it)
         result = _strip_think_tags(text)
         assert "<think>" not in result
-        # "rest" remains after stripping
-        assert "rest" in result
 
     def test_strip_think_tags_empty(self):
         """Empty think tags are removed."""
@@ -160,14 +160,15 @@ class TestGroqQwenThinkingParam:
         ):
             await _call_groq(provider, "prompt", 1024, 0.7, "")
 
-        # Inspect the payload sent to httpx
+        # BUG-02: Groq Qwen uses reasoning_effort, not thinking
         call_args = mock_client.post.call_args
         payload = call_args.kwargs.get("json") or call_args[1].get("json")
-        assert "thinking" in payload
-        assert payload["thinking"] == {"type": "disabled"}
+        assert "reasoning_effort" in payload
+        assert payload["reasoning_effort"] == "none"
+        assert "thinking" not in payload  # old param must NOT be present
 
     async def test_groq_non_qwen_no_thinking_param(self):
-        """Non-qwen models (Llama 4) don't get thinking param in payload."""
+        """Non-qwen models (Llama 4) don't get thinking or reasoning_effort param."""
         provider = _groq_llama_provider()
 
         json_resp = {
@@ -185,9 +186,10 @@ class TestGroqQwenThinkingParam:
         call_args = mock_client.post.call_args
         payload = call_args.kwargs.get("json") or call_args[1].get("json")
         assert "thinking" not in payload
+        assert "reasoning_effort" not in payload
 
-    async def test_cerebras_qwen_disables_thinking(self):
-        """Cerebras also uses qwen model — should also disable thinking."""
+    async def test_cerebras_qwen_no_thinking_param(self):
+        """Cerebras Qwen: no special thinking param — _strip_think_tags() handles it."""
         provider = _cerebras_provider()
 
         json_resp = {
@@ -204,8 +206,9 @@ class TestGroqQwenThinkingParam:
 
         call_args = mock_client.post.call_args
         payload = call_args.kwargs.get("json") or call_args[1].get("json")
-        assert "thinking" in payload
-        assert payload["thinking"] == {"type": "disabled"}
+        # BUG-02: Cerebras does NOT get thinking or reasoning_effort
+        assert "thinking" not in payload
+        assert "reasoning_effort" not in payload
 
 
 class TestGenerateStripsThinkTags:
@@ -321,10 +324,11 @@ class TestTruncateToCompleteSentence:
         assert result == "BTC hit $100K!"
 
     def test_truncate_to_complete_sentence_no_boundary(self):
-        """Returns text as-is if no sentence boundary found."""
+        """BUG-08: No sentence boundary → truncates at last space + '...'."""
         text = "no punctuation here just words"
         result = _truncate_to_complete_sentence(text)
-        assert result == "no punctuation here just words"
+        # WHY: avoids mid-word cut — truncates at last space and appends "..."
+        assert result == "no punctuation here just..."
 
     def test_truncate_to_complete_sentence_multiple_sentences(self):
         """Keeps all complete sentences, drops only the incomplete tail."""
@@ -448,3 +452,154 @@ class TestThinkTagsBeforeTruncation:
         # Think tags stripped AND text truncated to last complete sentence
         assert "<think>" not in resp.text
         assert resp.text == "Bitcoin is strong."
+
+
+# ===========================================================================
+# BUG-04 — Gemini SAFETY/RECITATION finish_reason mapping
+# ===========================================================================
+
+
+class TestGeminiFinishReasonMapping:
+    async def test_gemini_safety_maps_to_content_filter(self):
+        """Gemini SAFETY finishReason maps to 'content_filter'."""
+        provider = _gemini_provider()
+
+        json_resp = {
+            "candidates": [
+                {
+                    "content": {"parts": [{"text": "partial safe text"}]},
+                    "finishReason": "SAFETY",
+                }
+            ],
+            "usageMetadata": {"totalTokenCount": 20},
+        }
+        mock_client = _mock_httpx_client(json_resp)
+
+        with patch(
+            "cic_daily_report.adapters.llm_adapter.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await _call_gemini(provider, "prompt", 1024, 0.7, "")
+
+        assert result.finish_reason == "content_filter"
+
+    async def test_gemini_recitation_maps_to_content_filter(self):
+        """Gemini RECITATION finishReason maps to 'content_filter'."""
+        provider = _gemini_provider()
+
+        json_resp = {
+            "candidates": [
+                {
+                    "content": {"parts": [{"text": "recited content"}]},
+                    "finishReason": "RECITATION",
+                }
+            ],
+            "usageMetadata": {"totalTokenCount": 15},
+        }
+        mock_client = _mock_httpx_client(json_resp)
+
+        with patch(
+            "cic_daily_report.adapters.llm_adapter.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await _call_gemini(provider, "prompt", 1024, 0.7, "")
+
+        assert result.finish_reason == "content_filter"
+
+
+class TestContentFilterTruncation:
+    async def test_generate_truncates_on_content_filter(self):
+        """generate() truncates when finish_reason=content_filter, like length."""
+        provider = _gemini_provider()
+        adapter = LLMAdapter(providers=[provider])
+
+        filtered_text = "First complete sentence. Partial filtered te"
+        gemini_resp = LLMResponse(
+            text=filtered_text,
+            tokens_used=30,
+            model="gemini-2.5-flash",
+            finish_reason="content_filter",
+        )
+        with patch(
+            "cic_daily_report.adapters.llm_adapter._call_gemini",
+            new_callable=AsyncMock,
+            return_value=gemini_resp,
+        ):
+            resp = await adapter.generate("test prompt")
+
+        assert resp.text == "First complete sentence."
+
+    async def test_content_filter_logs_warning(self):
+        """Warning logged when content_filter truncation happens."""
+        provider = _gemini_provider()
+        adapter = LLMAdapter(providers=[provider])
+
+        filtered_text = "Good sentence. Bad filtered te"
+        gemini_resp = LLMResponse(
+            text=filtered_text,
+            tokens_used=25,
+            model="gemini-2.5-flash",
+            finish_reason="content_filter",
+        )
+        with (
+            patch(
+                "cic_daily_report.adapters.llm_adapter._call_gemini",
+                new_callable=AsyncMock,
+                return_value=gemini_resp,
+            ),
+            patch(
+                "cic_daily_report.adapters.llm_adapter.logger.warning",
+            ) as mock_warn,
+        ):
+            await adapter.generate("test prompt")
+
+        # At least one warning about content_filter
+        filter_warnings = [c for c in mock_warn.call_args_list if "content_filter" in str(c)]
+        assert len(filter_warnings) >= 1
+
+
+# ===========================================================================
+# BUG-05 — Nested <think> tags
+# ===========================================================================
+
+
+class TestNestedThinkTags:
+    def test_nested_think_tags_fully_stripped(self):
+        """Nested <think> tags are fully removed, leaving only clean text."""
+        text = "Hello<think>outer<think>inner</think>rest</think>World"
+        assert _strip_think_tags(text) == "HelloWorld"
+
+    def test_deeply_nested_think_tags(self):
+        """Three levels of nesting are fully stripped."""
+        text = "A<think>1<think>2<think>3</think>2b</think>1b</think>B"
+        assert _strip_think_tags(text) == "AB"
+
+    def test_multiple_separate_nested_blocks(self):
+        """Multiple separate nested blocks are all stripped."""
+        text = "X<think>a<think>b</think>c</think>Y<think>d<think>e</think>f</think>Z"
+        assert _strip_think_tags(text) == "XYZ"
+
+
+# ===========================================================================
+# BUG-08 — _truncate_to_complete_sentence no-boundary fallback
+# ===========================================================================
+
+
+class TestTruncateNoBoundaryFallback:
+    def test_no_sentence_boundary_truncates_at_whitespace(self):
+        """Text with no sentence punctuation truncates at last space + '...'."""
+        text = "This text has no ending"
+        result = _truncate_to_complete_sentence(text)
+        assert result == "This text has no..."
+
+    def test_no_sentence_boundary_single_word(self):
+        """Single word with no space returns text unchanged (no space to split on)."""
+        text = "singleword"
+        result = _truncate_to_complete_sentence(text)
+        assert result == "singleword"
+
+    def test_no_boundary_multiple_words(self):
+        """Multiple words without punctuation: truncate at last space."""
+        text = "alpha beta gamma delta incompl"
+        result = _truncate_to_complete_sentence(text)
+        assert result == "alpha beta gamma delta..."

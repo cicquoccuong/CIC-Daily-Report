@@ -26,7 +26,9 @@ _CONCURRENCY_LIMIT = asyncio.Semaphore(25)  # max concurrent HTTP requests
 
 
 def _sanitize_text(text: str) -> str:
-    """Remove non-printable chars, decode HTML entities, normalize whitespace."""
+    """Remove HTML tags, non-printable chars, decode HTML entities, normalize whitespace."""
+    # SEC-05: Strip HTML tags BEFORE unescaping — prevents tag injection from RSS content.
+    text = re.sub(r"<[^>]+>", " ", text)
     text = html.unescape(text)
     # Remove control chars and non-standard Unicode but keep basic Latin + common scripts
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", text)
@@ -80,9 +82,10 @@ DEFAULT_FEEDS: list[FeedConfig] = [
         "en",
         source_type="macro",
     ),
-    # WHY direct AP RSS: previous rsshub.app proxy was unreliable (frequent timeouts).
+    # WHY Google News proxy: AP News discontinued direct RSS (returns 404).
+    # Same proxy pattern as Reuters above — verified working (HTTP 200).
     FeedConfig(
-        "https://apnews.com/business.rss",
+        "https://news.google.com/rss/search?q=site:apnews.com+business&hl=en-US&gl=US&ceid=US:en",
         "AP_Business",
         "en",
         source_type="macro",

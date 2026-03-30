@@ -16,6 +16,7 @@ Phase 2 will add: TG experts, TradingView, Augmento, YouTube.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -130,23 +131,24 @@ def _sentiment_to_numeric(sentiment: str) -> float:
 def _score_to_label(score: float) -> str:
     """Map a -1..+1 score to a human-readable label.
 
-    Boundaries (from spec Section 2.2):
-      score >= 0.6  -> STRONG_BULLISH
-      score >= 0.2  -> BULLISH
-      score > -0.2  -> NEUTRAL    (strict >)
-      score > -0.6  -> BEARISH    (strict >)
-      score <= -0.6 -> STRONG_BEARISH
+    Boundaries (symmetric, from spec Section 2.2 — updated):
+      score >= 0.6   -> STRONG_BULLISH
+      score >= 0.2   -> BULLISH
+      score >= -0.2  -> NEUTRAL
+      score >= -0.6  -> BEARISH
+      score < -0.6   -> STRONG_BEARISH
 
-    WHY asymmetric: spec uses >= for bullish side and > for bearish side,
-    meaning exact boundary values (-0.2, -0.6) fall into the more bearish bin.
+    WHY symmetric: spec updated to use >= on both sides so that exact
+    boundary values (-0.2, -0.6) are treated consistently with their
+    positive counterparts (0.2, 0.6).
     """
     if score >= 0.6:
         return "STRONG_BULLISH"
     if score >= 0.2:
         return "BULLISH"
-    if score > -0.2:
+    if score >= -0.2:
         return "NEUTRAL"
-    if score > -0.6:
+    if score >= -0.6:
         return "BEARISH"
     return _STRONG_BEARISH_LABEL
 
@@ -156,10 +158,20 @@ def _calculate_weighted_score(sources: list[ConsensusSource]) -> float:
 
     Returns 0.0 when denominator is zero (no valid sources).
     Clamped to [-1.0, +1.0].
+
+    SEC-01: Skips sources with NaN or Infinity confidence/weight to prevent
+    poisoned inputs from corrupting the consensus score.
     """
     numerator = 0.0
     denominator = 0.0
     for src in sources:
+        # SEC-01: Skip sources with invalid (NaN/Inf) confidence or weight
+        if math.isnan(src.confidence) or math.isinf(src.confidence):
+            logger.warning(f"Skipping {src.name}: invalid confidence {src.confidence}")
+            continue
+        if math.isnan(src.weight) or math.isinf(src.weight):
+            logger.warning(f"Skipping {src.name}: invalid weight {src.weight}")
+            continue
         w = src.weight * src.confidence
         numerator += _sentiment_to_numeric(src.sentiment) * w
         denominator += w
@@ -459,10 +471,12 @@ def _detect_divergence_alerts(
     smart_money_sentiments: list[str] = []
     social_sentiments: list[str] = []
 
+    # WHY startswith: ETH proxy sources are renamed e.g. "Funding_Rate (BTC proxy)"
+    # — exact name match would miss them, preventing divergence alerts for ETH.
     for src in sources:
-        if src.name in _SMART_MONEY_SOURCES:
+        if any(src.name.startswith(base) for base in _SMART_MONEY_SOURCES):
             smart_money_sentiments.append(src.sentiment)
-        elif src.name in _SOCIAL_SENTIMENT_SOURCES:
+        elif any(src.name.startswith(base) for base in _SOCIAL_SENTIMENT_SOURCES):
             social_sentiments.append(src.sentiment)
 
     if not smart_money_sentiments or not social_sentiments:
@@ -546,15 +560,31 @@ def _build_market_overall_consensus(
 
     # Fear & Greed component (normalize 0-100 to -1..+1)
     fg_score = 0.0
+    fg_label = "N/A"
     if market_data:
         for dp in market_data:
             if dp.symbol == "Fear&Greed":
                 # WHY (value - 50) / 50: maps F&G 0→-1.0, 50→0.0, 100→+1.0
                 fg_score = (dp.price - 50) / 50
+                fg_label = "present"
                 break
 
+    # BUG-23: Redistribute F&G weight when missing.
+    # WHY: If F&G is missing (score=0.0, label=N/A), the 0.1 weight is
+    # "wasted" (multiplied by 0.0) instead of being redistributed to BTC/ETH,
+    # which deflates the overall score toward zero.
     w = MARKET_OVERALL_WEIGHTS
-    raw_score = btc_score * w["btc"] + eth_score * w["eth"] + fg_score * w["fear_greed"]
+    if fg_score == 0.0 and fg_label == "N/A":
+        # No F&G data — redistribute 0.1 proportionally to btc (0.6) and eth (0.3)
+        btc_weight = w["btc"] / (w["btc"] + w["eth"])  # ~0.667
+        eth_weight = w["eth"] / (w["btc"] + w["eth"])  # ~0.333
+        fg_weight = 0.0
+    else:
+        btc_weight = w["btc"]
+        eth_weight = w["eth"]
+        fg_weight = w["fear_greed"]
+
+    raw_score = btc_score * btc_weight + eth_score * eth_weight + fg_score * fg_weight
     score = round(max(-1.0, min(1.0, raw_score)), 4)
     label = _score_to_label(score)
 
@@ -667,6 +697,20 @@ async def build_consensus(
             etf_source = _extract_from_etf_flows(research_data)
             if etf_source is not None:
                 sources.append(etf_source)
+
+        # BUG-07: Adjust weights per-category (spec Section 3.7.4).
+        # WHY: Without this, 3 smart_money sources each get 2.5 weight
+        # (total 7.5) vs Polymarket's 3.0 — smart money dominates 65%.
+        # Per-category weighting: each source gets category_weight / N.
+        # WHY startswith: ETH proxy sources are renamed e.g. "Funding_Rate (BTC proxy)"
+        # — exact name match would miss them, leaving ETH sources at full 2.5 weight.
+        _sm_in_sources = [
+            s for s in sources if any(s.name.startswith(base) for base in _SMART_MONEY_SOURCES)
+        ]
+        if _sm_in_sources:
+            _per_source_weight = WEIGHTS["smart_money"] / len(_sm_in_sources)
+            for s in _sm_in_sources:
+                s.weight = _per_source_weight
 
         # Check minimum viable consensus
         if len(sources) < MIN_SOURCES_FOR_CONSENSUS:

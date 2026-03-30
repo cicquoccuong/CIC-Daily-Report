@@ -12,6 +12,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from cic_daily_report.breaking.feedback import (
+    MAX_EVENTS_PER_DAY,
+    MAX_FEEDBACK_FILE_SIZE,
     read_breaking_summary,
     save_breaking_summary,
 )
@@ -267,3 +269,121 @@ class TestRoundTrip:
             assert "(3 tin)" in result
             assert "Morning event" in result
             assert "Evening event" in result
+
+
+# ---------------------------------------------------------------------------
+# BUG-10: Atomic write tests
+# ---------------------------------------------------------------------------
+class TestAtomicWrite:
+    def test_no_tmp_files_left(self, tmp_path: Path) -> None:
+        """BUG-10: After save, no .tmp files should remain in data dir."""
+        p_dir, p_file, fb_dir, fb_file = _patch_paths(tmp_path)
+        with p_dir, p_file:
+            save_breaking_summary([_make_event()])
+            assert fb_file.exists()
+            # No leftover .tmp files
+            tmp_files = list(fb_dir.glob("*.tmp"))
+            assert tmp_files == []
+
+    def test_file_valid_json_after_save(self, tmp_path: Path) -> None:
+        """BUG-10: File is always valid JSON (atomic write prevents corruption)."""
+        p_dir, p_file, fb_dir, fb_file = _patch_paths(tmp_path)
+        with p_dir, p_file:
+            save_breaking_summary([_make_event(title="First")])
+            save_breaking_summary([_make_event(title="Second")])
+            data = json.loads(fb_file.read_text(encoding="utf-8"))
+            assert len(data["events"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# SEC-02: File size limit tests
+# ---------------------------------------------------------------------------
+class TestFileSizeLimit:
+    def test_oversized_file_returns_empty(self, tmp_path: Path) -> None:
+        """SEC-02: File larger than MAX_FEEDBACK_FILE_SIZE returns empty."""
+        p_dir, p_file, fb_dir, fb_file = _patch_paths(tmp_path)
+        with p_dir, p_file:
+            fb_dir.mkdir(parents=True, exist_ok=True)
+            # Write a file larger than limit
+            fb_file.write_text("x" * (MAX_FEEDBACK_FILE_SIZE + 1), encoding="utf-8")
+            assert read_breaking_summary() == ""
+
+    def test_normal_size_file_reads(self, tmp_path: Path) -> None:
+        """SEC-02: File within size limit reads normally."""
+        p_dir, p_file, fb_dir, fb_file = _patch_paths(tmp_path)
+        with p_dir, p_file:
+            save_breaking_summary([_make_event()])
+            assert fb_file.stat().st_size < MAX_FEEDBACK_FILE_SIZE
+            result = read_breaking_summary()
+            assert "BTC hits $100K" in result
+
+
+# ---------------------------------------------------------------------------
+# SEC-06: Event cap tests
+# ---------------------------------------------------------------------------
+class TestEventCap:
+    def test_events_capped_at_max(self, tmp_path: Path) -> None:
+        """SEC-06: Events list capped at MAX_EVENTS_PER_DAY."""
+        p_dir, p_file, fb_dir, fb_file = _patch_paths(tmp_path)
+        with p_dir, p_file:
+            # Save more than MAX_EVENTS_PER_DAY events
+            events = [_make_event(title=f"Event {i}") for i in range(MAX_EVENTS_PER_DAY + 20)]
+            save_breaking_summary(events)
+
+            data = json.loads(fb_file.read_text(encoding="utf-8"))
+            assert len(data["events"]) == MAX_EVENTS_PER_DAY
+
+    def test_cap_keeps_latest_events(self, tmp_path: Path) -> None:
+        """SEC-06: Cap keeps the latest (most recent) events, not the oldest."""
+        p_dir, p_file, fb_dir, fb_file = _patch_paths(tmp_path)
+        with p_dir, p_file:
+            events = [_make_event(title=f"Event {i}") for i in range(MAX_EVENTS_PER_DAY + 5)]
+            save_breaking_summary(events)
+
+            data = json.loads(fb_file.read_text(encoding="utf-8"))
+            # Last event should be in the list (latest kept)
+            titles = [e["title"] for e in data["events"]]
+            assert f"Event {MAX_EVENTS_PER_DAY + 4}" in titles
+            # First event should be dropped (oldest removed)
+            assert "Event 0" not in titles
+
+
+# ---------------------------------------------------------------------------
+# R5-06: Yesterday events for late UTC breaking news
+# ---------------------------------------------------------------------------
+class TestYesterdayEvents:
+    def test_yesterday_events_included(self, tmp_path: Path) -> None:
+        """R5-06: Yesterday's events are included (catches late UTC breaking)."""
+        from datetime import timedelta
+
+        p_dir, p_file, fb_dir, fb_file = _patch_paths(tmp_path)
+        with p_dir, p_file:
+            fb_dir.mkdir(parents=True, exist_ok=True)
+            yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+            payload = {
+                "date": yesterday,
+                "events": [_make_event(title="Late night event")],
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+            }
+            fb_file.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = read_breaking_summary()
+            assert "Late night event" in result
+
+    def test_two_days_ago_excluded(self, tmp_path: Path) -> None:
+        """R5-06: Events from 2+ days ago are still excluded."""
+        from datetime import timedelta
+
+        p_dir, p_file, fb_dir, fb_file = _patch_paths(tmp_path)
+        with p_dir, p_file:
+            fb_dir.mkdir(parents=True, exist_ok=True)
+            two_days_ago = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%d")
+            payload = {
+                "date": two_days_ago,
+                "events": [_make_event(title="Old event")],
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+            }
+            fb_file.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = read_breaking_summary()
+            assert result == ""
