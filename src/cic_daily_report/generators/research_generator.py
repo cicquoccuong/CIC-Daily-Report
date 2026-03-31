@@ -72,6 +72,7 @@ async def generate_research_article(
     context: GenerationContext,
     research_data: ResearchData,
     consensus_text: str = "",  # v2.0 P1.6: Expert Consensus formatted text
+    master_analysis_text: str = "",  # P1.7: Master Analysis as additional context
 ) -> GeneratedResearchArticle | None:
     """Generate a >2500 word CIC Market Insight research article.
 
@@ -91,7 +92,9 @@ async def generate_research_article(
     today = datetime.now(timezone.utc).strftime("%d/%m/%Y")
 
     # Build comprehensive data context
-    data_context = _build_research_context(context, research_data, consensus_text)
+    data_context = _build_research_context(
+        context, research_data, consensus_text, master_analysis_text
+    )
     prompt = _build_research_prompt(today, data_context)
 
     response: LLMResponse = await llm.generate(
@@ -149,6 +152,7 @@ def _build_research_context(
     context: GenerationContext,
     research_data: ResearchData,
     consensus_text: str = "",  # v2.0 P1.6
+    master_analysis_text: str = "",  # P1.7: Master Analysis as additional context
 ) -> str:
     """Assemble all data sources into structured LLM context for research article."""
     parts: list[str] = []
@@ -229,6 +233,20 @@ def _build_research_context(
     # 12. Expert Consensus (v2.0 P1.6)
     if consensus_text:
         parts.append(consensus_text)
+
+    # 13. Master Analysis Context (P1.7)
+    # WHY: When Master Analysis succeeded, its comprehensive narrative provides
+    # additional context for the research article. Research stays INDEPENDENT
+    # (uses raw data as primary source) but can reference Master's cross-signal
+    # insights as supplementary context.
+    if master_analysis_text:
+        parts.append(
+            "=== B\u1ed0I C\u1ea2NH T\u1eea MASTER ANALYSIS ===\n"
+            "D\u00f9ng l\u00e0m tham kh\u1ea3o b\u1ed5 sung. "
+            "PH\u00c2N T\u00cdCH \u0110\u1ed8C L\u1eacP t\u1eeb d\u1eef li\u1ec7u "
+            "g\u1ed1c \u1edf tr\u00ean, KH\u00d4NG copy t\u1eeb Master.\n"
+            f"{master_analysis_text[:3000]}"
+        )
 
     return "\n\n".join(parts)
 

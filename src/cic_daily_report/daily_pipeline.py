@@ -734,12 +734,125 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         consensus_data=consensus_list,
     )
 
-    generated = []
+    # --- Stage 2: Master Analysis (P1.7) ---
+    # WHY: Single comprehensive analysis sees ALL data, eliminating cross-tier
+    # contradictions. Tier Extractor then produces L1-L5 + Summary from this
+    # single source. Fallback: per-tier generation (v0.32.0 path) if Master fails.
+    from cic_daily_report.generators.master_analysis import (
+        MasterAnalysis,
+        MasterAnalysisError,
+        generate_master_analysis,
+        validate_master,
+    )
+
+    master: MasterAnalysis | None = None
+    fallback_to_per_tier = False
+    generated: list = []
+    summary = None
+
     try:
-        generated = await generate_tier_articles(llm, templates, context)
-    except Exception as e:
-        logger.error(f"Article generation failed: {e}")
+        logger.info("Stage 2: Master Analysis Generation (P1.7)")
+        master = await generate_master_analysis(llm, context)
+
+        if not validate_master(master):
+            logger.warning("Master incomplete — fallback to per-tier")
+            fallback_to_per_tier = True
+            master = None
+
+    except (MasterAnalysisError, Exception) as e:
+        logger.error(f"Master Analysis failed: {e} — fallback to per-tier")
+        fallback_to_per_tier = True
         errors.append(e)
+
+    # --- Stage 3: Quality Gate on Master ---
+    if master and not fallback_to_per_tier:
+        from cic_daily_report.generators.quality_gate import run_quality_gate
+
+        qg_input_data = {
+            "economic_events": economic_events_text,
+            "market_data": market_text,
+            "key_metrics": key_metrics,
+        }
+        qg_result = run_quality_gate(master.content, "Master", qg_input_data)
+        if not qg_result.passed:
+            logger.warning(f"Quality gate on Master: density={qg_result.insight_density:.0%}")
+            # WHY: Don't retry Master for QG failure — proceed with extraction.
+            # QG is LOG-ONLY in Phase 1a, and re-generating a 16K token response
+            # just for density improvement is wasteful.
+
+    # --- Stage 4: Tier Extraction ---
+    if master and not fallback_to_per_tier:
+        logger.info("Stage 4: Tier Extraction from Master")
+        from cic_daily_report.generators.tier_extractor import extract_all
+
+        try:
+            extracted = await extract_all(llm, master, tier_context)
+
+            # Separate tier articles from summary
+            generated = [a for a in extracted if a.tier.startswith("L")]
+            summary_articles = [a for a in extracted if a.tier == "Summary"]
+
+            if summary_articles:
+                from cic_daily_report.generators.summary_generator import GeneratedSummary
+
+                sa = summary_articles[0]
+                summary = GeneratedSummary(
+                    title=sa.title,
+                    content=sa.content,
+                    word_count=sa.word_count,
+                    llm_used=sa.llm_used,
+                    generation_time_sec=sa.generation_time_sec,
+                )
+
+            if not generated:
+                logger.error("No tier articles extracted — fallback to per-tier")
+                fallback_to_per_tier = True
+
+        except Exception as e:
+            logger.error(f"Extraction failed: {e} — fallback to per-tier")
+            fallback_to_per_tier = True
+            errors.append(e)
+
+    # --- Fallback: Per-tier generation (v0.32.0 path) ---
+    # WHY: If Master Analysis or Tier Extraction fails for any reason,
+    # we fall back to the proven per-tier generation path. This ensures
+    # the pipeline ALWAYS delivers content (NFR7: partial delivery).
+    if fallback_to_per_tier:
+        logger.warning("FALLBACK: Using per-tier generation (v0.32.0)")
+        generated = []
+        summary = None
+        try:
+            generated = await generate_tier_articles(llm, templates, context)
+        except Exception as e:
+            logger.error(f"Article generation failed: {e}")
+            errors.append(e)
+
+        # v0.30.0: Cooldown before summary/research — tier generation already consumed
+        # most of the per-minute rate limit; wait 60s to let the window reset.
+        if generated:
+            logger.info("Cooldown 60s before summary/research generation")
+            await asyncio.sleep(60)
+
+        # Generate BIC Chat summary (FR15, v0.24.0: full data context)
+        if generated:
+            try:
+                summary = await generate_bic_summary(
+                    llm=llm,
+                    articles=generated,
+                    key_metrics=key_metrics,
+                    cleaned_news=cleaned_news,
+                    market_data=market_data,
+                    onchain_data=onchain_data,
+                    sector_snapshot=sector_snapshot,
+                    econ_calendar=econ_calendar,
+                    metrics_interp=metrics_interp,
+                    narratives_text=narratives_text,
+                    whale_data=whale_data,
+                    consensus_text=consensus_text,  # v2.0 P1.6
+                )
+            except Exception as e:
+                logger.error(f"Summary generation failed: {e}")
+                errors.append(e)
 
     # Post-generation validation (FR13, FR14)
     generated_tiers = {a.tier for a in generated}
@@ -773,37 +886,10 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
                     f"issues={qg_result.factual_issues}"
                 )
 
-    # v0.30.0: Cooldown before summary/research — tier generation already consumed
-    # most of the per-minute rate limit; wait 60s to let the window reset.
-    if generated:
-        logger.info("Cooldown 60s before summary/research generation")
-        await asyncio.sleep(60)
-
-    # Generate BIC Chat summary (FR15, v0.24.0: full data context)
-    summary = None
-    if generated:
-        try:
-            summary = await generate_bic_summary(
-                llm=llm,
-                articles=generated,
-                key_metrics=key_metrics,
-                cleaned_news=cleaned_news,
-                market_data=market_data,
-                onchain_data=onchain_data,
-                sector_snapshot=sector_snapshot,
-                econ_calendar=econ_calendar,
-                metrics_interp=metrics_interp,
-                narratives_text=narratives_text,
-                whale_data=whale_data,
-                consensus_text=consensus_text,  # v2.0 P1.6
-            )
-        except Exception as e:
-            logger.error(f"Summary generation failed: {e}")
-            errors.append(e)
-
     # Generate CIC Market Insight research article (P2-A: BIC Group L1)
     # v0.30.0 (Fix 4.1): Decoupled from tier generation — research uses raw data (context),
     # not generated tier articles. Always attempt if LLM is available.
+    # P1.7: Pass master.content as additional context when Master Analysis succeeded.
     research_article = None
     if llm is not None:
         try:
@@ -812,6 +898,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
                 context=context,
                 research_data=research_data,
                 consensus_text=consensus_text,  # v2.0 P1.6
+                master_analysis_text=master.content if master else "",  # P1.7
             )
             if research_article:
                 logger.info(
@@ -825,8 +912,8 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
 
                 await send_admin_alert(
                     "\u26a0\ufe0f Research article SKIPPED\n"
-                    "Lý do: Nội dung quá ngắn (quality gate)\n"
-                    "Bài viết Research không xuất hiện hôm nay."
+                    "L\u00fd do: N\u1ed9i dung qu\u00e1 ng\u1eafn (quality gate)\n"
+                    "B\u00e0i vi\u1ebft Research kh\u00f4ng xu\u1ea5t hi\u1ec7n h\u00f4m nay."
                 )
         except Exception as e:
             logger.error(f"Research article generation failed: {e}")

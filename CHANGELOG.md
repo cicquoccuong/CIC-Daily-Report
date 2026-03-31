@@ -1,5 +1,41 @@
 # Changelog
 
+## [2.0.0-alpha.6] - 2026-03-30
+
+### Added — P1.7: Master Analysis + Tier Extractor (core v2.0 architecture change)
+
+Replaces 7 independent LLM calls with 1 Master Analysis (ALL data → single comprehensive
+analysis) + 6 sequential extractions (L1-L5 + Summary). Eliminates cross-tier contradictions.
+Research article stays independent, receives Master as supplementary context.
+
+#### New files
+- `generators/master_analysis.py` (282 lines) — MasterAnalysis dataclass, 8-section Vietnamese
+  system prompt, `build_master_context()` (assembles all 15 data sources), `generate_master_analysis()`
+  (16K max tokens, temperature 0.4), `validate_master()` (conclusion + section completeness check)
+- `generators/tier_extractor.py` (290 lines) — 6 ExtractionConfigs (L1-L5 + Summary), sequential
+  extraction with adaptive cooldown, 429 retry, per-tier audience/focus/word targets. Summary
+  extraction includes full story-based digest format (Hook + Overview + Stories + Forward Look)
+
+#### Pipeline rewire (`daily_pipeline.py`)
+- Stage 2: Master Analysis Generation → Stage 3: Quality Gate on Master → Stage 4: Tier Extraction
+- Fallback: if Master fails (short/truncated/error) → immediate fallback to per-tier generation
+  (v0.32.0 code path preserved in full — `generate_tier_articles` + `generate_bic_summary` untouched)
+- Research article always independent: receives `master_analysis_text` as optional context
+
+#### DA-driven design adjustments (B3.5 review findings)
+- Research generator stays independent (NOT extracted from Master) — preserves depth
+- Extractions are sequential (NOT parallel) — respects 7 RPM rate limit
+- Master retry = 1 attempt max, then fallback immediately
+- Section parsing uses fuzzy regex + Vietnamese diacritics detection
+- Summary extraction includes full story-format spec from summary_generator.py
+- validate_master: finish_reason=length ALWAYS triggers fallback (regardless of conclusion match)
+
+### Stats
+- Tests: 1284 → 1322 (+38 new tests)
+- New files: 2 source + 2 test (1265 lines total)
+- Modified: daily_pipeline.py (+140 lines), research_generator.py (+20 lines)
+- Token budget: 1 Master (16K) + 6 extractions + 1 Research = 8 LLM calls
+
 ## [2.0.0-alpha.5] - 2026-03-30
 
 ### Fixed — 32 issues from Phase 1 comprehensive audit (5 scan rounds)
