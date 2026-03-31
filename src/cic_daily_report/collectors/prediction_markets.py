@@ -141,6 +141,7 @@ async def collect_prediction_markets() -> PredictionMarketsData:
     3. Filter: only active markets with volume > $10K
     4. Sort by volume (highest first)
     5. Return top 10 markets per asset
+    6. R5-05 fallback: if Polymarket returns 0 BTC AND 0 ETH markets, try Kalshi
 
     WHY single call: Gamma API ignores keyword params — both "bitcoin" and
     "ethereum" searches return identical results. One call is sufficient.
@@ -166,6 +167,34 @@ async def collect_prediction_markets() -> PredictionMarketsData:
                 seen_questions.add(q_lower)
                 unique_markets.append(m)
 
+        # R5-05: Kalshi fallback when Polymarket returns no BTC/ETH markets
+        # WHY: consensus engine needs prediction market data — if Polymarket is down
+        # or returns only CRYPTO-tagged markets, Kalshi provides backup BTC/ETH data.
+        btc_count = sum(1 for m in unique_markets if m.asset == "BTC")
+        eth_count = sum(1 for m in unique_markets if m.asset == "ETH")
+        if btc_count == 0 and eth_count == 0:
+            logger.info("Polymarket returned 0 BTC + 0 ETH — trying Kalshi fallback")
+            kalshi_markets = await _fetch_kalshi_fallback()
+            for km in kalshi_markets:
+                q_lower = km["question"].lower()
+                if q_lower not in seen_questions:
+                    seen_questions.add(q_lower)
+                    unique_markets.append(
+                        PredictionMarket(
+                            question=km["question"],
+                            outcome_yes=km["yes_bid"],
+                            outcome_no=1.0 - km["yes_bid"],
+                            volume=float(km["volume"]),
+                            liquidity=0.0,
+                            end_date="",
+                            url="https://kalshi.com",
+                            asset=_detect_asset(km["question"]),
+                            source="kalshi",
+                        )
+                    )
+            if kalshi_markets:
+                logger.info(f"Kalshi fallback added {len(kalshi_markets)} markets")
+
         # Sort by volume descending, then cap per asset
         unique_markets.sort(key=lambda m: m.volume, reverse=True)
         final = _cap_per_asset(unique_markets)
@@ -179,6 +208,35 @@ async def collect_prediction_markets() -> PredictionMarketsData:
 
 
 # --- Internal helpers ---
+
+
+async def _fetch_kalshi_fallback() -> list[dict]:
+    """R5-05 fallback: fetch BTC/ETH markets from Kalshi if Polymarket returns nothing.
+
+    Kalshi Elections API is free and requires no authentication for read access.
+    Returns a list of dicts with question, yes_bid, volume, source fields.
+    """
+    url = "https://api.elections.kalshi.com/trade-api/v2/markets"
+    results: list[dict] = []
+    for ticker_prefix in ["KXBTC", "KXETH"]:
+        try:
+            params = {"status": "open", "series_ticker": ticker_prefix, "limit": "20"}
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+                resp = await client.get(url, params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for m in data.get("markets", []):
+                        results.append(
+                            {
+                                "question": m.get("title", ""),
+                                "yes_bid": m.get("yes_bid", 0),
+                                "volume": m.get("volume", 0),
+                                "source": "kalshi",
+                            }
+                        )
+        except Exception as e:
+            logger.warning(f"Kalshi fallback failed for {ticker_prefix}: {e}")
+    return results
 
 
 async def _fetch_markets() -> list[dict]:

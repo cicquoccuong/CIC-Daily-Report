@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.0.0-alpha.10] - 2026-03-31
+
+### Fixed — 5 deferred items from Phase 1 audit (zero remaining)
+
+- **R5-05** Kalshi fallback: if Polymarket returns 0 BTC/ETH markets, auto-fallback to Kalshi API
+  (`api.elections.kalshi.com`). Consensus engine now has dual prediction market sources.
+- **R5-10** Sheets timeout: ALL `asyncio.to_thread()` gspread calls wrapped with `wait_for(timeout=60s)`.
+  Individual Sheets operations can no longer hang the pipeline indefinitely.
+- **G7** Integration tests: 8 new E2E tests — master path flow, fallback trigger, consensus→run_log,
+  cross-tier repetition check. (`tests/test_integration/test_pipeline_e2e.py`)
+- **G9** Consensus monitoring: per-asset logging (label, score, source count, divergence alerts) +
+  `consensus_summary` dict in pipeline run_log → visible in NHAT_KY_PIPELINE sheet notes.
+- **BUG-17** CNBC RSS: updated from deprecated `search.cnbc.com` to current `www.cnbc.com/id/.../rss.html`.
+
+### Stats
+- Tests: 1430 → 1448 (+18 new: 6 Kalshi + 4 timeout + 8 E2E)
+- All 40 audit items now resolved: 32 fixed (alpha.5) + 5 fixed (alpha.10) + 3 resolved by other tasks
+
 ## [2.0.0-alpha.9] - 2026-03-31
 
 ### Added — Phase 1c Batch 2: Sentinel Integration (P1.13-15, P1.21)

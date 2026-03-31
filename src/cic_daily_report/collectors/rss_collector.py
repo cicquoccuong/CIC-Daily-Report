@@ -90,8 +90,9 @@ DEFAULT_FEEDS: list[FeedConfig] = [
         "en",
         source_type="macro",
     ),
+    # BUG-17: Updated from deprecated search.cnbc.com URL to current CNBC RSS format.
     FeedConfig(
-        "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258",
+        "https://www.cnbc.com/id/20910258/device/rss/rss.html",
         "CNBC_Economy",
         "en",
         source_type="macro",

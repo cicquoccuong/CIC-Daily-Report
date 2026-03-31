@@ -10,6 +10,7 @@ from cic_daily_report.collectors.prediction_markets import (
     PredictionMarketsData,
     _cap_per_asset,
     _detect_asset,
+    _fetch_kalshi_fallback,
     _format_volume,
     _parse_and_filter,
     _parse_outcome_prices,
@@ -524,3 +525,167 @@ class TestSingleApiCall:
         assert len(result.markets) == 1
         # WHY: single _fetch_markets() call — only 1 httpx.get()
         assert mock_client.get.call_count == 1
+
+
+# --- Tests: R5-05 Kalshi fallback ---
+
+
+class TestKalshiFallback:
+    """R5-05: Kalshi API fallback when Polymarket returns no BTC/ETH markets."""
+
+    async def test_kalshi_fetches_btc_and_eth(self):
+        """_fetch_kalshi_fallback returns markets for both KXBTC and KXETH."""
+        kalshi_response_btc = {
+            "markets": [
+                {"title": "Bitcoin above $100K on Mar 31?", "yes_bid": 0.72, "volume": 5000},
+                {"title": "Bitcoin above $90K on Mar 31?", "yes_bid": 0.85, "volume": 8000},
+            ]
+        }
+        kalshi_response_eth = {
+            "markets": [
+                {"title": "Ethereum above $4K on Mar 31?", "yes_bid": 0.35, "volume": 3000},
+            ]
+        }
+
+        call_count = 0
+
+        async def mock_get(url, params=None):
+            nonlocal call_count
+            call_count += 1
+            resp = MagicMock()
+            resp.status_code = 200
+            if params and params.get("series_ticker") == "KXBTC":
+                resp.json.return_value = kalshi_response_btc
+            else:
+                resp.json.return_value = kalshi_response_eth
+            return resp
+
+        mock_client = AsyncMock()
+        mock_client.get = mock_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client):
+            results = await _fetch_kalshi_fallback()
+
+        assert len(results) == 3
+        assert results[0]["source"] == "kalshi"
+        assert results[0]["yes_bid"] == 0.72
+        assert call_count == 2  # One for KXBTC, one for KXETH
+
+    async def test_kalshi_fallback_on_error(self):
+        """Kalshi API error returns empty list (graceful degrade)."""
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=Exception("connection refused"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client):
+            results = await _fetch_kalshi_fallback()
+
+        assert results == []
+
+    async def test_kalshi_partial_failure(self):
+        """One ticker fails, other succeeds — returns partial results."""
+
+        call_count = 0
+
+        async def mock_get(url, params=None):
+            nonlocal call_count
+            call_count += 1
+            if params and params.get("series_ticker") == "KXBTC":
+                raise Exception("timeout")
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "markets": [{"title": "ETH above $4K?", "yes_bid": 0.40, "volume": 2000}]
+            }
+            return resp
+
+        mock_client = AsyncMock()
+        mock_client.get = mock_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(f"{MODULE}.httpx.AsyncClient", return_value=mock_client):
+            results = await _fetch_kalshi_fallback()
+
+        assert len(results) == 1
+        assert results[0]["question"] == "ETH above $4K?"
+
+    async def test_fallback_triggered_when_polymarket_empty(self):
+        """Polymarket returns CRYPTO-only → Kalshi fallback fires."""
+        # Polymarket returns markets that are only classified as CRYPTO (no BTC/ETH)
+        crypto_market = _make_raw_market(
+            question="Will crypto market cap reach $5T?",
+            volume="100000",
+            slug="crypto-5t",
+        )
+        poly_client = _mock_httpx_client([crypto_market])
+
+        kalshi_data = [
+            {
+                "question": "Bitcoin above $100K?",
+                "yes_bid": 0.72,
+                "volume": 5000,
+                "source": "kalshi",
+            }
+        ]
+
+        with (
+            patch(f"{MODULE}.httpx.AsyncClient", return_value=poly_client),
+            patch(f"{MODULE}._fetch_kalshi_fallback", new_callable=AsyncMock) as mock_kalshi,
+        ):
+            mock_kalshi.return_value = kalshi_data
+            result = await collect_prediction_markets()
+
+        # Kalshi fallback should have been called
+        mock_kalshi.assert_called_once()
+        # Should have both the CRYPTO market from Polymarket and the BTC from Kalshi
+        assets = {m.asset for m in result.markets}
+        assert "CRYPTO" in assets
+        assert "BTC" in assets
+
+    async def test_no_fallback_when_polymarket_has_btc(self):
+        """Polymarket returns BTC market → no Kalshi fallback."""
+        btc_market = _make_raw_market(
+            question="Will Bitcoin exceed $100K?",
+            volume="100000",
+            slug="btc-100k",
+        )
+        poly_client = _mock_httpx_client([btc_market])
+
+        with (
+            patch(f"{MODULE}.httpx.AsyncClient", return_value=poly_client),
+            patch(f"{MODULE}._fetch_kalshi_fallback", new_callable=AsyncMock) as mock_kalshi,
+        ):
+            result = await collect_prediction_markets()
+
+        # Should NOT call Kalshi since Polymarket has BTC
+        mock_kalshi.assert_not_called()
+        assert len(result.markets) == 1
+        assert result.markets[0].asset == "BTC"
+
+    async def test_kalshi_market_gets_source_field(self):
+        """Markets from Kalshi have source='kalshi' instead of default 'polymarket'."""
+        # Empty Polymarket → triggers fallback
+        poly_client = _mock_httpx_client([])
+
+        kalshi_data = [
+            {
+                "question": "Bitcoin above $90K?",
+                "yes_bid": 0.80,
+                "volume": 10000,
+                "source": "kalshi",
+            }
+        ]
+
+        with (
+            patch(f"{MODULE}.httpx.AsyncClient", return_value=poly_client),
+            patch(f"{MODULE}._fetch_kalshi_fallback", new_callable=AsyncMock) as mock_kalshi,
+        ):
+            mock_kalshi.return_value = kalshi_data
+            result = await collect_prediction_markets()
+
+        assert len(result.markets) == 1
+        assert result.markets[0].source == "kalshi"

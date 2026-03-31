@@ -17,6 +17,10 @@ from cic_daily_report.core.logger import get_logger
 logger = get_logger("daily_pipeline")
 
 PIPELINE_TIMEOUT_SEC = 40 * 60  # 40 minutes (NFR1)
+# R5-10: Per-operation timeout for Google Sheets calls to prevent indefinite hangs.
+# WHY: gspread uses synchronous HTTP under the hood; if Google API is slow or
+# the network stalls, the pipeline can hang forever without this guard.
+SHEETS_OP_TIMEOUT = 60  # seconds per Sheets operation
 
 
 def is_test_mode() -> bool:
@@ -51,12 +55,15 @@ async def _run_pipeline() -> str:
     articles: list[dict[str, str]] = []
 
     try:
-        articles, errors, llm_used, research_wc = await asyncio.wait_for(
+        articles, errors, llm_used, research_wc, consensus_summary = await asyncio.wait_for(
             _execute_stages(),
             timeout=PIPELINE_TIMEOUT_SEC,
         )
         run_log["llm_used"] = llm_used
         run_log["research_word_count"] = research_wc
+        # G9: consensus monitoring — attach to run log for NHAT_KY_PIPELINE
+        if consensus_summary:
+            run_log["consensus_summary"] = consensus_summary
     except asyncio.TimeoutError:
         logger.error("Pipeline timeout — delivering partial content")
         run_log["status"] = "timeout"
@@ -136,7 +143,9 @@ async def _run_pipeline() -> str:
         from cic_daily_report.storage.sheets_client import SheetsClient
 
         sheets = SheetsClient()
-        cleanup = await asyncio.to_thread(run_cleanup, sheets)
+        cleanup = await asyncio.wait_for(
+            asyncio.to_thread(run_cleanup, sheets), timeout=SHEETS_OP_TIMEOUT
+        )
         total_removed = sum(cleanup.values())
         if total_removed > 0:
             logger.info(f"Data cleanup: removed {total_removed} old rows — {cleanup}")
@@ -169,10 +178,11 @@ def _format_onchain_value(metric_name: str, value: float) -> str:
     return f"{value:.4f}"
 
 
-async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str, int]:
+async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str, int, dict]:
     """Run all pipeline stages: collect → generate → NQ05 filter.
 
-    Returns (articles_as_dicts, non_fatal_errors, llm_models_used, research_word_count).
+    Returns (articles_as_dicts, non_fatal_errors, llm_models_used, research_word_count,
+    consensus_summary).
     """
     from cic_daily_report.adapters.llm_adapter import LLMAdapter
     from cic_daily_report.collectors.cryptopanic_client import collect_cryptopanic
@@ -223,7 +233,12 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
 
     # Seed default CAU_HINH config rows on first run (idempotent, non-fatal)
     try:
-        await asyncio.to_thread(SheetsClient().seed_default_config)
+        await asyncio.wait_for(
+            asyncio.to_thread(SheetsClient().seed_default_config),
+            timeout=SHEETS_OP_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"CAU_HINH seed timed out after {SHEETS_OP_TIMEOUT}s — skipping")
     except Exception as e:
         logger.warning(f"CAU_HINH seed skipped: {e}")
 
@@ -242,10 +257,15 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     historical_text = ""
     try:
         hist_sheets = SheetsClient()
-        historical = await asyncio.to_thread(read_historical, hist_sheets, 30)
+        historical = await asyncio.wait_for(
+            asyncio.to_thread(read_historical, hist_sheets, 30),
+            timeout=SHEETS_OP_TIMEOUT,
+        )
         historical_text = format_historical_for_llm(historical)
         if historical:
             logger.info(f"Historical context: {len(historical)} days loaded")
+    except asyncio.TimeoutError:
+        logger.warning(f"Historical read timed out after {SHEETS_OP_TIMEOUT}s — skipping")
     except Exception as e:
         logger.warning(f"Historical read failed (non-critical): {e}")
 
@@ -504,6 +524,13 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         consensus_text = format_consensus_for_llm(consensus_list)
         if consensus_list:
             logger.info(f"Consensus: {len(consensus_list)} assets scored")
+            # G9: Detailed consensus monitoring — per-asset breakdown for observability
+            for c in consensus_list:
+                logger.info(
+                    f"Consensus [{c.asset}]: {c.label} ({c.score:+.2f}), "
+                    f"{c.source_count} sources, "
+                    f"divergence: {len(c.divergence_alerts)}"
+                )
     except Exception as e:
         logger.warning(f"Consensus engine failed (non-critical): {e}")
         errors.append(e)
@@ -525,7 +552,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     except Exception as e:
         logger.error(f"LLM init failed: {e}")
         errors.append(e)
-        return [], errors, "", 0
+        return [], errors, "", 0, {}
 
     # Load config from Sheets (QĐ8, FR41) — gspread is sync, wrap with to_thread
     templates = {}
@@ -533,8 +560,12 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     try:
         sheets = SheetsClient()
         config = ConfigLoader(sheets)
-        raw_templates = await asyncio.to_thread(config.get_templates)
-        coin_lists = await asyncio.to_thread(config.get_coin_list)
+        raw_templates = await asyncio.wait_for(
+            asyncio.to_thread(config.get_templates), timeout=SHEETS_OP_TIMEOUT
+        )
+        coin_lists = await asyncio.wait_for(
+            asyncio.to_thread(config.get_coin_list), timeout=SHEETS_OP_TIMEOUT
+        )
         templates = load_templates(raw_templates)
         # v0.28.0: Load project name→ticker mapping from Sheet
         from cic_daily_report.core.coin_mapping import load_from_config
@@ -567,7 +598,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         msg = "No templates loaded — cannot generate articles"
         logger.error(msg)
         errors.append(Exception(msg))
-        return [], errors, "", 0
+        return [], errors, "", 0, {}
     for tier in sorted(loaded_tiers):
         coins = coin_lists.get(tier, [])
         if not coins:
@@ -1084,15 +1115,27 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
             consensus_label=_btc_consensus_label,  # v2.0 P1.6
         )
         hist_save_sheets = SheetsClient()
-        saved = await asyncio.to_thread(save_daily_snapshot, hist_save_sheets, snapshot)
+        saved = await asyncio.wait_for(
+            asyncio.to_thread(save_daily_snapshot, hist_save_sheets, snapshot),
+            timeout=SHEETS_OP_TIMEOUT,
+        )
         if saved:
             logger.info(f"Historical snapshot saved for {snapshot.date}")
+    except asyncio.TimeoutError:
+        logger.warning(f"Historical snapshot save timed out after {SHEETS_OP_TIMEOUT}s")
     except Exception as e:
         logger.warning(f"Historical snapshot save failed (non-critical): {e}")
 
     research_wc = research_article.word_count if research_article else 0
+
+    # G9: Build consensus summary dict for run log monitoring
+    consensus_summary = {
+        c.asset: {"label": c.label, "score": c.score, "sources": c.source_count}
+        for c in consensus_list
+    }
+
     logger.info(f"Pipeline stages complete: {len(articles_out)} articles ready")
-    return articles_out, errors, ", ".join(llm_models), research_wc
+    return articles_out, errors, ", ".join(llm_models), research_wc, consensus_summary
 
 
 def _check_cross_tier_repetition(articles: list) -> dict:
@@ -1133,7 +1176,10 @@ async def _load_recent_breaking_context() -> str:
         from cic_daily_report.storage.sheets_client import SheetsClient
 
         sheets = SheetsClient()
-        rows = await asyncio.to_thread(sheets.read_all, "BREAKING_LOG")
+        rows = await asyncio.wait_for(
+            asyncio.to_thread(sheets.read_all, "BREAKING_LOG"),
+            timeout=SHEETS_OP_TIMEOUT,
+        )
         if not rows:
             return ""
 
@@ -1186,19 +1232,28 @@ async def _write_raw_data(
         if hasattr(a, "to_row"):
             news_rows.append(a.to_row())
     if news_rows:
-        await _aio.to_thread(sheets.batch_append, "TIN_TUC_THO", news_rows)
+        await _aio.wait_for(
+            _aio.to_thread(sheets.batch_append, "TIN_TUC_THO", news_rows),
+            timeout=SHEETS_OP_TIMEOUT,
+        )
         logger.info(f"Wrote {len(news_rows)} rows to TIN_TUC_THO")
 
     # A2: Market data → DU_LIEU_THI_TRUONG
     market_rows = [p.to_row() for p in market_data]
     if market_rows:
-        await _aio.to_thread(sheets.batch_append, "DU_LIEU_THI_TRUONG", market_rows)
+        await _aio.wait_for(
+            _aio.to_thread(sheets.batch_append, "DU_LIEU_THI_TRUONG", market_rows),
+            timeout=SHEETS_OP_TIMEOUT,
+        )
         logger.info(f"Wrote {len(market_rows)} rows to DU_LIEU_THI_TRUONG")
 
     # A3: Onchain data → DU_LIEU_ONCHAIN
     onchain_rows = [m.to_row() for m in onchain_data]
     if onchain_rows:
-        await _aio.to_thread(sheets.batch_append, "DU_LIEU_ONCHAIN", onchain_rows)
+        await _aio.wait_for(
+            _aio.to_thread(sheets.batch_append, "DU_LIEU_ONCHAIN", onchain_rows),
+            timeout=SHEETS_OP_TIMEOUT,
+        )
         logger.info(f"Wrote {len(onchain_rows)} rows to DU_LIEU_ONCHAIN")
 
 
@@ -1227,7 +1282,10 @@ async def _write_generated_content(
                 "",  # Ghi chú
             ]
         )
-    await _aio.to_thread(sheets.batch_append, "NOI_DUNG_DA_TAO", rows)
+    await _aio.wait_for(
+        _aio.to_thread(sheets.batch_append, "NOI_DUNG_DA_TAO", rows),
+        timeout=SHEETS_OP_TIMEOUT,
+    )
     logger.info(f"Wrote {len(rows)} rows to NOI_DUNG_DA_TAO")
 
 
@@ -1249,7 +1307,9 @@ async def _deliver(
     email_recipients: list[str] | None = None
     try:
         cfg = ConfigLoader(SheetsClient())
-        recipients = await asyncio.to_thread(cfg.get_email_recipients)
+        recipients = await asyncio.wait_for(
+            asyncio.to_thread(cfg.get_email_recipients), timeout=SHEETS_OP_TIMEOUT
+        )
         email_recipients = recipients or None
     except Exception as e:
         logger.warning(f"Could not read email_recipients from CAU_HINH: {e}")
@@ -1277,6 +1337,20 @@ async def _write_run_log(run_log: dict) -> None:
         sheets = SheetsClient()
         # Schema: ID, Thời gian bắt đầu, Thời gian kết thúc, Thời lượng (giây),
         #         Trạng thái, LLM sử dụng, Lỗi, Ghi chú
+        # G9: Append consensus summary to notes for monitoring visibility
+        notes = (
+            f"daily | {run_log.get('tiers_delivered', 0)} tiers"
+            f" | research: {run_log.get('research_word_count', 0)}w"
+            f" | {run_log.get('delivery_method', '')}"
+        )
+        consensus_summary = run_log.get("consensus_summary", {})
+        if consensus_summary:
+            consensus_parts = [
+                f"{asset}:{info['label']}({info['score']:+.2f},{info['sources']}src)"
+                for asset, info in consensus_summary.items()
+            ]
+            notes += f" | consensus: {', '.join(consensus_parts)}"
+
         row = [
             "",  # ID — auto-generated or blank
             run_log.get("start_time", ""),
@@ -1285,11 +1359,14 @@ async def _write_run_log(run_log: dict) -> None:
             run_log.get("status", ""),
             run_log.get("llm_used", ""),
             "; ".join(run_log.get("errors", [])),
-            f"daily | {run_log.get('tiers_delivered', 0)} tiers"
-            f" | research: {run_log.get('research_word_count', 0)}w"
-            f" | {run_log.get('delivery_method', '')}",
+            notes,
         ]
-        await asyncio.to_thread(sheets.batch_append, "NHAT_KY_PIPELINE", [row])
+        await asyncio.wait_for(
+            asyncio.to_thread(sheets.batch_append, "NHAT_KY_PIPELINE", [row]),
+            timeout=SHEETS_OP_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"Run log write timed out after {SHEETS_OP_TIMEOUT}s — skipping")
     except Exception as e:
         logger.warning(f"Run log write failed (non-critical): {e}")
 
