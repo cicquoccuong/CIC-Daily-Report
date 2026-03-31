@@ -178,10 +178,18 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     from cic_daily_report.collectors.cryptopanic_client import collect_cryptopanic
     from cic_daily_report.collectors.data_cleaner import clean_articles
     from cic_daily_report.collectors.economic_calendar import collect_economic_calendar
+    from cic_daily_report.collectors.fred_macro import (
+        collect_fred_macro,
+        format_fred_for_llm,
+    )
     from cic_daily_report.collectors.market_data import (
         collect_market_data,
         collect_technical_indicators,
         format_technical_for_llm,
+    )
+    from cic_daily_report.collectors.mempool_data import (
+        collect_mempool_data,
+        format_mempool_for_llm,
     )
     from cic_daily_report.collectors.onchain_data import collect_onchain
     from cic_daily_report.collectors.prediction_markets import collect_prediction_markets
@@ -241,6 +249,15 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     except Exception as e:
         logger.warning(f"Historical read failed (non-critical): {e}")
 
+    # P1.12: Sentinel cross-read (sync gspread → wrap with to_thread)
+    from cic_daily_report.storage.sentinel_reader import (
+        SentinelData,
+        SentinelReader,
+        format_sentinel_for_llm,
+    )
+
+    sentinel_future = asyncio.to_thread(SentinelReader().read_all)
+
     results = await asyncio.gather(
         collect_rss(),
         collect_cryptopanic(),
@@ -253,6 +270,9 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         collect_research_data(),
         collect_technical_indicators(),  # P1.11: RSI, MA50, MA200
         collect_prediction_markets(),  # v2.0 P1.6: Polymarket prediction markets
+        collect_fred_macro(),  # P1.19: FRED macro economic data
+        collect_mempool_data(),  # P1.20: Mempool.space BTC network data
+        sentinel_future,  # P1.12: Sentinel cross-read
         return_exceptions=True,
     )
 
@@ -285,6 +305,22 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     prediction_data: PredictionMarketsData = (
         results[10] if not isinstance(results[10], Exception) else PredictionMarketsData()
     )
+    # P1.19: FRED macro economic data
+    from cic_daily_report.collectors.fred_macro import FREDDataPoint
+
+    fred_data: list[FREDDataPoint] = results[11] if not isinstance(results[11], Exception) else []
+    # P1.20: Mempool.space BTC network data
+    from cic_daily_report.collectors.mempool_data import MempoolData
+
+    mempool_data: MempoolData | None = (
+        results[12] if not isinstance(results[12], Exception) else None
+    )
+    # P1.12: Sentinel cross-read data
+    sentinel_data: SentinelData = (
+        results[13] if not isinstance(results[13], Exception) else SentinelData()
+    )
+    if sentinel_data.stale_flags:
+        logger.info(f"Sentinel data: stale_flags={sentinel_data.stale_flags}")
 
     for r in results:
         if isinstance(r, Exception):
@@ -709,6 +745,19 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     if not recent_breaking_text:
         recent_breaking_text = await _load_recent_breaking_context()
 
+    # P1.19: Format FRED macro data for LLM context
+    fred_text = format_fred_for_llm(fred_data)
+    if fred_text:
+        onchain_text = onchain_text + "\n\n" + fred_text if onchain_text else fred_text
+
+    # P1.20: Format Mempool data for LLM context
+    mempool_text = format_mempool_for_llm(mempool_data)
+    if mempool_text:
+        onchain_text = onchain_text + "\n\n" + mempool_text if onchain_text else mempool_text
+
+    # P1.12: Format Sentinel data for LLM context
+    sentinel_text = format_sentinel_for_llm(sentinel_data)
+
     context = GenerationContext(
         coin_lists=coin_lists,
         market_data=market_text,
@@ -752,7 +801,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
 
     try:
         logger.info("Stage 2: Master Analysis Generation (P1.7)")
-        master = await generate_master_analysis(llm, context)
+        master = await generate_master_analysis(llm, context, sentinel_text=sentinel_text)
 
         if not validate_master(master):
             logger.warning("Master incomplete — fallback to per-tier")

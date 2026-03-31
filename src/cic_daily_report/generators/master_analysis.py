@@ -122,11 +122,17 @@ MASTER_SYSTEM_PROMPT = (
 )
 
 
-def build_master_context(context: GenerationContext) -> str:
+def build_master_context(context: GenerationContext, sentinel_text: str = "") -> str:
     """Assemble ALL data sources into structured LLM context for Master Analysis.
 
     WHY: Master sees EVERYTHING — no per-tier filtering. This eliminates
     the cross-tier contradiction problem (e.g., L3 says bearish, L5 says bullish).
+
+    Args:
+        context: Standard GenerationContext with all collected data.
+        sentinel_text: P1.12 — Pre-formatted Sentinel data (season, SonicR, FA).
+            Passed separately because SentinelData is not part of GenerationContext
+            to keep article_generator.py stable during Phase 1c.
     """
     parts: list[str] = []
 
@@ -192,6 +198,10 @@ def build_master_context(context: GenerationContext) -> str:
     if context.data_quality_notes:
         parts.append(context.data_quality_notes)
 
+    # P1.12: Sentinel cross-system data (season, SonicR, FA scores)
+    if sentinel_text:
+        parts.append(sentinel_text)
+
     # Coin lists (all tiers merged — Master sees everything)
     all_coins: set[str] = set()
     for coins in context.coin_lists.values():
@@ -205,6 +215,7 @@ def build_master_context(context: GenerationContext) -> str:
 async def generate_master_analysis(
     llm: LLMAdapter,
     context: GenerationContext,
+    sentinel_text: str = "",
 ) -> MasterAnalysis:
     """Generate a single comprehensive Master Analysis.
 
@@ -212,7 +223,7 @@ async def generate_master_analysis(
     """
     start = time.monotonic()
 
-    master_context = build_master_context(context)
+    master_context = build_master_context(context, sentinel_text=sentinel_text)
     prompt = (
         f"{master_context}\n\n"
         "=== NHIEM VU ===\n"

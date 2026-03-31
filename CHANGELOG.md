@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.0.0-alpha.8] - 2026-03-31
+
+### Added — Phase 1c Batch 1: Sentinel Integration + New Collectors (P1.12, P1.19, P1.20)
+
+- `storage/sentinel_reader.py` (471 lines, P1.12): Cross-read CIC Sentinel spreadsheet — Season
+  (MUA_DONG/XUAN/HE/THU), SonicR zones (EMA34/89/200/610), FA scores (top 20), Registry
+  (01_ASSET_IDENTITY), NQ05 blacklist. Stale detection, format_sentinel_for_llm, readonly scope.
+- `collectors/fred_macro.py` (143 lines, P1.19): FRED API collector — 10Y Treasury (DGS10),
+  CPI (CPIAUCSL), Fed Balance Sheet (WALCL). Requires FRED_API_KEY env var.
+- `collectors/mempool_data.py` (173 lines, P1.20): Mempool.space collector — BTC hashrate,
+  recommended fees (fast/medium/slow), difficulty adjustment. No API key needed.
+- Pipeline: 3 new collectors in asyncio.gather (Stage 1), FRED+Mempool text in LLM context,
+  Sentinel text passed to Master Analysis via build_master_context().
+- Tests: +43 (29 sentinel + 7 FRED + 7 mempool), all external APIs mocked.
+
 ## [2.0.0-alpha.7] - 2026-03-31
 
 ### Added — P1.5: Telegram Scraper Upgrade (16 Tier 1 channels)
