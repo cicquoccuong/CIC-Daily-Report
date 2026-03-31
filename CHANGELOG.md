@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.0.0-alpha.7] - 2026-03-31
+
+### Added — P1.5: Telegram Scraper Upgrade (16 Tier 1 channels)
+
+Replaces placeholder with real Telethon async scraper + Groq LLM batch classification.
+
+- `telegram_scraper.py` (100→405 lines): Full rewrite with Telethon StringSession async client
+- 16 Tier 1 "Quality Insight" channels: HCCapital, Fivemincrypto, coin369, vnwallstreet,
+  kryptonews, hctradecoin, Coin98, A1A, coin68, WuBlockchain, MacroAlf, tedtalksmacro,
+  crypto_macro, Glassnode, Laevitas, GreeksLive
+- `TelegramChannelConfig` dataclass: handle, name, tier, language, category, processing
+- `TelegramMessage` extended: sentiment, key_levels, thesis, language, category, url
+- Batch LLM classification: 10 messages/call via Groq (saves Gemini quota for Master Analysis)
+- Per-channel 30s timeout, 24h message window, 50 messages/channel limit
+- Graceful fallback: no credentials → [], channel not found → skip, LLM fails → unclassified
+- Tests: 3→36 (+33 new), all Telethon calls mocked
+- `telethon>=1.42.0` added to project dependencies
+
 ## [2.0.0-alpha.6] - 2026-03-30
 
 ### Added — P1.7: Master Analysis + Tier Extractor (core v2.0 architecture change)

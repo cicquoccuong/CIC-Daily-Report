@@ -1,6 +1,6 @@
 [project]
 name = "cic-daily-report"
-version = "2.0.0-alpha.6"
+version = "2.0.0-alpha.7"
 description = "Automated crypto daily report pipeline for CIC community"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,6 +10,7 @@ dependencies = [
     "feedparser>=6.0",
     "trafilatura>=1.12",
     "yfinance>=0.2",
+    "telethon>=1.42.0",
 ]
 
 [dependency-groups]
