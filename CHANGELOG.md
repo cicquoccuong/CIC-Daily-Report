@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.0.0-alpha.9] - 2026-03-31
+
+### Added — Phase 1c Batch 2: Sentinel Integration (P1.13-15, P1.21)
+
+- P1.13: `classify_from_sentinel_season()` — maps 4-season cycle (MUA_DONG/XUAN/HE/THU) to
+  MarketRegime. Overrides heuristic `classify_market_regime()` when Sentinel data available.
+- P1.14: `merge_blacklist()` — combines hardcoded NQ05 banned keywords with Sentinel NQ05_BLACKLIST
+  terms (BLOCK severity only, case-insensitive dedup). Pipeline passes merged list to all
+  `check_and_fix()` calls.
+- P1.15: `load_from_sentinel()` — supplements coin_mapping with Sentinel 01_ASSET_IDENTITY registry.
+  Does not override existing mappings (operator config takes precedence).
+- P1.21: `_follow_links()` in telegram_scraper — fetches article content from URLs in TG messages
+  via httpx + trafilatura (max 2000 chars), called BEFORE LLM classification. 10s timeout per link.
+- Tests: +33 (13 metrics_engine + 6 nq05 + 7 coin_mapping + 7 telegram)
+
 ## [2.0.0-alpha.8] - 2026-03-31
 
 ### Added — Phase 1c Batch 1: Sentinel Integration + New Collectors (P1.12, P1.19, P1.20)

@@ -212,7 +212,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         format_narratives_for_llm,
         interpret_metrics,
     )
-    from cic_daily_report.generators.nq05_filter import check_and_fix
+    from cic_daily_report.generators.nq05_filter import check_and_fix, merge_blacklist
     from cic_daily_report.generators.research_generator import generate_research_article
     from cic_daily_report.generators.summary_generator import generate_bic_summary
     from cic_daily_report.generators.template_engine import load_templates
@@ -547,6 +547,14 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         logger.warning(f"Config load failed, using defaults: {e}")
         errors.append(e)
 
+    # P1.15: Supplement coin mapping with Sentinel registry (01_ASSET_IDENTITY)
+    if sentinel_data.registry:
+        from cic_daily_report.core.coin_mapping import load_from_sentinel
+
+        sentinel_added = load_from_sentinel(sentinel_data.registry)
+        if sentinel_added:
+            logger.info(f"Coin mapping: {sentinel_added} names from Sentinel registry")
+
     # Pre-flight validation: templates + coins (FR13, QĐ8)
     expected_tiers = {"L1", "L2", "L3", "L4", "L5"}
     loaded_tiers = set(templates.keys())
@@ -566,7 +574,10 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
             logger.warning(f"No coins configured for tier {tier}")
 
     # v0.21.0: Metrics Engine — pre-computed data interpretation (Phase 1a/1b)
-    metrics_interp = interpret_metrics(market_data, onchain_data, key_metrics)
+    # P1.13: Pass Sentinel Season for authoritative regime classification (fallback to heuristic)
+    metrics_interp = interpret_metrics(
+        market_data, onchain_data, key_metrics, sentinel_season=sentinel_data.season
+    )
     logger.info(f"Metrics Engine: regime={metrics_interp.regime.regime}")
 
     # v0.21.0: Narrative Detection (Phase 1d)
@@ -971,6 +982,19 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     # --- Stage 3: NQ05 Post-filter (QĐ4 Layer 2) ---
     logger.info("Stage 3: NQ05 Post-filter")
 
+    # P1.14: Merge Sentinel NQ05 blacklist into extra_banned_keywords.
+    # WHY: merge_blacklist() returns the FULL merged list (hardcoded + sentinel BLOCK terms).
+    # check_and_fix() already has DEFAULT_BANNED_KEYWORDS, so we pass only the sentinel extras.
+    sentinel_extra_banned: list[str] | None = None
+    if sentinel_data.nq05_blacklist:
+        full_merged = merge_blacklist(sentinel_data.nq05_blacklist)
+        # Extract only the Sentinel-added terms (after the hardcoded ones)
+        from cic_daily_report.generators.nq05_filter import DEFAULT_BANNED_KEYWORDS
+
+        sentinel_extra_banned = full_merged[len(DEFAULT_BANNED_KEYWORDS) :]
+        if sentinel_extra_banned:
+            logger.info(f"NQ05: {len(sentinel_extra_banned)} extra terms from Sentinel")
+
     # Build source URL mapping and image list from cleaned news
     source_url_map: dict[str, str] = {}
     image_urls: list[str] = []
@@ -987,7 +1011,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
 
     articles_out: list[dict[str, str]] = []
     for article in generated:
-        filtered = check_and_fix(article.content)
+        filtered = check_and_fix(article.content, extra_banned_keywords=sentinel_extra_banned)
         content = _append_source_references(filtered.content, source_url_map)
         articles_out.append(
             {
@@ -999,7 +1023,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         )
 
     if summary:
-        filtered = check_and_fix(summary.content)
+        filtered = check_and_fix(summary.content, extra_banned_keywords=sentinel_extra_banned)
         content = _append_source_references(filtered.content, source_url_map)
         articles_out.append(
             {
@@ -1012,7 +1036,9 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
 
     if research_article:
         # Research article already NQ05-filtered in generator; apply Layer 2 post-filter
-        filtered = check_and_fix(research_article.content)
+        filtered = check_and_fix(
+            research_article.content, extra_banned_keywords=sentinel_extra_banned
+        )
         content = _append_source_references(filtered.content, source_url_map)
         articles_out.append(
             {

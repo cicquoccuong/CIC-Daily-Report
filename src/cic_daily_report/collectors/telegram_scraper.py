@@ -12,6 +12,15 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+import httpx
+
+# WHY try/except: trafilatura is in project dependencies but we want graceful
+# fallback if it's somehow missing (e.g., minimal install).
+try:
+    import trafilatura
+except ImportError:
+    trafilatura = None  # type: ignore[assignment]
+
 from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("telegram_scraper")
@@ -359,6 +368,56 @@ async def _scrape_single_channel(
     return messages
 
 
+# --- Link Following (P1.21) ---
+
+# WHY 10s: aggressive timeout per link — we'd rather skip a slow page
+# than block the entire pipeline. Links are supplementary context, not critical.
+_LINK_FOLLOW_TIMEOUT = 10.0
+
+# WHY 2000 chars: LLM context window is limited; truncated article text
+# gives enough context for better classification without wasting tokens.
+_LINK_MAX_CHARS = 2000
+
+
+async def _follow_links(messages: list[TelegramMessage]) -> list[TelegramMessage]:
+    """Fetch and extract article content from URLs in Telegram messages.
+
+    P1.21: For messages that contain a URL, fetches the page via httpx and
+    extracts main content via trafilatura. Appended text gives the LLM
+    richer context for classification (vs. just the short TG message).
+
+    Errors are silently skipped per-link — one bad URL must not break others.
+    """
+    if trafilatura is None:
+        logger.warning("trafilatura not installed — skipping TG link following")
+        return messages
+
+    msgs_with_url = [(i, m) for i, m in enumerate(messages) if m.url]
+    if not msgs_with_url:
+        return messages
+
+    async def _fetch_one(idx: int, msg: TelegramMessage) -> None:
+        """Fetch a single URL and append extracted text to message."""
+        try:
+            async with httpx.AsyncClient(timeout=_LINK_FOLLOW_TIMEOUT) as client:
+                resp = await client.get(msg.url, follow_redirects=True)
+            text = await asyncio.to_thread(trafilatura.extract, resp.text, include_comments=False)
+            if text:
+                # WHY: Append with separator so LLM can distinguish TG text from article
+                truncated = text[:_LINK_MAX_CHARS]
+                msg.message_text = f"{msg.message_text}\n\n--- Article content ---\n{truncated}"
+        except Exception as e:
+            # WHY: Skip silently — link following is best-effort enrichment
+            logger.debug(f"Link follow failed for {msg.url}: {e}")
+
+    tasks = [_fetch_one(i, m) for i, m in msgs_with_url]
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+    enriched = sum(1 for _, m in msgs_with_url if "--- Article content ---" in m.message_text)
+    logger.info(f"TG link following: {enriched}/{len(msgs_with_url)} URLs enriched")
+    return messages
+
+
 # --- Public API ---
 
 
@@ -391,6 +450,10 @@ async def collect_telegram(
     try:
         messages = await _scrape_channels(api_id, api_hash, session_string, channels)
         logger.info(f"Telegram: collected {len(messages)} messages")
+
+        # P1.21: Follow links BEFORE classification so LLM sees article content
+        if messages:
+            messages = await _follow_links(messages)
 
         # P1.5: Classify messages using Groq LLM
         if messages:

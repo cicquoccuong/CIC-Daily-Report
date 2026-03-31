@@ -8,11 +8,13 @@ from cic_daily_report.generators.metrics_engine import (
     REGIME_DISTRIBUTION,
     REGIME_NEUTRAL,
     REGIME_RECOVERY,
+    classify_from_sentinel_season,
     classify_market_regime,
     detect_narratives,
     format_narratives_for_llm,
     interpret_metrics,
 )
+from cic_daily_report.storage.sentinel_reader import SentinelSeason
 
 
 def _btc(price: float = 65000, change_24h: float = 0.0, volume: float = 30e9) -> MarketDataPoint:
@@ -254,6 +256,127 @@ class TestInterpretMetrics:
             {"Fear & Greed": 70, "DXY": 98.0},
         )
         assert "ĐỒNG THUẬN TĂNG" in result.cross_signal_summary
+
+
+# ---------------------------------------------------------------------------
+# P1.13: Sentinel Season → Market Regime
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyFromSentinelSeason:
+    """P1.13: Map Sentinel Season phase to MarketRegime."""
+
+    def _make_season(
+        self, phase: str, confidence: float = 0.8, heat: float = 50.0
+    ) -> SentinelSeason:
+        return SentinelSeason(
+            phase=phase,
+            heat_score=heat,
+            confidence=confidence,
+            detail="test detail",
+            last_update="2026-03-30T08:00:00+00:00",
+        )
+
+    def test_mua_dong_maps_to_accumulation(self):
+        result = classify_from_sentinel_season(self._make_season("MUA_DONG"))
+        assert result is not None
+        assert result.regime == "accumulation"
+
+    def test_mua_xuan_maps_to_early_bull(self):
+        result = classify_from_sentinel_season(self._make_season("MUA_XUAN"))
+        assert result is not None
+        assert result.regime == "early_bull"
+
+    def test_mua_he_maps_to_bull(self):
+        result = classify_from_sentinel_season(self._make_season("MUA_HE"))
+        assert result is not None
+        assert result.regime == "bull"
+
+    def test_mua_thu_maps_to_distribution(self):
+        result = classify_from_sentinel_season(self._make_season("MUA_THU"))
+        assert result is not None
+        assert result.regime == "distribution"
+
+    def test_unknown_phase_returns_none(self):
+        """Unrecognized phase should return None (fallback to heuristic)."""
+        result = classify_from_sentinel_season(self._make_season("UNKNOWN_PHASE"))
+        assert result is None
+
+    def test_high_confidence(self):
+        result = classify_from_sentinel_season(self._make_season("MUA_HE", confidence=0.9))
+        assert result is not None
+        assert result.confidence == "high"
+
+    def test_medium_confidence(self):
+        result = classify_from_sentinel_season(self._make_season("MUA_HE", confidence=0.5))
+        assert result is not None
+        assert result.confidence == "medium"
+
+    def test_low_confidence(self):
+        result = classify_from_sentinel_season(self._make_season("MUA_HE", confidence=0.2))
+        assert result is not None
+        assert result.confidence == "low"
+
+    def test_signals_contain_season_info(self):
+        result = classify_from_sentinel_season(self._make_season("MUA_DONG", heat=30.0))
+        assert result is not None
+        assert any("MUA_DONG" in s for s in result.signals)
+        assert any("heat=30" in s for s in result.signals)
+
+    def test_detail_included_in_signals(self):
+        result = classify_from_sentinel_season(self._make_season("MUA_XUAN"))
+        assert result is not None
+        assert any("test detail" in s for s in result.signals)
+
+
+class TestInterpretMetricsWithSentinel:
+    """P1.13: interpret_metrics uses Sentinel Season when available."""
+
+    def test_sentinel_season_overrides_heuristic(self):
+        """When sentinel_season is provided, regime comes from Sentinel."""
+        season = SentinelSeason(
+            phase="MUA_DONG",
+            heat_score=25.0,
+            confidence=0.85,
+            detail="Winter accumulation",
+            last_update="2026-03-30T08:00:00+00:00",
+        )
+        # Heuristic would give Bull (BTC +6%, F&G=80), but Sentinel says accumulation
+        result = interpret_metrics(
+            [_btc(change_24h=6.0)],
+            [_funding(0.001)],
+            {"Fear & Greed": 80},
+            sentinel_season=season,
+        )
+        assert result.regime.regime == "accumulation"
+
+    def test_sentinel_none_falls_back_to_heuristic(self):
+        """sentinel_season=None falls back to heuristic classify_market_regime."""
+        result = interpret_metrics(
+            [_btc(change_24h=6.0)],
+            [_funding(0.001)],
+            {"Fear & Greed": 80},
+            sentinel_season=None,
+        )
+        assert result.regime.regime == REGIME_BULL
+
+    def test_sentinel_unknown_phase_falls_back(self):
+        """Unrecognized Sentinel phase falls back to heuristic."""
+        season = SentinelSeason(
+            phase="INVALID",
+            heat_score=0,
+            confidence=0,
+            detail="",
+            last_update="",
+        )
+        result = interpret_metrics(
+            [_btc(change_24h=6.0)],
+            [_funding(0.001)],
+            {"Fear & Greed": 80},
+            sentinel_season=season,
+        )
+        # Fallback to heuristic → Bull
+        assert result.regime.regime == REGIME_BULL
 
 
 # ---------------------------------------------------------------------------

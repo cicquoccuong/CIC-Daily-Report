@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from cic_daily_report.core.logger import get_logger
+
+if TYPE_CHECKING:
+    from cic_daily_report.storage.sentinel_reader import NQ05Term
 
 logger = get_logger("nq05_filter")
 
@@ -117,6 +121,47 @@ SEMANTIC_NQ05_PATTERNS = [
     # v0.32.0: Broader "xem xét" + action pattern (advisory language = NQ05 violation)
     r"xem xét\s+(?:việc\s+)?(?:tích lũy|mua vào|mua thêm)",
 ]
+
+
+def merge_blacklist(sentinel_terms: list[NQ05Term]) -> list[str]:
+    """Merge Sentinel NQ05 blacklist with hardcoded DEFAULT_BANNED_KEYWORDS.
+
+    P1.14: Combines two sources of banned terms into a single deduplicated list.
+    Only includes terms with severity="BLOCK" from Sentinel (WARN terms are
+    logged but not added to the block list).
+
+    WHY separate function: keeps merge logic testable and pipeline integration
+    clean — caller passes result as extra_banned_keywords to check_and_fix().
+
+    Args:
+        sentinel_terms: NQ05Term list from SentinelReader.read_nq05_blacklist().
+
+    Returns:
+        Deduplicated list of all banned keywords (hardcoded + sentinel BLOCK terms).
+    """
+    # WHY: Start with hardcoded as base, then add Sentinel terms.
+    # Using a set for deduplication (case-insensitive via lowering).
+    seen = {kw.lower() for kw in DEFAULT_BANNED_KEYWORDS}
+    merged = list(DEFAULT_BANNED_KEYWORDS)
+
+    warn_count = 0
+    for term in sentinel_terms:
+        key = term.term.strip().lower()
+        if not key:
+            continue
+        if term.severity.upper() == "WARN":
+            warn_count += 1
+            continue
+        if key not in seen:
+            seen.add(key)
+            merged.append(term.term.strip())
+
+    added = len(merged) - len(DEFAULT_BANNED_KEYWORDS)
+    if added or warn_count:
+        logger.info(
+            f"NQ05 merge: {added} BLOCK terms added from Sentinel, {warn_count} WARN-only skipped"
+        )
+    return merged
 
 
 def _remove_sentences_with_pattern(text: str, pattern: re.Pattern) -> str:

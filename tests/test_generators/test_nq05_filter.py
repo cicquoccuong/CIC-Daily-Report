@@ -2,9 +2,12 @@
 
 from cic_daily_report.generators.article_generator import DISCLAIMER
 from cic_daily_report.generators.nq05_filter import (
+    DEFAULT_BANNED_KEYWORDS,
     batch_filter,
     check_and_fix,
+    merge_blacklist,
 )
+from cic_daily_report.storage.sentinel_reader import NQ05Term
 
 
 class TestCheckAndFix:
@@ -294,6 +297,67 @@ class TestFillerRemoval:
         result = check_and_fix(content)
         assert result.filler_count >= 1
         assert not any("Filler" in f for f in result.flagged_for_review)
+
+
+class TestMergeBlacklist:
+    """P1.14: Merge Sentinel NQ05 blacklist with hardcoded DEFAULT_BANNED_KEYWORDS."""
+
+    def _make_term(self, term: str, severity: str = "BLOCK", language: str = "VI") -> NQ05Term:
+        return NQ05Term(
+            term=term,
+            language=language,
+            category="test",
+            severity=severity,
+            safe_alternative="",
+            source_system="sentinel",
+        )
+
+    def test_empty_sentinel_returns_defaults_only(self):
+        result = merge_blacklist([])
+        assert result == DEFAULT_BANNED_KEYWORDS
+
+    def test_adds_new_sentinel_terms(self):
+        terms = [self._make_term("pump signal"), self._make_term("guaranteed profit")]
+        result = merge_blacklist(terms)
+        assert "pump signal" in result
+        # "guaranteed profit" is new (hardcoded has "guaranteed" but not "guaranteed profit")
+        assert "guaranteed profit" in result
+        assert len(result) > len(DEFAULT_BANNED_KEYWORDS)
+
+    def test_deduplicates_case_insensitive(self):
+        """Sentinel term matching a hardcoded keyword (case-insensitive) is not duplicated."""
+        terms = [self._make_term("Nên mua")]  # Already in DEFAULT_BANNED_KEYWORDS
+        result = merge_blacklist(terms)
+        count = sum(1 for kw in result if kw.lower() == "nên mua")
+        assert count == 1
+
+    def test_warn_terms_excluded(self):
+        """WARN severity terms are skipped (not added to block list)."""
+        terms = [
+            self._make_term("caution phrase", severity="WARN"),
+            self._make_term("blocked phrase", severity="BLOCK"),
+        ]
+        result = merge_blacklist(terms)
+        assert "caution phrase" not in result
+        assert "blocked phrase" in result
+
+    def test_empty_terms_skipped(self):
+        terms = [self._make_term(""), self._make_term("  "), self._make_term("valid term")]
+        result = merge_blacklist(terms)
+        assert "valid term" in result
+        # Empty/whitespace should not be added
+        assert "" not in result
+
+    def test_merged_list_works_with_check_and_fix(self):
+        """End-to-end: merged list catches Sentinel-added term."""
+        terms = [self._make_term("pump tín hiệu")]
+        merged = merge_blacklist(terms)
+        # Extract sentinel-only extras
+        extras = merged[len(DEFAULT_BANNED_KEYWORDS) :]
+        content = "Đây là pump tín hiệu rõ ràng." + DISCLAIMER
+        result = check_and_fix(content, extra_banned_keywords=extras)
+        assert result.violations_found >= 1
+        assert "pump tín hiệu" not in result.content
 
 
 class TestBatchFilter:

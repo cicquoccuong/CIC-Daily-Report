@@ -7,8 +7,10 @@ from cic_daily_report.core.coin_mapping import (
     _rebuild_derived,
     extract_coins_from_text,
     load_from_config,
+    load_from_sentinel,
     normalize_to_ticker,
 )
+from cic_daily_report.storage.sentinel_reader import SentinelCoin
 
 
 class TestNormalizeToTicker:
@@ -125,6 +127,77 @@ class TestLoadFromConfig:
         load_from_config({"pepe": "PEPE"})
         result = extract_coins_from_text("Pepe surges 50% today")
         assert "PEPE" in result
+
+    def teardown_method(self):
+        """Restore fallback state after each test."""
+        NAME_TO_TICKER.clear()
+        NAME_TO_TICKER.update(_FALLBACK_NAME_TO_TICKER)
+        _rebuild_derived()
+
+
+class TestLoadFromSentinel:
+    """P1.15: Sentinel registry sync into coin mapping."""
+
+    def _make_coin(self, name: str, symbol: str) -> SentinelCoin:
+        return SentinelCoin(
+            cic_id=f"CIC-{symbol}",
+            symbol=symbol,
+            name=name,
+            tier="L3",
+            fa_status="ACTIVE",
+            cic_action="theo-doi",
+        )
+
+    def setup_method(self):
+        """Reset NAME_TO_TICKER to fallback-only before each test."""
+        NAME_TO_TICKER.clear()
+        NAME_TO_TICKER.update(_FALLBACK_NAME_TO_TICKER)
+        _rebuild_derived()
+
+    def test_adds_new_sentinel_coins(self):
+        """New coins from Sentinel registry are added."""
+        coins = [self._make_coin("Pendle", "PENDLE"), self._make_coin("Jupiter", "JUP")]
+        added = load_from_sentinel(coins)
+        assert added == 2
+        assert normalize_to_ticker("pendle") == "PENDLE"
+        assert normalize_to_ticker("jupiter") == "JUP"
+
+    def test_does_not_override_existing(self):
+        """Sentinel must NOT override existing fallback/config mappings."""
+        # "bitcoin" -> "BTC" is in fallback. Even if Sentinel has different mapping,
+        # existing entry should not be overridden.
+        coins = [self._make_coin("Bitcoin", "BTC2")]
+        added = load_from_sentinel(coins)
+        assert added == 0
+        assert normalize_to_ticker("bitcoin") == "BTC"  # Unchanged
+
+    def test_empty_name_skipped(self):
+        coins = [self._make_coin("", "EMPTY"), self._make_coin("Valid", "VLD")]
+        added = load_from_sentinel(coins)
+        assert added == 1
+        assert normalize_to_ticker("valid") == "VLD"
+
+    def test_empty_symbol_skipped(self):
+        coins = [self._make_coin("NoSymbol", "")]
+        added = load_from_sentinel(coins)
+        assert added == 0
+
+    def test_extract_finds_sentinel_names(self):
+        """extract_coins_from_text should find Sentinel-loaded names."""
+        coins = [self._make_coin("Render", "RNDR")]
+        load_from_sentinel(coins)
+        result = extract_coins_from_text("Render network partnership announced")
+        assert "RNDR" in result
+
+    def test_project_names_updated(self):
+        """PROJECT_NAMES set should include Sentinel-loaded names."""
+        coins = [self._make_coin("Injective", "INJ")]
+        load_from_sentinel(coins)
+        assert "injective" in PROJECT_NAMES
+
+    def test_empty_registry(self):
+        added = load_from_sentinel([])
+        assert added == 0
 
     def teardown_method(self):
         """Restore fallback state after each test."""

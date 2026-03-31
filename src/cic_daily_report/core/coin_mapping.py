@@ -9,6 +9,10 @@ Used by: dedup_manager, breaking_pipeline, severity_classifier, article_generato
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from cic_daily_report.storage.sentinel_reader import SentinelCoin
 
 # ---------------------------------------------------------------------------
 # Hardcoded fallback mapping — used when DANH_SACH_COIN has no "Tên dự án".
@@ -95,6 +99,33 @@ def load_from_config(config_name_map: dict[str, str]) -> int:
     before = len(NAME_TO_TICKER)
     # Config takes precedence — operator can override fallback
     NAME_TO_TICKER.update(config_name_map)
+    _rebuild_derived()
+    added = len(NAME_TO_TICKER) - before
+    return added
+
+
+def load_from_sentinel(registry: list[SentinelCoin]) -> int:
+    """Supplement coin mapping with Sentinel 01_ASSET_IDENTITY registry.
+
+    P1.15: Adds Sentinel-tracked coins to the mapping. Does NOT override
+    existing entries — config and fallback mappings take precedence because
+    they are operator-curated.
+
+    Args:
+        registry: List of SentinelCoin from SentinelReader.read_registry().
+
+    Returns:
+        Number of new entries added from Sentinel registry.
+    """
+    before = len(NAME_TO_TICKER)
+    for coin in registry:
+        name_key = coin.name.strip().lower()
+        symbol = coin.symbol.strip().upper()
+        if not name_key or not symbol:
+            continue
+        # WHY: Don't override existing mappings — operator config takes precedence
+        if name_key not in NAME_TO_TICKER:
+            NAME_TO_TICKER[name_key] = symbol
     _rebuild_derived()
     added = len(NAME_TO_TICKER) - before
     return added

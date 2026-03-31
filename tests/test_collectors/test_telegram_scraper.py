@@ -16,6 +16,7 @@ from cic_daily_report.collectors.telegram_scraper import (
     _build_classification_prompt,
     _classify_messages_batch,
     _extract_url,
+    _follow_links,
     _parse_classification_response,
     _scrape_single_channel,
     collect_telegram,
@@ -598,3 +599,191 @@ class TestScrapeSingleChannel:
         assert result[0].message_text == "Actual text"
         assert result[0].language == "EN"
         assert result[0].category == "Data"
+
+
+# --- Link Following (P1.21) ---
+
+
+class TestFollowLinks:
+    """P1.21: TG link following via trafilatura."""
+
+    async def test_enriches_message_with_article_content(self):
+        """Message with URL gets article content appended."""
+        messages = [
+            TelegramMessage(
+                channel_name="Test",
+                message_text="Check this out",
+                date="2026-03-30",
+                message_id=1,
+                url="https://example.com/article",
+            ),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.text = "<html><body>Full article text here</body></html>"
+
+        with (
+            patch("cic_daily_report.collectors.telegram_scraper.httpx.AsyncClient") as mock_client,
+            patch("cic_daily_report.collectors.telegram_scraper.trafilatura") as mock_traf,
+        ):
+            mock_instance = AsyncMock()
+            mock_instance.get = AsyncMock(return_value=mock_response)
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            mock_client.return_value = mock_instance
+            mock_traf.extract.return_value = "Extracted article content for analysis."
+
+            result = await _follow_links(messages)
+
+        assert len(result) == 1
+        assert "--- Article content ---" in result[0].message_text
+        assert "Extracted article content" in result[0].message_text
+
+    async def test_no_url_messages_unchanged(self):
+        """Messages without URL are not modified."""
+        messages = [
+            TelegramMessage(
+                channel_name="Test",
+                message_text="No link here",
+                date="2026-03-30",
+                message_id=1,
+                url="",
+            ),
+        ]
+
+        result = await _follow_links(messages)
+        assert result[0].message_text == "No link here"
+
+    async def test_extraction_failure_skipped(self):
+        """Failed URL fetch doesn't crash — message stays unchanged."""
+        messages = [
+            TelegramMessage(
+                channel_name="Test",
+                message_text="Bad link",
+                date="2026-03-30",
+                message_id=1,
+                url="https://example.com/broken",
+            ),
+        ]
+
+        with (
+            patch("cic_daily_report.collectors.telegram_scraper.httpx.AsyncClient") as mock_client,
+            patch("cic_daily_report.collectors.telegram_scraper.trafilatura"),
+        ):
+            mock_instance = AsyncMock()
+            mock_instance.get = AsyncMock(side_effect=Exception("Connection refused"))
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            mock_client.return_value = mock_instance
+
+            result = await _follow_links(messages)
+
+        assert len(result) == 1
+        assert result[0].message_text == "Bad link"
+
+    async def test_trafilatura_returns_none(self):
+        """trafilatura.extract returns None (unparseable page) — no append."""
+        messages = [
+            TelegramMessage(
+                channel_name="Test",
+                message_text="Link to image",
+                date="2026-03-30",
+                message_id=1,
+                url="https://example.com/image.png",
+            ),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.text = "<html></html>"
+
+        with (
+            patch("cic_daily_report.collectors.telegram_scraper.httpx.AsyncClient") as mock_client,
+            patch("cic_daily_report.collectors.telegram_scraper.trafilatura") as mock_traf,
+        ):
+            mock_instance = AsyncMock()
+            mock_instance.get = AsyncMock(return_value=mock_response)
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            mock_client.return_value = mock_instance
+            mock_traf.extract.return_value = None
+
+            result = await _follow_links(messages)
+
+        assert "--- Article content ---" not in result[0].message_text
+
+    async def test_content_truncated_to_2000_chars(self):
+        """Extracted text is truncated to 2000 chars max."""
+        messages = [
+            TelegramMessage(
+                channel_name="Test",
+                message_text="Long article",
+                date="2026-03-30",
+                message_id=1,
+                url="https://example.com/long",
+            ),
+        ]
+
+        long_text = "A" * 5000
+
+        mock_response = MagicMock()
+        mock_response.text = "<html><body>content</body></html>"
+
+        with (
+            patch("cic_daily_report.collectors.telegram_scraper.httpx.AsyncClient") as mock_client,
+            patch("cic_daily_report.collectors.telegram_scraper.trafilatura") as mock_traf,
+        ):
+            mock_instance = AsyncMock()
+            mock_instance.get = AsyncMock(return_value=mock_response)
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            mock_client.return_value = mock_instance
+            mock_traf.extract.return_value = long_text
+
+            result = await _follow_links(messages)
+
+        # Original text + separator + 2000 chars max
+        article_part = result[0].message_text.split("--- Article content ---")[1]
+        assert len(article_part.strip()) <= 2000
+
+    async def test_mixed_messages_only_url_ones_enriched(self):
+        """Only messages with URLs are fetched; others stay unchanged."""
+        messages = [
+            TelegramMessage(
+                channel_name="T",
+                message_text="No URL",
+                date="2026-03-30",
+                message_id=1,
+                url="",
+            ),
+            TelegramMessage(
+                channel_name="T",
+                message_text="Has URL",
+                date="2026-03-30",
+                message_id=2,
+                url="https://example.com/article",
+            ),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.text = "<html><body>content</body></html>"
+
+        with (
+            patch("cic_daily_report.collectors.telegram_scraper.httpx.AsyncClient") as mock_client,
+            patch("cic_daily_report.collectors.telegram_scraper.trafilatura") as mock_traf,
+        ):
+            mock_instance = AsyncMock()
+            mock_instance.get = AsyncMock(return_value=mock_response)
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            mock_client.return_value = mock_instance
+            mock_traf.extract.return_value = "Article text"
+
+            result = await _follow_links(messages)
+
+        assert "--- Article content ---" not in result[0].message_text
+        assert "--- Article content ---" in result[1].message_text
+
+    async def test_empty_messages_list(self):
+        """Empty list returns empty list."""
+        result = await _follow_links([])
+        assert result == []

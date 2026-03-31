@@ -13,10 +13,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from cic_daily_report.collectors.market_data import MarketDataPoint
 from cic_daily_report.collectors.onchain_data import OnChainMetric
 from cic_daily_report.core.logger import get_logger
+
+if TYPE_CHECKING:
+    from cic_daily_report.storage.sentinel_reader import SentinelSeason
 
 logger = get_logger("metrics_engine")
 
@@ -57,6 +61,53 @@ class MarketRegime:
         for s in self.signals:
             lines.append(f"  → {s}")
         return "\n".join(lines)
+
+
+# WHY: Sentinel Season mapping — maps Sentinel's 4-season cycle to MarketRegime.
+# This provides a single authoritative source for regime when Sentinel is available,
+# while the heuristic classify_market_regime() remains as fallback.
+_SEASON_TO_REGIME: dict[str, str] = {
+    "MUA_DONG": "accumulation",
+    "MUA_XUAN": "early_bull",
+    "MUA_HE": "bull",
+    "MUA_THU": "distribution",
+}
+
+
+def classify_from_sentinel_season(season: SentinelSeason) -> MarketRegime | None:
+    """Map Sentinel Season to MarketRegime.
+
+    Returns None if season phase is unrecognized (caller should fall back
+    to heuristic classify_market_regime).
+
+    Mapping:
+        MUA_DONG  -> accumulation (winter = buying opportunity)
+        MUA_XUAN  -> early_bull   (spring = early growth)
+        MUA_HE    -> bull         (summer = peak bull)
+        MUA_THU   -> distribution (autumn = take profit)
+    """
+    regime_name = _SEASON_TO_REGIME.get(season.phase)
+    if regime_name is None:
+        logger.warning(f"Unknown Sentinel season phase: {season.phase}")
+        return None
+
+    # WHY: Map confidence 0.0-1.0 to "high"/"medium"/"low" buckets.
+    if season.confidence >= 0.7:
+        confidence = "high"
+    elif season.confidence >= 0.4:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    signals = [f"Sentinel Season: {season.phase} (heat={season.heat_score:.0f}/100)"]
+    if season.detail:
+        signals.append(f"  {season.detail}")
+
+    logger.info(
+        f"Market regime from Sentinel: {regime_name} "
+        f"(confidence={confidence}, phase={season.phase})"
+    )
+    return MarketRegime(regime=regime_name, confidence=confidence, signals=signals)
 
 
 def classify_market_regime(
@@ -272,9 +323,20 @@ def interpret_metrics(
     market_data: list[MarketDataPoint],
     onchain_data: list[OnChainMetric],
     key_metrics: dict[str, object],
+    sentinel_season: SentinelSeason | None = None,
 ) -> MetricsInterpretation:
-    """Pre-compute structured interpretation of all available metrics."""
-    regime = classify_market_regime(market_data, onchain_data, key_metrics)
+    """Pre-compute structured interpretation of all available metrics.
+
+    P1.13: If sentinel_season is provided and valid, uses Sentinel Season
+    for regime classification. Falls back to heuristic if Sentinel data
+    is unavailable or unrecognized.
+    """
+    regime = None
+    if sentinel_season is not None:
+        regime = classify_from_sentinel_season(sentinel_season)
+    if regime is None:
+        # WHY: Fallback — Sentinel unavailable or unrecognized season phase
+        regime = classify_market_regime(market_data, onchain_data, key_metrics)
 
     derivatives = _analyze_derivatives(onchain_data)
     macro = _analyze_macro(market_data, key_metrics)
