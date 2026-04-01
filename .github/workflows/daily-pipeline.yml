@@ -67,6 +67,11 @@ jobs:
           COINALYZE_API_KEY: ${{ secrets.COINALYZE_API_KEY }}
           GLASSNODE_API_KEY: ${{ secrets.GLASSNODE_API_KEY }}
           WHALE_ALERT_API_KEY: ${{ secrets.WHALE_ALERT_API_KEY }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_SESSION_STRING: ${{ secrets.TELEGRAM_SESSION_STRING }}
+          SENTINEL_SPREADSHEET_ID: ${{ secrets.SENTINEL_SPREADSHEET_ID }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
         run: uv run cic-daily
 
       - name: Retry pipeline on failure
@@ -89,6 +94,11 @@ jobs:
           COINALYZE_API_KEY: ${{ secrets.COINALYZE_API_KEY }}
           GLASSNODE_API_KEY: ${{ secrets.GLASSNODE_API_KEY }}
           WHALE_ALERT_API_KEY: ${{ secrets.WHALE_ALERT_API_KEY }}
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_SESSION_STRING: ${{ secrets.TELEGRAM_SESSION_STRING }}
+          SENTINEL_SPREADSHEET_ID: ${{ secrets.SENTINEL_SPREADSHEET_ID }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
         run: |
           echo "Pipeline failed, retrying after 30s..."
           sleep 30
