@@ -603,3 +603,43 @@ class TestTruncateNoBoundaryFallback:
         text = "alpha beta gamma delta incompl"
         result = _truncate_to_complete_sentence(text)
         assert result == "alpha beta gamma delta..."
+
+
+# ===========================================================================
+# Numbered list period — (?<!\d) lookbehind fix
+# ===========================================================================
+
+
+class TestTruncateNumberedListFix:
+    """Regex fix: periods after digits (numbered lists) are NOT sentence boundaries."""
+
+    def test_numbered_list_not_truncated(self):
+        """'1. Item' period should NOT be treated as sentence boundary."""
+        text = "Key points:\n1. Bitcoin rose 5%\n2. ETH follo"
+        result = _truncate_to_complete_sentence(text)
+        # WHY: "1." and "2." should NOT match as sentence endings.
+        # Should truncate at last whitespace + "..." since no real sentence boundary.
+        assert "1." in result or "..." in result
+        # Must NOT truncate at "1." leaving only "Key points:\n1."
+        assert result != "Key points:\n1."
+
+    def test_numbered_list_preserves_real_sentence_before(self):
+        """Real sentence boundary before numbered list items is found correctly."""
+        text = "Market overview. 1. Bitcoin rose\n2. ETH foll"
+        result = _truncate_to_complete_sentence(text)
+        # "overview." is a real sentence end (no digit before period)
+        assert result == "Market overview."
+
+    def test_decimal_number_not_treated_as_sentence(self):
+        """Decimal like '1.5' should not break at '1.'."""
+        text = "BTC gained 1.5% today in active trad"
+        result = _truncate_to_complete_sentence(text)
+        # "1." should NOT be treated as sentence end
+        # No real sentence boundary → fallback to space + "..."
+        assert result.endswith("...")
+
+    def test_mixed_numbered_and_real_sentences(self):
+        """Mix of numbered items and real sentences — pick real boundary."""
+        text = "Summary complete. 1. First item 2. Second item incompl"
+        result = _truncate_to_complete_sentence(text)
+        assert result == "Summary complete."

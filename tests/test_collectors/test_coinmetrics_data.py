@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from cic_daily_report.collectors.coinmetrics_data import (
+    _fetch_asset_metrics,
     collect_coinmetrics_onchain,
 )
 
@@ -141,6 +142,74 @@ class TestCollectCoinmetricsOnchain:
         btc_names = [m.metric_name for m in metrics if "BTC" in m.metric_name]
         assert "BTC_NVT_Ratio" in btc_names
         assert "BTC_Hash_Rate" in btc_names
+
+    async def test_no_sort_direction_in_params(self):
+        """Bug 3 fix: sort_direction param must NOT be sent (causes HTTP 400)."""
+        captured_params = {}
+
+        async def mock_get(url, **kwargs):
+            captured_params.update(kwargs.get("params", {}))
+            return _resp(200, {"data": [{"asset": "btc", "NVTAdj": "45.2"}]})
+
+        mock_client = AsyncMock()
+        mock_client.get = mock_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "cic_daily_report.collectors.coinmetrics_data.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            from cic_daily_report.collectors.coinmetrics_data import METRICS_CONFIG
+
+            await _fetch_asset_metrics("btc", METRICS_CONFIG["btc"])
+
+        assert "sort_direction" not in captured_params
+        assert captured_params["sort"] == "time"
+
+    async def test_takes_last_row_ascending_order(self):
+        """With ascending sort (no sort_direction), latest data is last row."""
+        data_response = {
+            "data": [
+                {
+                    "asset": "btc",
+                    "time": "2026-03-17T00:00:00Z",
+                    "NVTAdj": "40.0",
+                    "CapMVRVCur": "1.70",
+                    "AdrActCnt": "800000",
+                    "HashRate": "600000000000000000000",
+                },
+                {
+                    "asset": "btc",
+                    "time": "2026-03-18T00:00:00Z",
+                    "NVTAdj": "45.2",
+                    "CapMVRVCur": "1.85",
+                    "AdrActCnt": "850000",
+                    "HashRate": "620000000000000000000",
+                },
+            ]
+        }
+
+        async def mock_get(url, **kwargs):
+            return _resp(200, data_response)
+
+        mock_client = AsyncMock()
+        mock_client.get = mock_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "cic_daily_report.collectors.coinmetrics_data.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            from cic_daily_report.collectors.coinmetrics_data import METRICS_CONFIG
+
+            metrics = await _fetch_asset_metrics("btc", METRICS_CONFIG["btc"])
+
+        # Should take the LAST row (2026-03-18, NVTAdj=45.2), not first
+        nvt = [m for m in metrics if m.metric_name == "BTC_NVT_Ratio"]
+        assert len(nvt) == 1
+        assert nvt[0].value == 45.2
 
     async def test_logs_error_body_on_400(self):
         """v0.32.0: HTTP 400 error logs response body for debugging."""

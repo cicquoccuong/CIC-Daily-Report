@@ -67,8 +67,11 @@ def _truncate_to_complete_sentence(text: str) -> str:
     """
     # Find last sentence-ending punctuation followed by whitespace or at end of string.
     # We search for ALL matches and take the last one.
+    # WHY negative lookbehind (?<!\d): The old regex [.!?](?:\s|\Z) matched "1." in
+    # numbered lists (e.g., "1. Item"), truncating mid-list. (?<!\d) ensures periods
+    # after digits (numbered list markers) are NOT treated as sentence boundaries.
     last_pos = -1
-    for m in re.finditer(r"[.!?](?:\s|\Z)", text):
+    for m in re.finditer(r"(?<!\d)[.!?](?:\s|\Z)", text):
         last_pos = m.start()
     if last_pos >= 0:
         # Include the punctuation character itself

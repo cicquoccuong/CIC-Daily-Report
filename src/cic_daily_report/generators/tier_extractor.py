@@ -45,9 +45,11 @@ class ExtractionConfig:
 # WHY per-tier configs: Each audience needs different depth, focus, and word count.
 # sections_focus tells the LLM which Master sections are most relevant for extraction.
 EXTRACTION_CONFIGS: dict[str, ExtractionConfig] = {
+    # WHY x1.5 increase: Vietnamese text uses ~1.5x more tokens than English
+    # for equivalent content, causing frequent finish_reason=length truncation.
     "L1": ExtractionConfig(
         tier="L1",
-        max_tokens=2048,
+        max_tokens=3072,
         temperature=0.3,
         target_words=(800, 1200),
         sections_focus="1, 2",
@@ -66,7 +68,7 @@ EXTRACTION_CONFIGS: dict[str, ExtractionConfig] = {
     ),
     "L2": ExtractionConfig(
         tier="L2",
-        max_tokens=3072,
+        max_tokens=4608,
         temperature=0.3,
         target_words=(1200, 1500),
         sections_focus="2, 7",
@@ -82,7 +84,7 @@ EXTRACTION_CONFIGS: dict[str, ExtractionConfig] = {
     ),
     "L3": ExtractionConfig(
         tier="L3",
-        max_tokens=4096,
+        max_tokens=6144,
         temperature=0.4,
         target_words=(1800, 2000),
         sections_focus="3, 4",
@@ -98,7 +100,7 @@ EXTRACTION_CONFIGS: dict[str, ExtractionConfig] = {
     ),
     "L4": ExtractionConfig(
         tier="L4",
-        max_tokens=4096,
+        max_tokens=6144,
         temperature=0.4,
         target_words=(2000, 2200),
         sections_focus="4, 5",
@@ -115,7 +117,7 @@ EXTRACTION_CONFIGS: dict[str, ExtractionConfig] = {
     ),
     "L5": ExtractionConfig(
         tier="L5",
-        max_tokens=6144,
+        max_tokens=8192,
         temperature=0.45,
         target_words=(2500, 3000),
         sections_focus="5, 6, 7, 8",
@@ -229,6 +231,24 @@ async def extract_tier(
         max_tokens=config.max_tokens,
         temperature=config.temperature,
     )
+
+    # WHY retry: Vietnamese text uses ~1.5x more tokens than English.
+    # If LLM ran out of tokens (finish_reason=length), retry once with 2x
+    # max_tokens to get complete output. Pattern mirrors master_analysis.py:280-297.
+    if response.finish_reason == "length":
+        logger.warning(
+            f"Tier {config.tier} truncated (finish_reason=length), retrying with 2x tokens"
+        )
+        response2: LLMResponse = await llm.generate(
+            prompt=prompt,
+            system_prompt=NQ05_SYSTEM_PROMPT,
+            max_tokens=config.max_tokens * 2,
+            temperature=config.temperature,
+        )
+        if response2.finish_reason == "length":
+            logger.error(f"Tier {config.tier} still truncated after retry")
+        else:
+            response = response2
 
     content = response.text.strip()
 

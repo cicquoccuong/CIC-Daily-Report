@@ -180,6 +180,83 @@ class TestExtractTier:
         call_kwargs = mock_llm.generate.call_args.kwargs
         assert "SPECIAL_L2_CONTEXT_HERE" in call_kwargs["prompt"]
 
+    async def test_retries_on_finish_reason_length(self):
+        """When finish_reason=length, extract_tier retries with 2x max_tokens."""
+        call_count = 0
+
+        async def _side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call: truncated
+                return LLMResponse(
+                    text=_MOCK_EXTRACTION,
+                    tokens_used=2000,
+                    model="gemini-2.5-flash",
+                    finish_reason="length",
+                )
+            # Retry: complete
+            return LLMResponse(
+                text=_MOCK_EXTRACTION,
+                tokens_used=3000,
+                model="gemini-2.5-flash",
+                finish_reason="stop",
+            )
+
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(side_effect=_side_effect)
+
+        master = _make_master()
+        config = EXTRACTION_CONFIGS["L1"]
+        article = await extract_tier(mock_llm, master, config)
+
+        # Should have called generate twice (original + retry)
+        assert mock_llm.generate.call_count == 2
+        # Retry call should have 2x max_tokens
+        retry_kwargs = mock_llm.generate.call_args_list[1].kwargs
+        assert retry_kwargs["max_tokens"] == config.max_tokens * 2
+        assert isinstance(article, GeneratedArticle)
+
+    async def test_retry_still_truncated_uses_second_response(self):
+        """When retry also truncated, still uses the retry response."""
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(
+                text=_MOCK_EXTRACTION,
+                tokens_used=4000,
+                model="gemini-2.5-flash",
+                finish_reason="length",
+            )
+        )
+
+        master = _make_master()
+        config = EXTRACTION_CONFIGS["L1"]
+        article = await extract_tier(mock_llm, master, config)
+
+        # Should have called generate twice (original + retry)
+        assert mock_llm.generate.call_count == 2
+        # Still returns an article (even if truncated)
+        assert isinstance(article, GeneratedArticle)
+
+    async def test_no_retry_on_finish_reason_stop(self):
+        """When finish_reason=stop, no retry happens."""
+        mock_llm = AsyncMock()
+        mock_llm.generate = AsyncMock(
+            return_value=LLMResponse(
+                text=_MOCK_EXTRACTION,
+                tokens_used=2000,
+                model="gemini-2.5-flash",
+                finish_reason="stop",
+            )
+        )
+
+        master = _make_master()
+        config = EXTRACTION_CONFIGS["L1"]
+        await extract_tier(mock_llm, master, config)
+
+        # Only 1 call — no retry
+        assert mock_llm.generate.call_count == 1
+
     async def test_format_instructions_included_for_summary(self):
         """Summary's format_instructions should appear in the extraction prompt."""
         mock_llm = AsyncMock()

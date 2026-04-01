@@ -71,15 +71,18 @@ async def _fetch_asset_metrics(
 
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            # WHY no sort_direction: CoinMetrics Community API (v4) removed
+            # the sort_direction parameter, returning HTTP 400 "unsupported
+            # parameter". Default sort is ascending, so we fetch last 2 entries
+            # and take the last one (most recent) instead.
             resp = await client.get(
                 f"{BASE_URL}/timeseries/asset-metrics",
                 params={
                     "assets": asset,
                     "metrics": metrics_param,
                     "frequency": "1d",
-                    "limit_per_asset": 1,
+                    "limit_per_asset": 2,
                     "sort": "time",
-                    "sort_direction": "desc",
                 },
             )
             resp.raise_for_status()
@@ -90,7 +93,9 @@ async def _fetch_asset_metrics(
             logger.warning(f"CoinMetrics {asset}: no data returned")
             return []
 
-        latest = rows[0]
+        # WHY rows[-1]: Default sort is ascending (oldest first). We take the
+        # last row to get the most recent data point.
+        latest = rows[-1]
         coin = asset.upper()
         metrics: list[OnChainMetric] = []
 

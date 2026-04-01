@@ -585,6 +585,102 @@ class TestETFFlowsListDefense:
         assert result is not None
         assert len(result.entries) == 1
 
+    async def test_providers_as_list(self):
+        """providers is a list instead of dict — uses ETF key as name fallback."""
+        chart2 = {
+            "dates": ["2026-03-19"],
+            "IBIT": [500e6],
+        }
+        data = {
+            "props": {
+                "pageProps": {
+                    "dehydratedState": {
+                        "queries": [
+                            {
+                                "state": {
+                                    "data": {
+                                        "data": {
+                                            "providers": ["IBIT", "FBTC"],  # List, not dict
+                                            "chart2": chart2,
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        html = (
+            '<html><script id="__NEXT_DATA__" type="application/json">'
+            f"{json.dumps(data)}"
+            "</script></html>"
+        )
+
+        async def mock_get(url, **kwargs):
+            return _resp(200, text=html)
+
+        mock_client = AsyncMock()
+        mock_client.get = mock_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "cic_daily_report.collectors.research_data.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await _collect_etf_flows()
+
+        # Should still return data — providers list is converted to empty dict,
+        # so ETF names fall back to the chart2 key (e.g., "IBIT")
+        assert result is not None
+        assert len(result.entries) == 1
+        assert result.entries[0].etf_name == "IBIT"  # Fallback to key name
+
+    async def test_chart2_as_list_returns_none(self):
+        """chart2 is a list instead of dict — returns None gracefully."""
+        data = {
+            "props": {
+                "pageProps": {
+                    "dehydratedState": {
+                        "queries": [
+                            {
+                                "state": {
+                                    "data": {
+                                        "data": {
+                                            "providers": {},
+                                            "chart2": [1, 2, 3],  # List, not dict
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        html = (
+            '<html><script id="__NEXT_DATA__" type="application/json">'
+            f"{json.dumps(data)}"
+            "</script></html>"
+        )
+
+        async def mock_get(url, **kwargs):
+            return _resp(200, text=html)
+
+        mock_client = AsyncMock()
+        mock_client.get = mock_get
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch(
+            "cic_daily_report.collectors.research_data.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await _collect_etf_flows()
+
+        assert result is None
+
     async def test_state_data_empty_list_returns_none(self):
         """state.data is an empty list — returns None gracefully."""
         data = {

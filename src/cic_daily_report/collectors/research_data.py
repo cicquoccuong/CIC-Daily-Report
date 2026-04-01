@@ -374,7 +374,17 @@ async def _collect_etf_flows() -> ETFFlowData | None:
 
         etf_data = inner_data
         providers = etf_data.get("providers", {})
+        # WHY: API response can return providers as list instead of dict after
+        # site updates, causing 'list' object has no attribute 'get' at line
+        # where we do providers.get(key, key). Convert list to empty dict.
+        if isinstance(providers, list):
+            logger.warning(f"ETF flows: providers is list (len={len(providers)}), expected dict")
+            providers = {}
         chart2 = etf_data.get("chart2", {})  # USD net flows
+        # WHY: Same defensive check — chart2 could become list after API changes
+        if isinstance(chart2, list):
+            logger.warning(f"ETF flows: chart2 is list (len={len(chart2)}), expected dict")
+            return None
 
         if not chart2:
             logger.warning("ETF flows: no chart2 (USD flow) data")
