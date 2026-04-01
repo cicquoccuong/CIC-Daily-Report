@@ -81,9 +81,9 @@ DEFAULT_CHANNELS = [
 
 # --- Constants ---
 
-_MESSAGES_PER_CHANNEL = 50  # max messages to read per channel
-_LOOKBACK_HOURS = 24  # only messages from last 24h
-_BATCH_SIZE = 10  # messages per LLM classification call
+_MESSAGES_PER_CHANNEL = 20  # max messages to read per channel (was 50, reduced to cut LLM calls)
+_LOOKBACK_HOURS = 12  # only messages from last 12h (was 24h, fresher content)
+_BATCH_SIZE = 20  # messages per LLM classification call (was 10, fewer API calls)
 _CHANNEL_TIMEOUT_SEC = 30  # timeout per channel scrape
 
 

@@ -16,7 +16,7 @@ from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("daily_pipeline")
 
-PIPELINE_TIMEOUT_SEC = 40 * 60  # 40 minutes (NFR1)
+PIPELINE_TIMEOUT_SEC = 65 * 60  # 65 minutes (raised: TG scraper + Master Analysis need headroom)
 # R5-10: Per-operation timeout for Google Sheets calls to prevent indefinite hangs.
 # WHY: gspread uses synchronous HTTP under the hood; if Google API is slow or
 # the network stalls, the pipeline can hang forever without this guard.
