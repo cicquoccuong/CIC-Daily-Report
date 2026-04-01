@@ -100,12 +100,26 @@ class ResearchData:
         """Format all research data as structured text for LLM prompt."""
         parts: list[str] = []
 
-        # On-chain advanced
+        # On-chain advanced — filter out 0.0 values to prevent LLM misinterpretation (VD-27)
+        _BGEOMETRICS_NAMES = {"MVRV_Z_Score", "NUPL", "SOPR", "Puell_Multiple"}
         if self.onchain_advanced:
-            lines = []
-            for m in self.onchain_advanced:
-                lines.append(f"  {m.name}: {m.value:.4f} ({m.source}, {m.date})")
-            parts.append("=== ON-CHAIN NÂNG CAO (nguồn: BGeometrics) ===\n" + "\n".join(lines))
+            # WHY: BGeometrics returns 0.0000 when data unavailable; LLM interprets
+            # this as "market is dead/stagnant" which produces misleading analysis.
+            valid = [m for m in self.onchain_advanced if m.value != 0.0]
+            zero_bgeometrics = [
+                m for m in self.onchain_advanced if m.value == 0.0 and m.name in _BGEOMETRICS_NAMES
+            ]
+            if valid:
+                lines = []
+                for m in valid:
+                    lines.append(f"  {m.name}: {m.value:.4f} ({m.source}, {m.date})")
+                parts.append("=== ON-CHAIN NÂNG CAO (nguồn: BGeometrics) ===\n" + "\n".join(lines))
+            if len(zero_bgeometrics) == len(_BGEOMETRICS_NAMES):
+                parts.append(
+                    "\u26a0\ufe0f D\u1eef li\u1ec7u on-chain n\u00e2ng cao "
+                    "(MVRV, NUPL, SOPR, Puell) hi\u1ec7n kh\u00f4ng kh\u1ea3 d\u1ee5ng "
+                    "t\u1eeb BGeometrics."
+                )
 
         # ETF Flows
         if self.etf_flows and self.etf_flows.entries:

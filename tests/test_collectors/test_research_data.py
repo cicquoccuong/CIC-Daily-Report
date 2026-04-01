@@ -676,6 +676,53 @@ class TestResearchDataFormat:
         assert "N/A" not in text
         assert "+0" in text
 
+    def test_format_filters_zero_onchain_values(self):
+        """QW3/VD-27: On-chain metrics with value 0.0 are filtered out."""
+        data = ResearchData(
+            onchain_advanced=[
+                OnChainAdvanced("MVRV_Z_Score", 1.45, "BGeometrics", "2026-03-20"),
+                OnChainAdvanced("NUPL", 0.0, "BGeometrics", "2026-03-20"),
+                OnChainAdvanced("SOPR", 0.0, "BGeometrics", "2026-03-20"),
+            ],
+        )
+        text = data.format_for_llm()
+        assert "MVRV_Z_Score" in text
+        assert "NUPL" not in text
+        assert "SOPR" not in text
+
+    def test_format_all_zero_bgeometrics_shows_warning(self):
+        """QW3/VD-27: All 4 BGeometrics metrics at 0.0 → unavailability warning."""
+        data = ResearchData(
+            onchain_advanced=[
+                OnChainAdvanced("MVRV_Z_Score", 0.0, "BGeometrics", "2026-03-20"),
+                OnChainAdvanced("NUPL", 0.0, "BGeometrics", "2026-03-20"),
+                OnChainAdvanced("SOPR", 0.0, "BGeometrics", "2026-03-20"),
+                OnChainAdvanced("Puell_Multiple", 0.0, "BGeometrics", "2026-03-20"),
+            ],
+        )
+        text = data.format_for_llm()
+        # Should NOT have the on-chain section (all filtered)
+        assert "ON-CHAIN" not in text
+        # Should have unavailability warning
+        assert "BGeometrics" in text
+        assert "MVRV" in text
+
+    def test_format_partial_zero_no_warning(self):
+        """QW3/VD-27: Only some zeros → no all-unavailable warning, valid ones shown."""
+        data = ResearchData(
+            onchain_advanced=[
+                OnChainAdvanced("MVRV_Z_Score", 1.45, "BGeometrics", "2026-03-20"),
+                OnChainAdvanced("NUPL", 0.0, "BGeometrics", "2026-03-20"),
+                OnChainAdvanced("SOPR", 1.02, "BGeometrics", "2026-03-20"),
+                OnChainAdvanced("Puell_Multiple", 0.0, "BGeometrics", "2026-03-20"),
+            ],
+        )
+        text = data.format_for_llm()
+        assert "MVRV_Z_Score" in text
+        assert "SOPR" in text
+        # Partial zero should NOT trigger the all-unavailable warning
+        assert "kh\u00f4ng kh\u1ea3 d\u1ee5ng" not in text
+
     def test_format_etf_with_trend(self):
         """ETF format includes 5-day trend data."""
         data = ResearchData(

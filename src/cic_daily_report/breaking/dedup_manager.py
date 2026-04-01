@@ -18,7 +18,7 @@ from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("dedup_manager")
 
-COOLDOWN_HOURS = 4
+COOLDOWN_HOURS = 12  # WHY: 4h too short with 3h interval → duplicates (VD-02)
 CLEANUP_DAYS = 7
 
 

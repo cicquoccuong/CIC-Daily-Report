@@ -201,19 +201,19 @@ class TestFormatting:
             assert "[CRITICAL]" in result
             assert "[NOTABLE]" in result
 
-    # 11. Summary truncated to 200 chars
+    # 11. Summary truncated to 1000 chars (VD-20: increased from 200 for richer LLM context)
     def test_summary_truncation(self, tmp_path: Path) -> None:
         p_dir, p_file, fb_dir, fb_file = _patch_paths(tmp_path)
         with p_dir, p_file:
-            long_summary = "A" * 300
+            long_summary = "A" * 1500
             save_breaking_summary([_make_event(summary=long_summary)])
 
             result = read_breaking_summary()
-            # The summary line in output should be at most 200 chars of content
+            # The summary line in output should be at most 1000 chars of content
             # (plus the "  " indent prefix)
             for line in result.split("\n"):
                 if line.startswith("  "):
-                    assert len(line.strip()) <= 200
+                    assert len(line.strip()) <= 1000
 
     # 12. Multiple events each on own line
     def test_multiple_events_formatted(self, tmp_path: Path) -> None:

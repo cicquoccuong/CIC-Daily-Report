@@ -79,7 +79,7 @@ def sample_market_data():
             source="CoinGecko",
         ),
         MarketDataPoint(
-            symbol="Fear_Greed",
+            symbol="Fear&Greed",
             price=75,
             change_24h=0,
             volume_24h=0,

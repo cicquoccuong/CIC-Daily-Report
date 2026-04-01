@@ -121,7 +121,7 @@ class TestDedupManager:
         assert result.duplicates_skipped == 1
 
     def test_cooldown_expired_passes(self):
-        old_time = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=13)).isoformat()
         existing = DedupEntry(
             hash=compute_hash("BTC hack", "CoinDesk"),
             title="BTC hack",
@@ -208,9 +208,9 @@ class TestUrlDedup7Days:
         result = mgr.check_and_filter([event])
         assert len(result.new_events) == 1
 
-    def test_hash_cooldown_still_4h(self):
-        """Hash-based dedup still uses 4h cooldown (not affected by URL change)."""
-        old_time = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+    def test_hash_cooldown_still_12h(self):
+        """Hash-based dedup uses 12h cooldown (not affected by URL change)."""
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=13)).isoformat()
         existing = DedupEntry(
             hash=compute_hash("BTC hack", "CoinDesk"),
             title="BTC hack",
@@ -221,7 +221,7 @@ class TestUrlDedup7Days:
         )
         mgr = DedupManager(existing_entries=[existing])
         result = mgr.check_and_filter([_event(url="")])
-        # Hash cooldown = 4h, entry is 5h old → passes
+        # Hash cooldown = 12h, entry is 13h old → passes
         assert len(result.new_events) == 1
 
 

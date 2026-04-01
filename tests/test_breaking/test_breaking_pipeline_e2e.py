@@ -353,7 +353,7 @@ class TestPhase2Helpers:
                 source="CoinLore",
             ),
             MarketDataPoint(
-                symbol="Fear_Greed",
+                symbol="Fear&Greed",
                 price=26,
                 change_24h=0,
                 volume_24h=0,
@@ -416,7 +416,7 @@ class TestV029PipelineConstants:
     def test_max_events_per_run(self):
         from cic_daily_report.breaking_pipeline import MAX_EVENTS_PER_RUN
 
-        assert MAX_EVENTS_PER_RUN == 5
+        assert MAX_EVENTS_PER_RUN == 3
 
     def test_max_deferred_per_run(self):
         from cic_daily_report.breaking_pipeline import MAX_DEFERRED_PER_RUN
@@ -426,7 +426,7 @@ class TestV029PipelineConstants:
     def test_digest_threshold(self):
         from cic_daily_report.breaking_pipeline import DIGEST_THRESHOLD
 
-        assert DIGEST_THRESHOLD == 5
+        assert DIGEST_THRESHOLD == 3
 
     def test_inter_event_delay(self):
         from cic_daily_report.breaking_pipeline import INTER_EVENT_DELAY

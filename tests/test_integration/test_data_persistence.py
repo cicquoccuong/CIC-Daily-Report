@@ -196,9 +196,9 @@ class TestBreakingPipelineSheets:
 
 
 class TestCooldownChange:
-    """Verify cooldown is now 4 hours (B4)."""
+    """Verify cooldown is now 12 hours (VD-02 fix)."""
 
-    def test_cooldown_is_4_hours(self):
+    def test_cooldown_is_12_hours(self):
         from cic_daily_report.breaking.dedup_manager import COOLDOWN_HOURS
 
-        assert COOLDOWN_HOURS == 4
+        assert COOLDOWN_HOURS == 12

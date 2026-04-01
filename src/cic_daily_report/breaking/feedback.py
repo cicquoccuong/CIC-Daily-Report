@@ -124,7 +124,8 @@ def read_breaking_summary() -> str:
         for e in events:
             severity = e.get("severity", "")
             title = e.get("title", "")
-            summary = e.get("summary", "")[:200]
+            # WHY: 200 chars too short for LLM context (VD-20)
+            summary = e.get("summary", "")[:1000]
             lines.append(f"- [{severity.upper()}] {title}")
             if summary:
                 lines.append(f"  {summary}")

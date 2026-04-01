@@ -34,9 +34,9 @@ logger = get_logger("breaking_pipeline")
 BREAKING_TIMEOUT_SECONDS = 20 * 60  # 20 minutes
 
 # v0.29.0: Pipeline limits to prevent spam and quota exhaustion
-MAX_EVENTS_PER_RUN = 5  # B1: max events to generate+send per run
+MAX_EVENTS_PER_RUN = 3  # B1: max events to generate+send per run (reduced from 5 to limit spam)
 MAX_DEFERRED_PER_RUN = 5  # A8: max deferred events to reprocess per run
-DIGEST_THRESHOLD = 5  # B5: when >=N send_now events, switch to digest mode
+DIGEST_THRESHOLD = 3  # B5: when >=N send_now events, switch to digest mode (reduced from 5)
 INTER_EVENT_DELAY = 30  # B2: seconds between events sent to TG
 
 # A6: severity sort order (lower = higher priority)
@@ -838,7 +838,7 @@ def _format_market_snapshot(market_data: list | None) -> str:
         if dp.symbol in ("BTC", "ETH"):
             lines.append(f"{dp.symbol}: ${dp.price:,.0f} ({dp.change_24h:+.1f}%)")
     for dp in market_data:
-        if dp.symbol == "Fear_Greed":
+        if dp.symbol == "Fear&Greed":  # WHY: match symbol created in market_data.py:509 (VD-07 fix)
             lines.append(f"Fear & Greed: {int(dp.price)}")
         elif dp.symbol == "DXY":
             lines.append(f"DXY: {dp.price:.1f}")

@@ -303,9 +303,20 @@ async def send_admin_alert(message: str) -> None:
     Used for pipeline monitoring: failure notifications, circuit breaker alerts,
     dedup errors, research skips. Silently swallows all errors — monitoring
     should never crash the pipeline.
+
+    WHY: ADMIN_CHAT_ID separates monitoring alerts from user-facing channel (VD-28).
+    If not set, falls back to main TELEGRAM_CHAT_ID for backward compatibility.
     """
     try:
-        bot = TelegramBot()
+        admin_chat_id = os.getenv("ADMIN_CHAT_ID")
+        if admin_chat_id:
+            bot = TelegramBot(chat_id=admin_chat_id)
+        else:
+            logger.warning(
+                "ADMIN_CHAT_ID not set — admin alerts go to main channel. "
+                "Set ADMIN_CHAT_ID env var to separate monitoring from user delivery."
+            )
+            bot = TelegramBot()
         await bot.send_message(f"\u2699\ufe0f PIPELINE MONITOR\n\n{message}")
     except Exception as e:
         logger.debug(f"Admin alert failed (non-critical): {e}")

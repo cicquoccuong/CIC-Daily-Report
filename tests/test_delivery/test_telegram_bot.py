@@ -9,6 +9,7 @@ from cic_daily_report.delivery.telegram_bot import (
     TelegramBot,
     TelegramMessage,
     prepare_messages,
+    send_admin_alert,
     split_message,
 )
 
@@ -140,3 +141,57 @@ class TestTelegramBot:
 
         assert results[0].get("ok") is True
         assert results[1].get("ok") is False
+
+
+class TestAdminAlert:
+    """QW2: send_admin_alert uses ADMIN_CHAT_ID when set (VD-28)."""
+
+    async def test_uses_admin_chat_id_when_set(self):
+        """ADMIN_CHAT_ID env var → TelegramBot created with that chat_id."""
+        with (
+            patch.dict("os.environ", {"ADMIN_CHAT_ID": "admin_999"}),
+            patch("cic_daily_report.delivery.telegram_bot.TelegramBot") as MockBot,
+        ):
+            mock_instance = AsyncMock()
+            MockBot.return_value = mock_instance
+            mock_instance.send_message = AsyncMock()
+
+            await send_admin_alert("test alert")
+
+            MockBot.assert_called_once_with(chat_id="admin_999")
+            mock_instance.send_message.assert_called_once()
+
+    async def test_falls_back_to_main_channel_when_unset(self):
+        """No ADMIN_CHAT_ID → falls back to default TelegramBot()."""
+        with (
+            patch.dict("os.environ", {}, clear=False),
+            patch("cic_daily_report.delivery.telegram_bot.TelegramBot") as MockBot,
+            patch(
+                "cic_daily_report.delivery.telegram_bot.os.getenv",
+                return_value=None,
+            ),
+        ):
+            mock_instance = AsyncMock()
+            MockBot.return_value = mock_instance
+            mock_instance.send_message = AsyncMock()
+
+            await send_admin_alert("test alert")
+
+            MockBot.assert_called_once_with()  # No chat_id arg
+            mock_instance.send_message.assert_called_once()
+
+    async def test_swallows_exceptions(self):
+        """Admin alerts never crash the pipeline."""
+        with (
+            patch.dict("os.environ", {}, clear=False),
+            patch(
+                "cic_daily_report.delivery.telegram_bot.TelegramBot",
+                side_effect=DeliveryError("no config", source="test"),
+            ),
+            patch(
+                "cic_daily_report.delivery.telegram_bot.os.getenv",
+                return_value=None,
+            ),
+        ):
+            # Should not raise
+            await send_admin_alert("test alert")
