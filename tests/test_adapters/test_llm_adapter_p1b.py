@@ -40,11 +40,11 @@ def _groq_llama_provider() -> LLMProvider:
 
 
 def _cerebras_provider() -> LLMProvider:
-    """Cerebras provider with Qwen3 model (has 'qwen' in model name)."""
+    """Cerebras provider with gpt-oss-120b model (v2.0 Đợt 1, VĐ11)."""
     return LLMProvider(
         name="cerebras",
         api_key="test-key",
-        model="qwen-3-32b",
+        model="gpt-oss-120b",
         endpoint="https://api.cerebras.ai/v1/chat/completions",
         rate_limit_per_min=30,
     )
@@ -56,7 +56,7 @@ def _gemini_provider() -> LLMProvider:
         api_key="test-key",
         model="gemini-2.5-flash",
         endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-        rate_limit_per_min=15,
+        rate_limit_per_min=7,  # WHY: match production _build_providers() value (was 15 — stale)
     )
 
 
@@ -188,8 +188,13 @@ class TestGroqQwenThinkingParam:
         assert "thinking" not in payload
         assert "reasoning_effort" not in payload
 
-    async def test_cerebras_qwen_no_thinking_param(self):
-        """Cerebras Qwen: no special thinking param — _strip_think_tags() handles it."""
+    async def test_cerebras_gpt_oss_reasoning_disabled(self):
+        """Cerebras gpt-oss-120b: MUST disable reasoning via API params (VĐ14).
+
+        WHY: gpt-oss-120b is a reasoning model without <think> tags —
+        reasoning text leaks directly into content if not disabled.
+        See: https://inference-docs.cerebras.ai/capabilities/reasoning
+        """
         provider = _cerebras_provider()
 
         json_resp = {
@@ -206,7 +211,9 @@ class TestGroqQwenThinkingParam:
 
         call_args = mock_client.post.call_args
         payload = call_args.kwargs.get("json") or call_args[1].get("json")
-        # BUG-02: Cerebras does NOT get thinking or reasoning_effort
+        # v2.0 Đợt 1: Cerebras gpt-oss-120b MUST disable reasoning at API level
+        assert payload.get("disable_reasoning") is True
+        assert payload.get("reasoning_format") == "hidden"
         assert "thinking" not in payload
         assert "reasoning_effort" not in payload
 
@@ -643,3 +650,155 @@ class TestTruncateNumberedListFix:
         text = "Summary complete. 1. First item 2. Second item incompl"
         result = _truncate_to_complete_sentence(text)
         assert result == "Summary complete."
+
+
+# ===========================================================================
+# v2.0 Đợt 1 — New tests (T1-T4 from spec Section 10)
+# ===========================================================================
+
+
+class TestGeminiThinkingPartsFilter:
+    """T1 + T2: _call_gemini() filters thinking parts (defense-in-depth for Gemini 3.x)."""
+
+    async def test_multi_part_response_thinking_plus_answer(self):
+        """T1: Gemini response with thinking + answer parts → returns answer only.
+
+        WHY (VĐ2): Gemini 3.x may return parts with "thought": true.
+        _call_gemini() must pick the answer part, not the thinking part.
+        """
+        provider = _gemini_provider()
+
+        json_resp = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "Let me analyze the market...", "thought": True},
+                            {"text": "BTC rose 5% today due to ETF inflows."},
+                        ]
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {"totalTokenCount": 50},
+        }
+        mock_client = _mock_httpx_client(json_resp)
+
+        with patch(
+            "cic_daily_report.adapters.llm_adapter.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await _call_gemini(provider, "prompt", 1024, 0.7, "")
+
+        # Must return the answer part, NOT the thinking part
+        assert result.text == "BTC rose 5% today due to ETF inflows."
+        assert "Let me analyze" not in result.text
+
+    async def test_single_part_response_no_thinking(self):
+        """T2: Gemini response with single part (no thinking) → works normally.
+
+        WHY: The thinking filter must not break normal single-part responses
+        where no "thought" key exists.
+        """
+        provider = _gemini_provider()
+
+        json_resp = {
+            "candidates": [
+                {
+                    "content": {"parts": [{"text": "Normal single-part response."}]},
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {"totalTokenCount": 20},
+        }
+        mock_client = _mock_httpx_client(json_resp)
+
+        with patch(
+            "cic_daily_report.adapters.llm_adapter.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await _call_gemini(provider, "prompt", 1024, 0.7, "")
+
+        assert result.text == "Normal single-part response."
+
+    async def test_all_thinking_parts_falls_back_to_last(self):
+        """Edge case: all parts are thinking → falls back to last part.
+
+        WHY: If Gemini returns only thinking parts (unlikely but defensive),
+        we must still return something rather than crash.
+        """
+        provider = _gemini_provider()
+
+        json_resp = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "Thinking step 1...", "thought": True},
+                            {"text": "Thinking step 2...", "thought": True},
+                        ]
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {"totalTokenCount": 30},
+        }
+        mock_client = _mock_httpx_client(json_resp)
+
+        with patch(
+            "cic_daily_report.adapters.llm_adapter.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await _call_gemini(provider, "prompt", 1024, 0.7, "")
+
+        # Falls back to last part
+        assert result.text == "Thinking step 2..."
+
+
+class TestCerebrasGptOssModel:
+    """T3 + T4: Cerebras gpt-oss-120b model name and reasoning disabled."""
+
+    async def test_cerebras_gpt_oss_reasoning_disabled_in_payload(self):
+        """T3: Cerebras gpt-oss-120b sends disable_reasoning=True in payload.
+
+        WHY (VĐ14): gpt-oss-120b is a reasoning model. Without disabling
+        reasoning, output mixes reasoning text into article content.
+        See: https://inference-docs.cerebras.ai/capabilities/reasoning
+        """
+        provider = _cerebras_provider()
+
+        json_resp = {
+            "choices": [
+                {"message": {"content": "Clean output without reasoning."}, "finish_reason": "stop"}
+            ],
+            "usage": {"total_tokens": 15},
+        }
+        mock_client = _mock_httpx_client(json_resp)
+
+        with patch(
+            "cic_daily_report.adapters.llm_adapter.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            await _call_groq(provider, "test prompt", 1024, 0.7, "system")
+
+        call_args = mock_client.post.call_args
+        payload = call_args.kwargs.get("json") or call_args[1].get("json")
+        assert payload["model"] == "gpt-oss-120b"
+        assert payload.get("disable_reasoning") is True
+        assert payload.get("reasoning_format") == "hidden"
+
+    def test_cerebras_provider_model_name_updated(self):
+        """T4: _build_providers() uses gpt-oss-120b, not deprecated qwen-3-32b.
+
+        WHY (VĐ11): qwen-3-32b is deprecated on Cerebras.
+        """
+        from cic_daily_report.adapters.llm_adapter import _build_providers
+
+        with patch.dict("os.environ", {"CEREBRAS_API_KEY": "test-key"}, clear=True):
+            providers = _build_providers()
+
+        assert len(providers) == 1
+        assert providers[0].name == "cerebras"
+        assert providers[0].model == "gpt-oss-120b"
+        # Verify deprecated model is NOT used
+        assert "qwen-3-32b" not in providers[0].model

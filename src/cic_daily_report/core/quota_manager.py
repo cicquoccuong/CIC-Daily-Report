@@ -24,12 +24,20 @@ class ServiceQuota:
 
 # Pre-configured service quotas (free tiers)
 DEFAULT_QUOTAS: dict[str, dict[str, int]] = {
-    "gemini": {"daily_limit": 1500, "rate_limit_per_min": 10},
+    # WHY: "gemini" is the shared rate_key used by generate() for all Gemini models.
+    # Must match gemini_flash/gemini_flash_lite limits (250 RPD free tier).
+    "gemini": {"daily_limit": 250, "rate_limit_per_min": 10},
     "groq": {"daily_limit": 1000, "rate_limit_per_min": 60},
     "groq_llama4": {"daily_limit": 1000, "rate_limit_per_min": 30},
     "cerebras": {"daily_limit": 1000, "rate_limit_per_min": 30},
-    "gemini_flash": {"daily_limit": 1500, "rate_limit_per_min": 15},
-    "gemini_flash_lite": {"daily_limit": 1500, "rate_limit_per_min": 15},
+    "gemini_flash": {
+        "daily_limit": 250,
+        "rate_limit_per_min": 10,
+    },  # Free tier 250 RPD, 10 RPM (VĐ15)
+    "gemini_flash_lite": {
+        "daily_limit": 250,
+        "rate_limit_per_min": 10,
+    },  # Free tier 250 RPD, 10 RPM (VĐ15)
     "cryptopanic": {"daily_limit": 15, "rate_limit_per_min": 5},
     "google_sheets": {"daily_limit": 60000, "rate_limit_per_min": 60},
     "telegram": {"daily_limit": 100000, "rate_limit_per_min": 30},

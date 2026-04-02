@@ -7,4 +7,4 @@ import os
 IS_PRODUCTION: bool = os.getenv("GITHUB_ACTIONS") == "true"
 
 # Version — single source of truth
-VERSION = "2.0.0-alpha.10"
+VERSION = "2.0.0-alpha.11"

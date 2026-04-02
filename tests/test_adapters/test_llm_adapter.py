@@ -41,7 +41,7 @@ def _cerebras_provider() -> LLMProvider:
     return LLMProvider(
         name="cerebras",
         api_key="test-key",
-        model="qwen-3-32b",
+        model="gpt-oss-120b",
         endpoint="https://api.cerebras.ai/v1/chat/completions",
         rate_limit_per_min=30,
     )
@@ -53,7 +53,7 @@ def _gemini_lite_provider() -> LLMProvider:
         api_key="test-key",
         model="gemini-2.5-flash-lite",
         endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
-        rate_limit_per_min=15,
+        rate_limit_per_min=7,  # WHY: match production _build_providers() value (was 15 — stale)
     )
 
 
@@ -63,7 +63,7 @@ def _gemini_provider() -> LLMProvider:
         api_key="test-key",
         model="gemini-2.5-flash",
         endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-        rate_limit_per_min=15,
+        rate_limit_per_min=7,  # WHY: match production _build_providers() value (was 15 — stale)
     )
 
 
@@ -116,7 +116,7 @@ class TestBuildProviders:
             providers = _build_providers()
         assert len(providers) == 1
         assert providers[0].name == "cerebras"
-        assert providers[0].model == "qwen-3-32b"
+        assert providers[0].model == "gpt-oss-120b"
 
 
 class TestLLMAdapter:
@@ -636,12 +636,17 @@ class TestBug02GroqQwenReasoningEffort:
         # Must NOT have the old thinking param
         assert "thinking" not in payload
 
-    async def test_cerebras_qwen_no_reasoning_effort(self):
-        """Cerebras Qwen3 does NOT get reasoning_effort (handled by strip_think_tags)."""
+    async def test_cerebras_gpt_oss_reasoning_disabled(self):
+        """Cerebras gpt-oss-120b MUST disable reasoning via API params (VĐ14).
+
+        WHY: gpt-oss-120b is a reasoning model that does NOT use <think> tags.
+        Without disable_reasoning=True, reasoning text leaks into content.
+        See: https://inference-docs.cerebras.ai/capabilities/reasoning
+        """
         provider = LLMProvider(
             name="cerebras",
             api_key="test-key",
-            model="qwen-3-32b",
+            model="gpt-oss-120b",
             endpoint="https://api.cerebras.ai/v1/chat/completions",
             rate_limit_per_min=30,
         )
@@ -666,6 +671,8 @@ class TestBug02GroqQwenReasoningEffort:
 
         call_args = mock_client.post.call_args
         payload = call_args.kwargs.get("json") or call_args[1].get("json")
-        # Cerebras should NOT have reasoning_effort
-        assert "reasoning_effort" not in payload
+        # v2.0 Đợt 1: Cerebras gpt-oss-120b MUST disable reasoning at API level
+        assert payload.get("disable_reasoning") is True
+        assert payload.get("reasoning_format") == "hidden"
         assert "thinking" not in payload
+        assert "reasoning_effort" not in payload

@@ -416,7 +416,7 @@ function menuShowAbout() {
     "ℹ️ CIC Daily Report",
     "Phiên bản: 0.22.0\n" +
     "Nền tảng: Google Sheets + GitHub Actions\n" +
-    "AI: Gemini Flash → Flash Lite → Groq Llama 3.3\n" +
+    "AI: Gemini 2.5 Flash → 2.5 Flash-Lite → Groq Qwen3 → Llama 4 Scout → Cerebras\n" +
     "Giao hàng: Telegram Bot + Email backup\n\n" +
     "Được phát triển bởi CIC Team\n" +
     "Hệ thống tự động — dữ liệu được cập nhật bởi pipeline",

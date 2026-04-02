@@ -190,8 +190,9 @@ var SHEET_CONFIGS = [
       ["max_rows_per_tab", "5000", "Số dòng tối đa mỗi tab (auto-cleanup khi vượt)"],
       ["retention_days", "30", "Số ngày giữ dữ liệu cũ trước khi dọn dẹp"],
       ["llm_primary", "groq", "LLM chính (groq/gemini)"],
-      ["llm_fallback_1", "gemini-flash", "LLM dự phòng 1"],
-      ["llm_fallback_2", "gemini-flash-lite", "LLM dự phòng 2"]
+      // v2.0 Đợt 2: Updated display names to match current model IDs
+      ["llm_fallback_1", "gemini-2.5-flash", "LLM dự phòng 1"],
+      ["llm_fallback_2", "gemini-2.5-flash-lite", "LLM dự phòng 2"]
     ]
   },
   {

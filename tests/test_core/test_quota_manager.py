@@ -105,7 +105,7 @@ class TestQuotaBudget:
 
     def test_has_budget_when_budget_available_returns_true(self, qm):
         """has_budget() returns True when remaining quota covers the needed calls."""
-        # gemini_flash daily_limit=1500, zero calls made → plenty of budget
+        # gemini_flash daily_limit=250, zero calls made → plenty of budget
         assert qm.has_budget("gemini_flash", 5) is True
 
     def test_has_budget_when_budget_exhausted_returns_false(self, qm):

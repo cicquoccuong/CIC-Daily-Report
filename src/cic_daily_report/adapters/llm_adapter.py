@@ -1,6 +1,6 @@
 """Multi-LLM Adapter Pattern (QĐ2).
 
-Chain: Gemini 2.5 Flash → Flash-Lite → Groq Qwen3 → Groq Llama 4 → Cerebras.
+Chain: Gemini 2.5 Flash → Flash-Lite → Groq Qwen3 → Groq Llama 4 → Cerebras (gpt-oss-120b).
 Unified interface: all providers return the same response format.
 Automatic fallback when primary fails. Provider preference per pipeline.
 """
@@ -19,6 +19,11 @@ from cic_daily_report.core.logger import get_logger
 from cic_daily_report.core.quota_manager import QuotaManager
 
 logger = get_logger("llm_adapter")
+
+# v2.0 Đợt 2: Gemini API base URL — single source of truth for endpoint construction.
+# WHY: Avoid repeating full URL in each provider. When Google changes API version,
+# only this constant needs updating.
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 # v0.31.0: Provider-specific token-per-minute limits (output tokens).
 # Used by suggest_cooldown() to calculate adaptive wait times.
@@ -120,21 +125,33 @@ def _build_providers() -> list[LLMProvider]:
         # v0.30.0: Both Gemini models share 15 RPM total on same API key.
         # Use shared rate limiter group "gemini" with 7 RPM each (14 max combined,
         # leaving 1 RPM headroom). QuotaManager tracks "gemini" as shared group.
+        # WHY local vars: model name used in both `model=` and endpoint URL.
+        # Single variable eliminates risk of mismatch if model is updated.
+        # MIGRATION NOTE (Đợt 3): When ready to switch to Gemini 3.x, change:
+        #   _gemini_flash = "gemini-3-flash-preview"
+        #   _gemini_flash_lite = "gemini-3-flash-preview"  (no lite variant yet)
+        # Also check: temperature 0.05-0.1 may cause loops on Gemini 3 (VĐ7)
+        # Also check: thinkingBudget → thinking_level if using thinking mode (VĐ8)
+        # Also check: GEMINI_API_BASE may need v1beta → v1 if Google changes (VĐ3)
+        _gemini_flash = "gemini-2.5-flash"
         providers.append(
             LLMProvider(
                 name="gemini_flash",
                 api_key=gemini_key,
-                model="gemini-2.5-flash",
-                endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+                model=_gemini_flash,
+                # v2.0 Đợt 2: Use GEMINI_API_BASE constant (was full hardcoded URL)
+                endpoint=f"{GEMINI_API_BASE}/models/{_gemini_flash}:generateContent",
                 rate_limit_per_min=7,
             )
         )
+        _gemini_flash_lite = "gemini-2.5-flash-lite"
         providers.append(
             LLMProvider(
                 name="gemini_flash_lite",
                 api_key=gemini_key,
-                model="gemini-2.5-flash-lite",
-                endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
+                model=_gemini_flash_lite,
+                # v2.0 Đợt 2: Use GEMINI_API_BASE constant (was full hardcoded URL)
+                endpoint=f"{GEMINI_API_BASE}/models/{_gemini_flash_lite}:generateContent",
                 rate_limit_per_min=7,
             )
         )
@@ -170,7 +187,8 @@ def _build_providers() -> list[LLMProvider]:
             LLMProvider(
                 name="cerebras",
                 api_key=cerebras_key,
-                model="qwen-3-32b",
+                # v2.0 Đợt 1: qwen-3-32b deprecated → gpt-oss-120b (VĐ11)
+                model="gpt-oss-120b",
                 endpoint="https://api.cerebras.ai/v1/chat/completions",
                 rate_limit_per_min=30,
             )
@@ -403,9 +421,18 @@ async def _call_groq(
     # P1.23: Disable Qwen3 thinking mode via provider-specific API param.
     # WHY: Qwen3-32B defaults to thinking=enabled, which emits <think> tags.
     # Groq API expects `reasoning_effort: "none"` (NOT `thinking: {type: disabled}`).
-    # Cerebras Qwen3: no special param needed — _strip_think_tags() handles it.
     if "qwen" in provider.model.lower() and "groq" in provider.name.lower():
         payload["reasoning_effort"] = "none"
+
+    # v2.0 Đợt 1 (VĐ14): Cerebras gpt-oss-120b is a reasoning model.
+    # WHY: Unlike Qwen3, gpt-oss-120b does NOT use <think> tags — its reasoning
+    # text is mixed directly into content. _strip_think_tags() cannot catch it.
+    # Must disable reasoning at API level. Use disable_reasoning (explicit off)
+    # + reasoning_format="hidden" (belt-and-suspenders safety).
+    # See: https://inference-docs.cerebras.ai/capabilities/reasoning
+    if provider.name == "cerebras" and "gpt-oss" in provider.model.lower():
+        payload["disable_reasoning"] = True
+        payload["reasoning_format"] = "hidden"
 
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
@@ -471,7 +498,11 @@ async def _call_gemini(
             source="llm_adapter",
         )
     parts = candidates[0].get("content", {}).get("parts", [])
-    text = parts[0].get("text", "") if parts else ""
+    # v2.0 Đợt 1 (VĐ2): Filter thinking parts (defense-in-depth for Gemini 3.x upgrade).
+    # WHY: Gemini 3.x may return parts with "thought": true when thinking is enabled.
+    # We pick the first non-thought part; fallback to last part if all are thoughts.
+    answer_part = next((p for p in parts if not p.get("thought")), parts[-1] if parts else {})
+    text = answer_part.get("text", "")
     if not text.strip():
         raise LLMError("Gemini returned empty text", source="llm_adapter")
 

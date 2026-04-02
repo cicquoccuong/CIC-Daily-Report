@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.0.0-alpha.11] - 2026-04-01
+
+### LLM API Migration Đợt 1+2 — Cerebras model upgrade + Gemini quota fixes + Centralization
+
+- **Cerebras model**: `qwen-3-32b` → `gpt-oss-120b` + `reasoning_effort` disabled (VĐ11, VĐ14 — qwen-3-32b deprecated)
+- **Gemini thinking parts filter**: defense-in-depth filter for `thought` parts in Gemini responses (VĐ2)
+- **Gemini quota fix**: 1500 → 250 RPD, 15 → 10 RPM in quota_manager.py (VĐ15 — actual free tier limit)
+- **Shared rate group "gemini"**: quota 1500 → 250 RPD synced (B5 review fix)
+- **Đợt 2**: Extracted `GEMINI_API_BASE` constant for DRY endpoint construction (was full hardcoded URL in each provider)
+- **Đợt 2**: Model names in `_build_providers()` use local variables — no duplication between `model=` and `endpoint=`
+- **Đợt 2**: Updated GAS display text: `AutoSetup.gs` + `Menu.gs` reflect current LLM chain
+
 ## [2.0.0-alpha.10] - 2026-03-31
 
 ### Fixed — 5 deferred items from Phase 1 audit (zero remaining)
