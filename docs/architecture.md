@@ -24,7 +24,7 @@ _This document builds collaboratively through step-by-step discovery. Sections a
 - **Content Generation (B)**: 10 FRs — AI generate 5 tier articles (cumulative L1→L5) + 1 BIC Chat summary, dual-layer content (TL;DR + Full Analysis), NQ05 compliance, Vietnamese natural language, source attribution, Key Metrics Table.
 - **Breaking News (C)**: 6 FRs — event detection (panic score + keywords), auto-generate summary + image, 3-level severity (🔴🟠🟡), Night Mode filtering.
 - **Delivery (D)**: 5 FRs — Telegram Bot delivery, copy-paste ready format, tier tags, partial delivery with status, error notifications.
-- **Reliability (E)**: 5 FRs — multi-LLM fallback (Groq → Gemini Flash → Flash Lite), retry logic, partial delivery, graceful degradation, quota management.
+- **Reliability (E)**: 5 FRs — multi-LLM fallback (Gemini 2.5 Flash → Flash-Lite → Groq → Cerebras), retry logic, partial delivery, graceful degradation, quota management.
 - **Configuration (F)**: 6 FRs — Google Sheets config (templates, coin lists), hot-reload, data storage, auto-cleanup, Sentinel schema design.
 - **Health Dashboard (G)**: 6 FRs — pipeline status, LLM tracking, tier delivery status, error history, data freshness, GitHub Pages static.
 - **Onboarding (H)**: 4 FRs — visual guide, GitHub Secrets, one-click test, confirmation message.
@@ -245,9 +245,9 @@ cic-daily-report/
 
 **QĐ2: Multi-LLM Abstraction**
 - **Lựa chọn:** Adapter Pattern
-- **Rationale:** Chung 1 interface `llm.generate(prompt)`, mỗi LLM (Groq, Gemini Flash, Gemini Flash Lite) có 1 adapter riêng. Thêm LLM mới = thêm 1 file adapter. Nhất quán với CIC Sentinel approach.
-- **Fallback chain:** Groq → Gemini Flash → Gemini Flash Lite (tự động)
-- **Affects:** generators/llm_client.py
+- **Rationale:** Chung 1 interface `llm.generate(prompt)`, tất cả providers trong 1 file `adapters/llm_adapter.py`. Thêm LLM mới = thêm 1 provider class. Nhất quán với CIC Sentinel approach.
+- **Fallback chain:** Gemini 2.5 Flash → Flash-Lite → Groq Qwen3 → Llama 4 Scout → Cerebras gpt-oss-120b (tự động)
+- **Affects:** adapters/llm_adapter.py
 
 **QĐ5: Data Collection Pattern**
 - **Lựa chọn:** Async parallel (`asyncio` + `httpx`)
@@ -587,10 +587,7 @@ cic-daily-report/
 │       │
 │       ├── adapters/                       # QĐ2: LLM abstraction
 │       │   ├── __init__.py
-│       │   ├── base.py                     # LLMAdapter interface
-│       │   ├── groq_adapter.py             # Groq API adapter
-│       │   ├── gemini_flash.py             # Gemini Flash adapter
-│       │   └── gemini_lite.py              # Gemini Flash Lite adapter
+│       │   └── llm_adapter.py              # All providers: Gemini Flash/Lite, Groq Qwen3/Llama4, Cerebras
 │       │
 │       ├── delivery/                       # FR29-FR33: Notifications
 │       │   ├── __init__.py

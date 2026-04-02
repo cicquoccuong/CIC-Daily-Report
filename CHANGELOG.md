@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased] - 2026-04-02
+
+### Docs — Fix stale LLM chain references across 4 doc files
+
+- **CLAUDE.md**: Added `gpt-oss-120b` to Cerebras entry (line 17); QĐ2 table row updated to full chain
+- **README.md**: Fixed Multi-LLM Fallback bullet (was `Groq Llama 3.3 → Gemini Flash → Gemini Flash Lite`, now Gemini-first); updated Tech Stack + Zero Cost bullets
+- **docs/architecture.md**: QĐ2 fallback chain corrected to Gemini-primary; `adapters/` file tree updated to reflect actual `llm_adapter.py` single-file structure
+- **docs/epics.md**: Added update notes (not rewrites) on FR34, QĐ2 entry, and Story 3.1 — preserving planning history
+
 ## [2.0.0-alpha.11] - 2026-04-01
 
 ### LLM API Migration Đợt 1+2 — Cerebras model upgrade + Gemini quota fixes + Centralization

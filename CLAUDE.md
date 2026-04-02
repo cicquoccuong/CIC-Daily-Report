@@ -14,7 +14,7 @@
 - **Testing**: pytest + pytest-asyncio + pytest-mock + pytest-cov (fail-under=60)
 - **CI/CD**: GitHub Actions (3 workflows: daily-pipeline, breaking-news, test)
 - **Storage**: Google Sheets (10 tabs, gspread + batch_update)
-- **AI**: Gemini 2.5 Flash (primary) → Flash-Lite → Groq Qwen3 → Groq Llama 4 Scout → Cerebras (fallback chain)
+- **AI**: Gemini 2.5 Flash (primary) → Flash-Lite → Groq Qwen3 → Groq Llama 4 Scout → Cerebras gpt-oss-120b (fallback chain)
 - **Derivatives**: Coinalyze (primary) → OKX → Binance → Bybit (fallback chain)
 - **On-chain**: CoinMetrics Community (primary) → Glassnode (fallback)
 - **Research Data**: BGeometrics (MVRV-Z/NUPL/SOPR/Puell) + btcetffundflow.com (ETF) + DefiLlama (stablecoins) + Blockchain.com (miner stats)
@@ -87,7 +87,7 @@ docs/               # planning docs, guides
 | QĐ | Decision |
 |----|----------|
 | QĐ1 | Google Sheets 10-tab schema |
-| QĐ2 | Multi-LLM Adapter Pattern (Gemini Flash → Flash Lite → Groq) |
+| QĐ2 | Multi-LLM Adapter Pattern (Gemini 2.5 Flash → Flash-Lite → Groq Qwen3 → Llama 4 → Cerebras) |
 | QĐ3 | Centralized Error Handler (CICError class) |
 | QĐ4 | NQ05 Dual-layer compliance (Prompt + Post-filter) |
 | QĐ5 | Async parallel data collection (asyncio + httpx) |

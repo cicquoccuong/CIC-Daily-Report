@@ -6,18 +6,18 @@ Automated crypto daily report pipeline for the CIC (Crypto Inner Circle) communi
 
 - **5-Tier Articles** — Cumulative content (L1 basic → L5 comprehensive) + BIC Chat summary
 - **Breaking News** — Hourly detection via CryptoPanic, severity classification (Critical/Important/Notable), Night Mode
-- **Multi-LLM Fallback** — Groq Llama 3.3 → Gemini Flash → Gemini Flash Lite
+- **Multi-LLM Fallback** — Gemini 2.5 Flash → Flash-Lite → Groq Qwen3 → Llama 4 Scout → Cerebras
 - **NQ05 Compliance** — Dual-layer filter (prompt + post-filter), no buy/sell recommendations
 - **Smart Delivery** — Telegram Bot with section-based splitting, retry, email backup
 - **Health Dashboard** — GitHub Pages with auto-refresh, error history, data freshness
-- **Zero Cost** — All free tiers (GitHub Actions, Groq, Google Sheets, Telegram)
+- **Zero Cost** — All free tiers (GitHub Actions, Gemini, Groq, Cerebras, Google Sheets, Telegram)
 
 ## Architecture
 
 ```
 Data Sources → Collectors → LLM Generator → NQ05 Filter → Telegram/Email
      │              │              │              │              │
-  RSS/CryptoPanic  Async      Groq/Gemini    Banned KW     Smart Split
+  RSS/CryptoPanic  Async      Gemini/Groq    Banned KW     Smart Split
   Market/OnChain   Parallel   Fallback       Terminology   Partial Delivery
 ```
 
@@ -36,7 +36,7 @@ Data Sources → Collectors → LLM Generator → NQ05 Filter → Telegram/Email
 - **pytest** + pytest-asyncio + pytest-cov (344 tests, 80%+ coverage)
 - **GitHub Actions** (daily pipeline + breaking news + CI)
 - **Google Sheets** (9 tabs — storage + config)
-- **Groq/Gemini** AI (multi-LLM fallback chain)
+- **Gemini/Groq/Cerebras** AI (multi-LLM fallback chain)
 - **Telegram Bot** delivery + SMTP email backup
 - **GitHub Pages** health dashboard
 

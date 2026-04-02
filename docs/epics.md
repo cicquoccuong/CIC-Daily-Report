@@ -59,7 +59,7 @@ This document provides the complete epic and story breakdown for CIC Daily Repor
 - FR33b: Pipeline can gửi email backup khi Telegram Bot fail, cho tất cả addresses trong Google Sheets config (plain text, subject convention [CIC Daily]/[CIC Breaking])
 
 **E. Reliability & Error Handling (5 FRs)**
-- FR34: Pipeline supports multi-LLM fallback (Groq → Gemini Flash → Gemini Flash Lite)
+- FR34: Pipeline supports multi-LLM fallback (Gemini 2.5 Flash → Flash-Lite → Groq Qwen3 → Llama 4 Scout → Cerebras) <!-- updated 2026-04-02: Gemini is primary, Cerebras gpt-oss-120b is final fallback -->
 - FR35: Pipeline can retry failed operations (tối đa 3 lần)
 - FR36: Pipeline supports partial delivery (gửi tiers có sẵn, retry phần còn lại)
 - FR37: Pipeline can graceful degrade khi data sources unavailable
@@ -150,7 +150,7 @@ This document provides the complete epic and story breakdown for CIC Daily Repor
 1. **Starter Template: Custom Clean Structure** — uv + ruff + pytest + pytest-cov. Project initialization là story đầu tiên (Story 1.1)
 2. **8 Architectural Decisions (QĐ1-QĐ8):**
    - QĐ1: Google Sheets 9-tab schema (TIN_TUC_THO, DU_LIEU_THI_TRUONG, DU_LIEU_ONCHAIN, NOI_DUNG_DA_TAO, NHAT_KY_PIPELINE, MAU_BAI_VIET, DANH_SACH_COIN, CAU_HINH, BREAKING_LOG)
-   - QĐ2: Multi-LLM Adapter Pattern (Groq → Gemini Flash → Gemini Flash Lite)
+   - QĐ2: Multi-LLM Adapter Pattern (Groq → Gemini Flash → Gemini Flash Lite) <!-- updated 2026-04-02: actual chain is Gemini 2.5 Flash → Flash-Lite → Groq Qwen3 → Llama 4 Scout → Cerebras gpt-oss-120b -->
    - QĐ3: Centralized Error Handler (CICError class)
    - QĐ4: NQ05 Dual-layer compliance (Prompt + Post-filter)
    - QĐ5: Async parallel data collection (asyncio + httpx)
@@ -695,6 +695,8 @@ AI tự động generate 5 bài tier articles (L1→L5 cumulative) + 1 BIC Chat 
 As a **developer**,
 I want **a unified LLM adapter that supports Groq, Gemini Flash, and Gemini Flash Lite with automatic fallback**,
 So that **content generation always succeeds even if primary LLM is unavailable**.
+
+<!-- NOTE 2026-04-02: Actual chain as implemented = Gemini 2.5 Flash (primary) → Flash-Lite → Groq Qwen3-32B → Groq Llama 4 Scout → Cerebras gpt-oss-120b. Gemini 250 RPD / 10 RPM each. Story text below preserved as-is (planning artifact). -->
 
 **Acceptance Criteria:**
 
