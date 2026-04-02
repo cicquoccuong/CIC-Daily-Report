@@ -115,10 +115,16 @@ class ResearchData:
                     lines.append(f"  {m.name}: {m.value:.4f} ({m.source}, {m.date})")
                 parts.append("=== ON-CHAIN NÂNG CAO (nguồn: BGeometrics) ===\n" + "\n".join(lines))
             if len(zero_bgeometrics) == len(_BGEOMETRICS_NAMES):
+                # v0.33.0: More specific warning so LLM doesn't skip ALL on-chain analysis.
+                # WHY: Vague "on-chain n\u00e2ng cao" text caused LLM to omit Pi Cycle,
+                # Hash Rate, Exchange Flow etc. which are from DIFFERENT sources.
                 parts.append(
-                    "\u26a0\ufe0f D\u1eef li\u1ec7u on-chain n\u00e2ng cao "
-                    "(MVRV, NUPL, SOPR, Puell) hi\u1ec7n kh\u00f4ng kh\u1ea3 d\u1ee5ng "
-                    "t\u1eeb BGeometrics."
+                    "\u26a0\ufe0f CH\u00da \u00dd: BGeometrics API tr\u1ea3 v\u1ec1 0.0 "
+                    "cho 4 ch\u1ec9 s\u1ed1 (MVRV Z-Score, NUPL, SOPR, Puell Multiple) "
+                    "\u2014 d\u1eef li\u1ec7u CH\u01af\u0041 C\u1eac\u0050 NH\u1eac\u0054. "
+                    "C\u00e1c ngu\u1ed3n on-chain KH\u00c1C (Pi Cycle, Blockchain.com, "
+                    "Mempool) KH\u00d4NG b\u1ecb \u1ea3nh h\u01b0\u1edfng v\u00e0 "
+                    "v\u1eabn ho\u1ea1t \u0111\u1ed9ng b\u00ecnh th\u01b0\u1eddng."
                 )
 
         # ETF Flows

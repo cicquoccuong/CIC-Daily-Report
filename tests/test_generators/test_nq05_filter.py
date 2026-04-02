@@ -235,55 +235,59 @@ class TestSentenceLevelRemoval:
 
 
 class TestFillerRemoval:
-    """v0.32.0: Top 3 filler phrases are REMOVED at sentence level.
+    """v0.33.0: ALL filler phrases are WARN-only (no removal).
 
-    "điều này cho thấy", "có thể ảnh hưởng đến", "trong bối cảnh"
-    are removed because they appear most frequently and add zero information.
-    Remaining fillers stay WARN-only.
+    v0.32.0 removed top 3 at sentence level, but this was too aggressive —
+    caused empty digest bodies. Now all 7 patterns are warn-only.
+    REMOVE_FILLER_PATTERNS is empty.
     """
 
-    def test_top3_filler_removed(self):
-        """Top 3 fillers removed: 'có thể ảnh hưởng đến'."""
+    def test_former_top3_now_warned_not_removed(self):
+        """v0.33.0: Former top-3 fillers are now WARNED, not removed."""
         content = "BTC tăng 5% có thể ảnh hưởng đến thị trường." + DISCLAIMER
         result = check_and_fix(content)
-        assert "có thể ảnh hưởng đến" not in result.content
-        assert result.auto_fixed >= 1
+        # v0.33.0: Content is KEPT (warn-only), not removed
+        assert "có thể ảnh hưởng đến" in result.content
+        assert result.filler_count >= 1
 
-    def test_dieu_nay_cho_thay_removed(self):
-        """Top 3 fillers removed: 'điều này cho thấy'."""
+    def test_dieu_nay_cho_thay_warned(self):
+        """v0.33.0: 'điều này cho thấy' warned, not removed."""
         content = "Điều này cho thấy xu hướng tích cực.\nBTC giá $75,000." + DISCLAIMER
         result = check_and_fix(content)
-        assert "Điều này cho thấy" not in result.content
+        # v0.33.0: Content is KEPT (warn-only)
+        assert "Điều này cho thấy" in result.content
         assert "BTC giá $75,000" in result.content
+        assert result.filler_count >= 1
 
-    def test_trong_boi_canh_removed(self):
-        """Top 3 fillers removed: 'trong bối cảnh'."""
+    def test_trong_boi_canh_warned(self):
+        """v0.33.0: 'trong bối cảnh' warned, not removed."""
         content = "BTC giảm trong bối cảnh thị trường biến động.\nETH tăng 3%." + DISCLAIMER
         result = check_and_fix(content)
-        assert "trong bối cảnh" not in result.content
+        # v0.33.0: Content is KEPT (warn-only)
+        assert "trong bối cảnh" in result.content
         assert "ETH tăng 3%" in result.content
+        assert result.filler_count >= 1
 
     def test_remaining_fillers_still_warned_only(self):
-        """Non-top-3 fillers are still WARN-only (kept in content)."""
+        """Non-former-top-3 fillers are still WARN-only (kept in content)."""
         content = "Cần theo dõi thêm diễn biến thị trường." + DISCLAIMER
         result = check_and_fix(content)
         assert result.filler_count >= 1
         assert "Cần theo dõi thêm" in result.content
 
-    def test_mixed_remove_and_warn(self):
-        """Top 3 removed, others warned only."""
+    def test_all_fillers_warned_not_removed(self):
+        """v0.33.0: All fillers warned, content fully preserved."""
         content = (
             "BTC tăng 5% có thể ảnh hưởng đến thị trường.\n"
             "Điều này cho thấy xu hướng tích cực.\n"
             "Tuy nhiên cần lưu ý rủi ro vĩ mô." + DISCLAIMER
         )
         result = check_and_fix(content)
-        # Top 3 removed
-        assert "có thể ảnh hưởng đến" not in result.content
-        assert "Điều này cho thấy" not in result.content
-        # Remaining filler kept (warn-only)
+        # All fillers kept (warn-only)
+        assert "có thể ảnh hưởng đến" in result.content
+        assert "Điều này cho thấy" in result.content
         assert "cần lưu ý" in result.content
-        assert result.filler_count >= 1
+        assert result.filler_count >= 3
 
     def test_filler_detection_no_filler(self):
         """Clean content → filler_count=0."""
@@ -297,6 +301,12 @@ class TestFillerRemoval:
         result = check_and_fix(content)
         assert result.filler_count >= 1
         assert not any("Filler" in f for f in result.flagged_for_review)
+
+    def test_remove_filler_patterns_is_empty(self):
+        """v0.33.0: REMOVE_FILLER_PATTERNS must be empty list."""
+        from cic_daily_report.generators.nq05_filter import REMOVE_FILLER_PATTERNS
+
+        assert REMOVE_FILLER_PATTERNS == []
 
 
 class TestMergeBlacklist:

@@ -787,7 +787,7 @@ class TestResearchDataFormat:
         assert "SOPR" not in text
 
     def test_format_all_zero_bgeometrics_shows_warning(self):
-        """QW3/VD-27: All 4 BGeometrics metrics at 0.0 → unavailability warning."""
+        """QW3/VD-27: All 4 BGeometrics metrics at 0.0 → specific unavailability warning."""
         data = ResearchData(
             onchain_advanced=[
                 OnChainAdvanced("MVRV_Z_Score", 0.0, "BGeometrics", "2026-03-20"),
@@ -799,9 +799,15 @@ class TestResearchDataFormat:
         text = data.format_for_llm()
         # Should NOT have the on-chain section (all filtered)
         assert "ON-CHAIN" not in text
-        # Should have unavailability warning
-        assert "BGeometrics" in text
-        assert "MVRV" in text
+        # v0.33.0: Warning is now MORE SPECIFIC — mentions exact metrics + other sources OK
+        assert "BGeometrics API" in text
+        assert "MVRV Z-Score" in text
+        assert "NUPL" in text
+        assert "SOPR" in text
+        assert "Puell Multiple" in text
+        # v0.33.0: Must explicitly say other sources are NOT affected
+        assert "Pi Cycle" in text
+        assert "Blockchain.com" in text
 
     def test_format_partial_zero_no_warning(self):
         """QW3/VD-27: Only some zeros → no all-unavailable warning, valid ones shown."""

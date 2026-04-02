@@ -75,24 +75,24 @@ class FilterResult:
         return "pass"
 
 
-# v0.32.0: Top 3 filler phrases REMOVED at sentence level (not just warned).
-# WHY: These 3 appear most frequently in LLM output and add zero information.
-# Sentence-level removal preserves grammar better than phrase-level removal.
-REMOVE_FILLER_PATTERNS = [
-    r"điều này cho thấy",
-    r"có thể ảnh hưởng đến",
-    r"trong bối cảnh",
-]
+# v0.33.0: REMOVE_FILLER_PATTERNS emptied — sentence-level removal was too
+# aggressive, causing empty digest bodies when most sentences contained these
+# common Vietnamese phrases. Moved back to WARN-only in FILLER_PATTERNS.
+REMOVE_FILLER_PATTERNS: list[str] = []
 
 # Filler phrases discouraged by system prompt — detected and WARNED (v0.29.1).
 # v0.28.0 upgraded to REMOVE, but removing structural Vietnamese grammar (verbs,
 # prepositions) from prose destroyed sentence structure. Reverted to WARN-only.
-# v0.32.0: Top 3 most frequent fillers moved to REMOVE_FILLER_PATTERNS above.
+# v0.32.0: Top 3 most frequent fillers moved to REMOVE_FILLER_PATTERNS.
+# v0.33.0: Moved back here — removal too aggressive, caused empty bodies.
 FILLER_PATTERNS = [
     r"cần theo dõi (?:thêm|chặt chẽ|sát sao)",
     r"tuy nhiên cần lưu ý",
     r"có thể tác động (?:trực tiếp|đến)",
     r"có thể (?:tạo ra|dẫn đến) (?:sự )?(?:thay đổi|biến động)",
+    r"điều này cho thấy",
+    r"có thể ảnh hưởng đến",
+    r"trong bối cảnh",
 ]
 
 # Semantic patterns that imply NQ05 violations even without exact keyword match

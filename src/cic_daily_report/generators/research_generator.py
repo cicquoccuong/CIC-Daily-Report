@@ -283,6 +283,12 @@ def _build_research_prompt(today: str, data_context: str) -> str:
         "- Exchange Flow: dòng tiền vào/ra sàn → tín hiệu tích lũy hay phân phối\n"
         "- Hash Rate, Miner Revenue: sức khỏe mạng lưới\n"
         "KẾT NỐI các chỉ số thành câu chuyện: VD 'MVRV thấp + Exchange outflow = tích lũy'\n"
+        # v0.33.0: Explicit instruction to not skip other on-chain sources when
+        # BGeometrics is unavailable. WHY: LLM was omitting entire on-chain section.
+        "LƯU Ý QUAN TRỌNG: Nếu BGeometrics (MVRV, NUPL, SOPR, Puell) không khả dụng, "
+        "vẫn PHẢI phân tích đầy đủ các chỉ số on-chain khác: Pi Cycle Top, Hash Rate, "
+        "Difficulty, Miner Revenue, Exchange Flow, Stablecoin Supply. "
+        "KHÔNG được bỏ qua toàn bộ phần on-chain chỉ vì 1 nguồn không có dữ liệu.\n"
         "(~500-600 từ)\n\n"
         "## 4. Stablecoin & Dòng tiền\n"
         "- USDT/USDC supply thay đổi 1d/7d/30d → dòng tiền mới vào crypto hay rút ra?\n"

@@ -129,11 +129,21 @@ class BreakingContent:
         return self.content
 
 
+# v0.33.0 (VD-29): Map internal source names to user-friendly Vietnamese labels.
+# WHY: "market_data" / "market_trigger" are internal identifiers that leak into
+# Telegram messages without this mapping.
+_SOURCE_DISPLAY_MAP: dict[str, str] = {
+    "market_data": "Dữ liệu thị trường",
+    "market_trigger": "Cảnh báo thị trường",
+}
+
+
 def _format_source_link(source: str, url: str) -> str:
     """Format source as Telegram HTML hyperlink (PA E)."""
     import html as _html
 
-    safe_source = _html.escape(source)
+    display_name = _SOURCE_DISPLAY_MAP.get(source, source)
+    safe_source = _html.escape(display_name)
     if url:
         return f'<a href="{url}">Nguồn: {safe_source} ↗</a>'
     return f"Nguồn: {safe_source}"
@@ -240,6 +250,17 @@ async def generate_breaking_content(
     word_count = len(clean_content.split())
     model_used = getattr(llm, "last_provider", response.model)
 
+    # v0.33.0: Guard against NQ05 filter stripping too much content.
+    # WHY: REMOVE_FILLER_PATTERNS could delete most sentences, leaving <50 words.
+    # Fallback to raw LLM output (still NQ05 keyword-checked, just not filler-stripped).
+    if word_count < 50:
+        logger.warning(
+            f"Breaking content too short after NQ05 filter ({word_count} words), "
+            "using pre-filter content"
+        )
+        clean_content = _DISCLAIMER_RE.sub("", response.text).rstrip()
+        word_count = len(clean_content.split())
+
     logger.info(f"Breaking content generated: {word_count} words via {model_used}")
 
     # P1.25 + NQ05: Truncate body BEFORE appending suffix to guarantee the
@@ -319,6 +340,16 @@ async def generate_digest_content(
     filtered = check_and_fix(response.text)
     clean_content = _DISCLAIMER_RE.sub("", filtered.content).rstrip()
     model_used = getattr(llm, "last_provider", response.model)
+
+    # v0.33.0: Guard against NQ05 filter stripping too much content.
+    # WHY: REMOVE_FILLER_PATTERNS could delete most sentences, leaving <50 words.
+    digest_word_count = len(clean_content.split())
+    if digest_word_count < 50:
+        logger.warning(
+            f"Digest content too short after NQ05 filter ({digest_word_count} words), "
+            "using pre-filter content"
+        )
+        clean_content = _DISCLAIMER_RE.sub("", response.text).rstrip()
 
     # P1.25 + NQ05: Truncate body BEFORE appending suffix to guarantee the
     # mandatory DISCLAIMER is never cut off by the character limit.
