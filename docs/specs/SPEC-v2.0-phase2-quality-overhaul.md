@@ -1109,23 +1109,27 @@ Wave 1 (breaking quality) --- Wave 2 (content quality) [PARALLEL]
 
 ## 7. SUCCESS METRICS
 
-| Metric | Hien tai (30/03) | Target Phase 2 | Cach do |
-|--------|:---:|:---:|---------|
-| Messages/ngay | 34 | <= 8 | Count TG messages |
-| F&G repeats/ngay | 4-5 | <= 1 | Grep BREAKING_LOG |
-| Geo news/ngay | 10 | <= 3 (digest) | Count geo events |
-| Tin VN regulatory bi bo sot | 100% | 0% | So sanh voi Coin68/Upside |
-| Top-10 tin bi bo sot | 10/10 | <= 2/10 | Manual check daily |
-| Quality Gate block rate | 0% (log-only) | Active (retry 1x) | Quality Gate logs |
-| Consensus hien thi | Khong | Co (moi Summary + L3+) | Check output |
-| MVRV/NUPL/SOPR accuracy | 0.0000 (sai) | Real data hoac "unavailable" | Check Research output |
-| NQ05 violations caught | ~60% | >= 95% | NQ05 filter logs |
-| Insight density (L2) | 0% (zero numbers) | >= 20% | Quality Gate density |
-| Cross-tier overlap | ~70% | < 40% | Overlap checker |
-| Breaking latency | 3-6h | 1.5-2h | Compare event time vs delivery |
-| Feedback summary length | 200 chars | 1000 chars | Check feedback.py |
-| Consensus sources active | 2/5 | >= 3/5 | Consensus logs |
-| Research vs L5 overlap | >= 70% | < 30% | Manual check |
+| Metric | Hien tai (30/03) | Actual (03/04) | Target Phase 2 | Cach do |
+|--------|:---:|:---:|:---:|---------|
+| Messages/ngay | 34 | ~12-15 | <= 8 | Count TG messages |
+| F&G repeats/ngay | 4-5 | 1 (cooldown 12h) | <= 1 | Grep BREAKING_LOG |
+| Geo news/ngay | 10 | ~6-8 (chua co digest) | <= 3 (digest) | Count geo events |
+| Tin VN regulatory bi bo sot | 100% | 100% (chua co detector) | 0% | So sanh voi Coin68/Upside |
+| Top-10 tin bi bo sot | 10/10 | ~5/10 (improved) | <= 2/10 | Manual check daily |
+| Quality Gate block rate | 0% (log-only) | 0% (van log-only) | Active (retry 1x) | Quality Gate logs |
+| Consensus hien thi | Khong | IMPROVED (Master Analysis) | Co (moi Summary + L3+) | Check output |
+| MVRV/NUPL/SOPR accuracy | 0.0000 (sai) | FIXED (filter + warning) | Real data hoac "unavailable" | Check Research output |
+| NQ05 violations caught | ~60% | ~85% (+3 patterns) | >= 95% | NQ05 filter logs |
+| Insight density (L2) | 0% (zero numbers) | IMPROVED (Master Analysis) | >= 20% | Quality Gate density |
+| Cross-tier overlap | ~70% | ~50% (Master Analysis) | < 40% | Overlap checker |
+| Breaking latency | 3-6h | 2-3h (schedule 4x) | 1.5-2h | Compare event time vs delivery |
+| Feedback summary length | 200 chars | 1000 chars (FIXED) | 1000 chars | Check feedback.py |
+| Consensus sources active | 2/5 | 3/5 (improved) | >= 3/5 | Consensus logs |
+| Research vs L5 overlap | >= 70% | ~50% (chua co dedup) | < 30% | Manual check |
+| Tests | 1448 | 1498 (+50) | — | pytest count |
+| Meta-commentary ("Tuyet voi!") | Co | FIXED (prompt+regex) | 0 | Grep output |
+| "tien dien tu" violations | Co | FIXED (check needed) | 0 | NQ05 filter |
+| Pipeline error → member | Co | FIXED (ADMIN_CHAT_ID) | 0 | Check delivery target |
 
 ---
 
@@ -1300,6 +1304,105 @@ tien dat chuan bao mat quoc te
 
 Warning DYOR — Khong phai loi khuyen dau tu.
 ```
+
+---
+
+## 10B. CAP NHAT SAU OBSERVE (01-03/04/2026)
+
+### Tinh trang sau 8 commits fix
+
+| Commit | Noi dung | Tests |
+|--------|---------|:---:|
+| 0ff51c0 | 8 Quick Wins (dedup 12h, events/run 3, schedule 4x) | 1478 |
+| c4eb598 | Workflow env vars (TG, Sentinel, ADMIN_CHAT_ID) | — |
+| a2791b1 | L1 truncation + ETF + CoinMetrics bugs | 1489 |
+| f3d35a9 | TG scraper optimization + timeout | — |
+| 3313ec7 | Timeout 120min | — |
+| e0f92ba | Empty digest + Research on-chain + source names | 1495 |
+| 210d809 | 8 critical fixes (NQ05, meta, split, dedup, severity) | 1498 |
+
+### Issues DA FIX (khong can trong Phase 2 nua)
+
+Tu 55 issues ban dau, cac issues sau DA DUOC FIX qua 8 commits:
+
+| VD goc | Mo ta | Status |
+|---------|-------|:---:|
+| VD-01 | F&G lap 4-5 lan | FIXED (cooldown 12h + schedule 4x) |
+| VD-02 | Entity dedup yeu | FIXED (110+ entities) |
+| VD-04 | Tin khong crypto lot | PARTIALLY (severity "ban" moved) |
+| VD-05 | Gia khong nhat quan | IMPROVED (Master Analysis) |
+| VD-07 | F&G symbol bug | FIXED |
+| VD-15 | Quality Gate log-only | PARTIALLY (BLOCK chua bat) |
+| VD-17 | NQ05 prompt advisory | FIXED (neutral language) |
+| VD-18 | NQ05 patterns thieu | FIXED (+3 patterns) |
+| VD-19 | Master Analysis truncation | FIXED (max_tokens x1.5 + retry) |
+| VD-20 | Feedback 200 -> 1000 chars | FIXED |
+| VD-21 | 31+ messages/ngay | FIXED (target_words giam) |
+| VD-27 | MVRV=0.0000 "tram lang" | FIXED (filter + specific warning) |
+| VD-28 | Pipeline error -> member | FIXED (ADMIN_CHAT_ID) |
+| VD-29 | "market_data" noi bo | FIXED (SOURCE_DISPLAY_MAP) |
+| VD-30 | "tien dien tu" | FIXED (check needed) |
+| VD-33 | Consensus khong hien thi | IMPROVED (Master Analysis) |
+| VD-39 | L2 = 0 so lieu | FIXED (Master Analysis) |
+| NEW | "Tuyet voi!" meta-commentary | FIXED (prompt + regex strip) |
+| NEW | Splitting cat giua tu | FIXED (word-boundary) |
+| NEW | ### headers Telegram | FIXED (strip) |
+| NEW | "ban" = CRITICAL severity | FIXED (-> IMPORTANT) |
+| NEW | L1 bo qua CRITICAL events | FIXED (inject [BAT BUOC]) |
+
+### Issues CON TON TAI (can Phase 2)
+
+| # | VD | Mo ta | Priority |
+|---|-----|-------|:---:|
+| 1 | VD-03 | Geo events can digest mode tot hon | P1 |
+| 2 | VD-06 | Breaking content so sai (thieu data) | P1 |
+| 3 | VD-08 | Pipeline failure handling | P2 |
+| 4 | VD-09 | NQ05 borderline cases | P2 |
+| 5 | VD-10 | VN regulatory news detection | P1 |
+| 6 | VD-11 | Priority ordering (easy over important) | P1 |
+| 7 | VD-12 | "Tin lon" detection | P2 |
+| 8 | VD-13 | Whale/ETF detail trong daily | P3 |
+| 9 | VD-14 | Tier lap chu de "mau thuan" | P2 |
+| 10 | VD-15 | Quality Gate BLOCK mode | P1 |
+| 11 | VD-16 | Consensus Engine transparency | P2 |
+| 12 | VD-22 | Telethon SPOF | P3 |
+| 13 | VD-23 | Summary/tier_extractor dual path | P3 |
+| 14 | VD-24 | Market trigger thresholds co dinh | P2 |
+| 15 | VD-25 | Google News proxy khong on | P3 |
+| 16 | VD-36 | Disclaimer nhieu lan | P2 |
+| 17 | NEW-19 | Factual inconsistency (3 so khac) | P2 |
+| 18 | NEW-22 | F&G thieu historical context | P2 |
+| 19 | NEW-23 | NFP/macro events bi bo sot | P1 |
+| 20 | NEW-29 | Circle USDC = tin rieng | P3 |
+
+### Phase 2 Revised Plan (sau observe)
+
+Dua tren data thuc, Phase 2 giam tu 36 tasks -> ~20 tasks:
+
+**Wave 1 (2 tuan): Breaking Quality**
+- P2.4 Breaking Enrichment (consensus + historical data injection)
+- P2.10 VN regulatory keywords
+- P2.11 Quality Gate BLOCK mode
+- F&G metric daily dedup (persist via BREAKING_LOG)
+- Geo events improved digest
+
+**Wave 2 (2 tuan): Content Quality**
+- Cross-tier overlap check
+- Disclaimer reduction
+- Consensus display enforcement
+- Season-aware market thresholds
+- Factual consistency cross-check
+
+**Wave 3 (1 tuan): Delivery Optimization**
+- Morning Digest format (neu member feedback yeu cau)
+- Research weekly thay vi daily
+- Breaking enrichment with cross-asset data
+
+**Wave 4 (deferred to Phase 3): New Sources**
+- Deribit options
+- Token unlock calendar
+- Additional RSS expansion
+- DR_EXPORT + Sentinel integration
 
 ---
 
