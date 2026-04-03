@@ -140,16 +140,28 @@ def split_message(tier_label: str, content: str) -> list[TelegramMessage]:
     if current.strip():
         parts.append(current.strip())
 
-    # Hard fallback: if any part still exceeds max, chunk it
+    # Hard fallback: if any part still exceeds max, chunk at word boundary (VD-15/VD-27)
     final_parts: list[str] = []
     truncated = False
     for part in parts:
         while len(part) > max_content:
             truncated = True
-            final_parts.append(part[:max_content])
-            part = part[max_content:]
+            # WHY rfind(' '): Cut at word boundary to avoid splitting mid-word
+            cut_at = part.rfind(" ", 0, max_content)
+            if cut_at <= 0:
+                cut_at = max_content
+            final_parts.append(part[:cut_at].rstrip())
+            part = part[cut_at:].lstrip()
         if part.strip():
             final_parts.append(part.strip())
+
+    # WHY: Empty parts or bare separator lines waste a TG message (VD-27)
+    final_parts = [p for p in final_parts if p.strip() and p.strip() != "---"]
+
+    # WHY: Telegram doesn't render ### markdown headers (VD-15)
+    for i, part in enumerate(final_parts):
+        final_parts[i] = re.sub(r"^(#{1,3})\s+", "", part, flags=re.MULTILINE)
+
     parts = final_parts if final_parts else parts
 
     if truncated:

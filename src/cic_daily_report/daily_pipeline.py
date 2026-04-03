@@ -693,8 +693,8 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         "tìm tài sản thay thế. NHƯNG F&G = 11 (hoảng loạn cực độ) cho thấy retail đang bán tháo, "
         "trong khi Funding Rate = 0.06% (dương) nghĩa là dân derivatives VẪN đang đặt cược tăng. "
         "Mâu thuẫn này cho thấy: retail hoảng loạn, nhưng dân chuyên nghiệp chưa từ bỏ — "
-        "đây thường là đặc điểm của giai đoạn tích lũy cuối cùng "
-        'trước khi thị trường phục hồi."\n\n'
+        "đây thường là đặc điểm của giai đoạn mà tâm lý thị trường đang "
+        'ở mức cực đoan."\n\n'
         "KHÔNG: giá coin (đã ở L2) | rủi ro/scenario (để L4-L5) | bịa MVRV/SOPR\n"
     )
     tier_context["L4"] = (
@@ -731,7 +731,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         "(bao gồm cả mã đầu cơ cao). Họ cần tầm nhìn CHIẾN LƯỢC dài hạn — "
         "không phải giá ngày hôm nay mà là XU HƯỚNG tuần/tháng. "
         "Họ hiểu mô hình 4 mùa (Đông-Xuân-Hè-Thu) và cần biết tín hiệu để "
-        "quyết định chiến lược tích lũy hay chốt lời.\n"
+        "đánh giá vị trí trong chu kỳ thị trường.\n"
         "GIỌNG VĂN: Formal, framework-based, strategic thinking.\n"
         "⚠️ Member ĐÃ ĐỌC L1→L4 — CHỈ viết nội dung MỚI, tầm nhìn RỘNG hơn.\n\n"
         "TRẢ LỜI 4 CÂU HỎI NÀY:\n"
@@ -786,6 +786,21 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     # v0.19.0 fallback: If no JSON feedback, load from Sheets (24h window)
     if not recent_breaking_text:
         recent_breaking_text = await _load_recent_breaking_context()
+
+    # VD-6: Force CRITICAL breaking events into key_metrics so LLM cannot ignore them.
+    # WHY: LLM sometimes omits critical events from Master Analysis when they're only
+    # in the breaking context section. Injecting into key_metrics guarantees visibility.
+    try:
+        from cic_daily_report.breaking.feedback import read_breaking_events
+
+        recent_events = read_breaking_events()
+        critical_breaking = [e for e in recent_events if e.get("severity") == "critical"]
+        if critical_breaking:
+            titles = "; ".join(e.get("title", "")[:80] for e in critical_breaking[:3])
+            key_metrics["CRITICAL_EVENTS"] = f"[BẮT BUỘC ĐỀ CẬP] {titles}"
+            logger.info(f"VD-6: Injected {len(critical_breaking)} critical events into key_metrics")
+    except Exception as e:
+        logger.warning(f"VD-6: Critical event injection failed (non-critical): {e}")
 
     # P1.19: Format FRED macro data for LLM context
     fred_text = format_fred_for_llm(fred_data)

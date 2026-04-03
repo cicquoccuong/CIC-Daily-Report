@@ -32,12 +32,14 @@ SEVERITY_EMOJI = {
 }
 
 # Default classification keywords (configurable via CAU_HINH)
+# WHY "ban" removed from CRITICAL (VD-21): Too broad — matches "Binance ban",
+# "gambling ban", etc. Only CRITICAL when combined with crypto-specific context.
+# Moved to IMPORTANT keywords instead.
 DEFAULT_CRITICAL_KEYWORDS = [
     "hack",
     "exploit",
     "collapse",
     "bankrupt",
-    "ban",
     "emergency",
     "rug pull",
 ]
@@ -68,6 +70,7 @@ ANALYSIS_DOWNGRADE_KEYWORDS = [
 ]
 
 DEFAULT_IMPORTANT_KEYWORDS = [
+    "ban",  # VD-21: moved from CRITICAL — too broad for top severity
     "crash",  # Synced from event_detector DEFAULT_KEYWORD_TRIGGERS
     "partnership",
     "liquidation",

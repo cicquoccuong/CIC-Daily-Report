@@ -174,16 +174,16 @@ class TestWordBoundaryMatching:
         assert result != CRITICAL
 
     def test_ban_matches_standalone(self):
-        """'ban' keyword should match standalone 'ban'."""
+        """'ban' keyword moved to IMPORTANT (VD-21) — should match standalone 'ban'."""
         cfg = ClassificationConfig()
         result = _determine_severity(_event("Country to ban crypto trading"), cfg)
-        assert result == CRITICAL
+        assert result == IMPORTANT  # VD-21: "ban" too broad for CRITICAL
 
     def test_ban_matches_word_boundary(self):
-        """'ban' should match at word boundaries like 'crypto ban'."""
+        """'ban' should match at word boundaries like 'crypto ban' as IMPORTANT."""
         cfg = ClassificationConfig()
         result = _determine_severity(_event("New crypto ban announced"), cfg)
-        assert result == CRITICAL
+        assert result == IMPORTANT  # VD-21: "ban" too broad for CRITICAL
 
 
 class TestPhase3Classification:

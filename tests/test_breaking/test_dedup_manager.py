@@ -491,3 +491,27 @@ class TestEntityDedup:
         result = _extract_entities("Vitalik presents Ethereum roadmap")
         assert "eth" in result
         assert "ethereum" not in result
+
+
+class TestExpandedEntityPattern:
+    """Tests for expanded _ENTITY_PATTERN groups."""
+
+    def test_defi_protocol_drift(self):
+        """DeFi protocol 'Drift' is extracted as entity."""
+        result = _extract_entities("Drift Protocol mất 285 triệu")
+        assert "drift" in result
+
+    def test_country_canada(self):
+        """Country 'Canada' is extracted as entity."""
+        result = _extract_entities("Canada đề xuất cấm")
+        assert "canada" in result
+
+    def test_security_and_defi_multi_entity(self):
+        """Security term 'hacker' + DeFi protocol 'Drift' both extracted.
+
+        WHY 'hacker' not 'hack': regex word boundary requires exact token match,
+        so 'Hacker' matches the 'hacker' alternative (not 'hack').
+        """
+        result = _extract_entities("Hacker tấn công Drift")
+        assert "hacker" in result
+        assert "drift" in result

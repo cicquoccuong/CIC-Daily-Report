@@ -11,6 +11,7 @@ Target: BIC Group L1 (paid members only, NOT public)
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -27,11 +28,11 @@ from cic_daily_report.generators.text_utils import truncate_to_limit
 logger = get_logger("research_generator")
 
 # Research article needs higher token limit for >2500 words
-RESEARCH_MAX_TOKENS = 8192
+RESEARCH_MAX_TOKENS = 6144  # VD-13: reduced from 8192 to fit 1-2 TG messages
 RESEARCH_TEMPERATURE = 0.4
 # P1.25: Upper bound for research articles to prevent unbounded content.
 # 2500 Vietnamese words x ~6 chars/word + formatting + DISCLAIMER headroom
-RESEARCH_MAX_CHARS = 18000
+RESEARCH_MAX_CHARS = 12000  # VD-13: reduced from 18000 to fit 1-2 TG messages
 
 # NQ05-compliant system prompt — research-grade depth
 RESEARCH_SYSTEM_PROMPT = (
@@ -106,6 +107,16 @@ async def generate_research_article(
 
     # NQ05 filtering handled by pipeline Stage 3 (consistent with tier articles)
     body = response.text.strip()
+
+    # WHY: LLM sometimes prefixes meta-commentary ("Tuyệt vời!", "Dưới đây là...")
+    # despite prompt instructions. Regex strip as safety net (VD-16).
+    body = re.sub(
+        r"^(?:Tuyệt vời!?\s*|Chắc chắn!?\s*|Dưới đây là\s*|Sure!?\s*|Certainly!?\s*).*?\n+",
+        "",
+        body,
+        count=1,
+        flags=re.IGNORECASE,
+    )
 
     # P1.25: Truncate body BEFORE appending DISCLAIMER to guarantee NQ05 disclaimer
     # is never cut. WHY: DISCLAIMER is mandatory for NQ05 compliance — if we append
@@ -256,6 +267,11 @@ def _build_research_prompt(today: str, data_context: str) -> str:
     return (
         f"Viết bài nghiên cứu chuyên sâu 'CIC Market Insight' cho ngày {today}.\n"
         "Bài viết TỐI THIỂU 2500 từ, phân tích CHI TIẾT và SÂU.\n\n"
+        # WHY: LLM sometimes adds meta-commentary before actual content (VD-16).
+        "ĐỊNH DẠNG: Viết bài phân tích TRỰC TIẾP. "
+        "Dòng đầu tiên PHẢI là nội dung phân tích. "
+        "TUYỆT ĐỐI KHÔNG viết lời chào, lời dẫn, giới thiệu "
+        "('Tuyệt vời!', 'Dưới đây là...', 'Chắc chắn!').\n\n"
         "=== DỮ LIỆU ĐẦU VÀO ===\n"
         f"{data_context}\n\n"
         "=== CẤU TRÚC BÀI VIẾT (8 PHẦN) ===\n\n"

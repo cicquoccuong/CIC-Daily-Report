@@ -120,6 +120,10 @@ SEMANTIC_NQ05_PATTERNS = [
     r"(?:tăng trưởng|phục hồi|bứt phá)",
     # v0.32.0: Broader "xem xét" + action pattern (advisory language = NQ05 violation)
     r"xem xét\s+(?:việc\s+)?(?:tích lũy|mua vào|mua thêm)",
+    # v0.33.0: Additional advisory patterns (VD-17, VD-18)
+    r"cơ hội\s+(?:\w+\s+){0,6}(?:bình quân giá|DCA|mua giá thấp)",
+    r"xem\s+đây\s+là\s+cơ hội",
+    r"quyết định\s+(?:chiến lược\s+)?(?:tích lũy|chốt lời|mua|bán)",
 ]
 
 

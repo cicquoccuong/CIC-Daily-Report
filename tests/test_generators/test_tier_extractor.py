@@ -71,13 +71,15 @@ class TestExtractionConfigs:
             assert EXTRACTION_CONFIGS[tier].format_instructions == ""
 
     def test_word_count_increases_with_tier(self):
-        """Higher tiers should have larger word count targets."""
+        """Higher tiers should have equal or larger word count targets (VD-13)."""
         tiers_ordered = ["L1", "L2", "L3", "L4", "L5"]
         prev_max = 0
         for tier in tiers_ordered:
             config = EXTRACTION_CONFIGS[tier]
-            assert config.target_words[1] > prev_max, (
-                f"{tier} target_words max should exceed previous tier"
+            # WHY >=: VD-13 reduced target_words to fit 1-2 TG messages.
+            # L3 and L4 may have same max (both (900, 1100)) — valid design choice.
+            assert config.target_words[1] >= prev_max, (
+                f"{tier} target_words max should be >= previous tier"
             )
             prev_max = config.target_words[1]
 

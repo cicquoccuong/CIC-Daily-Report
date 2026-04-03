@@ -312,7 +312,7 @@ class MetricsInterpretation:
                 "  GÓC NHÌN CHU KỲ: Dựa trên các tín hiệu trên, thị trường đang ở "
                 "giai đoạn nào trong chu kỳ 4 mùa? (Đông=tích lũy, Xuân=khởi sắc, "
                 "Hè=hưng phấn, Thu=suy giảm). Master investors cần biết mình đang ở đâu "
-                "để quyết định chiến lược: tích lũy thêm hay bắt đầu chốt lời."
+                "để đánh giá thị trường đang ở giai đoạn nào trong chu kỳ."
             )
             parts.append("  → NHIỆM VỤ: Xây dựng 3 kịch bản + nhận định giai đoạn chu kỳ.")
 
@@ -599,7 +599,7 @@ def _analyze_cross_signals(
                 f"🔍 RETAIL vs PRO: F&G={fg_val} (retail hoảng loạn) NHƯNG "
                 f"Funding Rate={fr_val:.4f}% (derivatives traders vẫn đặt cược tăng). "
                 "Ý nghĩa: dân chuyên nghiệp chưa từ bỏ vị thế long — "
-                "nếu đúng, đây có thể là giai đoạn tích lũy cuối. "
+                "nếu đúng, đây có thể là giai đoạn mà tâm lý thị trường đang ở mức cực đoan. "
                 "Rủi ro: nếu giá tiếp tục giảm, cascade liquidation từ long positions."
             )
         elif fg_val >= 75 and fr_val < -0.01:

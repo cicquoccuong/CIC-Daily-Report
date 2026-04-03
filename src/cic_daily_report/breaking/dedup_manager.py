@@ -98,6 +98,13 @@ _ENTITY_PATTERN = re.compile(
     r"|BlackRock|Fidelity|Grayscale|MicroStrategy|Tesla|Tether|Circle"
     r"|Trump|Gensler|Powell|CZ|SBF|Vitalik"
     r"|Nevada|California|Wyoming|Congress|Senate|House"
+    # WHY: Expand entity coverage to reduce false negatives in dedup
+    # for DeFi, stablecoin, geopolitical, security, and institutional news
+    r"|Drift|Aave|Compound|Maker|MakerDAO|Lido|Uniswap|Curve|dYdX|GMX|Pendle|Ethena|Morpho|Balancer|Yearn|Frax"
+    r"|USDC|USDT|DAI|USDS|USDe|FDUSD|TUSD|BUSD"
+    r"|Canada|China|Japan|Korea|India|Russia|Iran|Israel|UK|Australia|Singapore|Brazil|Vietnam"
+    r"|hack|exploit|hacker|attack|bridge|oracle|vulnerability|breach|stolen|drain"
+    r"|VanEck|ARK|Franklin|JPMorgan"
     r")\b",
     re.IGNORECASE,
 )

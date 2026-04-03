@@ -90,6 +90,34 @@ def _is_fd_closed(fd: int) -> bool:
         return True
 
 
+def read_breaking_events() -> list[dict]:
+    """Read today's breaking events as raw dicts for programmatic access.
+
+    WHY (VD-6): daily_pipeline needs structured data to inject CRITICAL events
+    into key_metrics so the LLM cannot ignore them.
+
+    Returns list of event dicts, or empty list.
+    """
+    if not _FEEDBACK_FILE.exists():
+        return []
+
+    file_size = _FEEDBACK_FILE.stat().st_size
+    if file_size > MAX_FEEDBACK_FILE_SIZE:
+        return []
+
+    try:
+        data = json.loads(_FEEDBACK_FILE.read_text(encoding="utf-8"))
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+        file_date = data.get("date", "")
+        if file_date != today and file_date != yesterday:
+            return []
+        return data.get("events", [])
+    except Exception as e:
+        logger.warning(f"Breaking events read failed: {e}")
+        return []
+
+
 def read_breaking_summary() -> str:
     """Read today's breaking events for daily pipeline context.
 

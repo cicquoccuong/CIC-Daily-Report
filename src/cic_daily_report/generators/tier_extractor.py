@@ -9,6 +9,7 @@ Sequential extraction with cooldowns to respect 7 RPM rate limits.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 
@@ -51,7 +52,7 @@ EXTRACTION_CONFIGS: dict[str, ExtractionConfig] = {
         tier="L1",
         max_tokens=3072,
         temperature=0.3,
-        target_words=(800, 1200),
+        target_words=(600, 800),  # VD-13: reduced from (800, 1200) to fit 1-2 TG messages
         sections_focus="1, 2",
         audience=(
             "Ng\u01b0\u1eddi m\u1edbi b\u1eaft \u0111\u1ea7u t\u00ecm hi\u1ec3u "
@@ -70,7 +71,7 @@ EXTRACTION_CONFIGS: dict[str, ExtractionConfig] = {
         tier="L2",
         max_tokens=4608,
         temperature=0.3,
-        target_words=(1200, 1500),
+        target_words=(800, 1000),  # VD-13: reduced from (1200, 1500) to fit 1-2 TG messages
         sections_focus="2, 7",
         audience=(
             "Nh\u00e0 \u0111\u1ea7u t\u01b0 quan t\u00e2m altcoin v\u00e0 sector. "
@@ -86,7 +87,7 @@ EXTRACTION_CONFIGS: dict[str, ExtractionConfig] = {
         tier="L3",
         max_tokens=6144,
         temperature=0.4,
-        target_words=(1800, 2000),
+        target_words=(900, 1100),  # VD-13: reduced from (1800, 2000) to fit 1-2 TG messages
         sections_focus="3, 4",
         audience=(
             "Nh\u00e0 \u0111\u1ea7u t\u01b0 mu\u1ed1n hi\u1ec3u nguy\u00ean nh\u00e2n "
@@ -102,7 +103,7 @@ EXTRACTION_CONFIGS: dict[str, ExtractionConfig] = {
         tier="L4",
         max_tokens=6144,
         temperature=0.4,
-        target_words=(2000, 2200),
+        target_words=(900, 1100),  # VD-13: reduced from (2000, 2200) to fit 1-2 TG messages
         sections_focus="4, 5",
         audience=(
             "Nh\u00e0 \u0111\u1ea7u t\u01b0 t\u1eadp trung qu\u1ea3n l\u00fd r\u1ee7i ro. "
@@ -119,7 +120,7 @@ EXTRACTION_CONFIGS: dict[str, ExtractionConfig] = {
         tier="L5",
         max_tokens=8192,
         temperature=0.45,
-        target_words=(2500, 3000),
+        target_words=(1200, 1500),  # VD-13: reduced from (2500, 3000) to fit 1-2 TG messages
         sections_focus="5, 6, 7, 8",
         audience=(
             "Master Investor — chi\u1ebfn l\u01b0\u1ee3c d\u00e0i h\u1ea1n, "
@@ -138,7 +139,7 @@ EXTRACTION_CONFIGS: dict[str, ExtractionConfig] = {
         tier="Summary",
         max_tokens=4096,
         temperature=0.3,
-        target_words=(600, 900),
+        target_words=(500, 700),  # VD-13: reduced from (600, 900) to fit 1-2 TG messages
         sections_focus="1, 2, 5, 6",
         audience=(
             "BIC Chat members — \u0111\u1ecdc nhanh tr\u00ean \u0111i\u1ec7n tho\u1ea1i, "
@@ -216,6 +217,18 @@ async def extract_tier(
     if config.format_instructions:
         prompt += f"\n{config.format_instructions}\n"
 
+    # WHY: LLM sometimes adds meta-commentary before actual content (VD-16).
+    prompt += (
+        "\n\u0110\u1ecaNH D\u1ea0NG: Vi\u1ebft b\u00e0i ph\u00e2n t\u00edch "
+        "TR\u1ef0C TI\u1ebeP. "
+        "D\u00f2ng \u0111\u1ea7u ti\u00ean PH\u1ea2I l\u00e0 n\u1ed9i dung "
+        "ph\u00e2n t\u00edch. "
+        "TUY\u1ec6T \u0110\u1ed0I KH\u00d4NG vi\u1ebft l\u1eddi ch\u00e0o, "
+        "l\u1eddi d\u1eabn, gi\u1edbi thi\u1ec7u "
+        "('Tuy\u1ec7t v\u1eddi!', 'D\u01b0\u1edbi \u0111\u00e2y l\u00e0...', "
+        "'Ch\u1eafc ch\u1eafn!').\n"
+    )
+
     prompt += (
         "\nQUY T\u1eaeC:\n"
         "- KH\u00d4NG th\u00eam data kh\u00f4ng c\u00f3 trong b\u00e0i g\u1ed1c\n"
@@ -251,6 +264,16 @@ async def extract_tier(
             response = response2
 
     content = response.text.strip()
+
+    # WHY: LLM sometimes prefixes meta-commentary ("Tuyệt vời!", "Dưới đây là...")
+    # despite prompt instructions. Regex strip as safety net (VD-16).
+    content = re.sub(
+        r"^(?:Tuyệt vời!?\s*|Chắc chắn!?\s*|Dưới đây là\s*|Sure!?\s*|Certainly!?\s*).*?\n+",
+        "",
+        content,
+        count=1,
+        flags=re.IGNORECASE,
+    )
 
     # Summary does NOT get DISCLAIMER appended — it uses NQ05 post-filter in pipeline
     # Tier articles DO get DISCLAIMER for NQ05 compliance
