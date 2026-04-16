@@ -1,9 +1,13 @@
-"""Market & Macro Data Collector (FR3, FR6, FR10)."""
+"""Market & Macro Data Collector (FR3, FR6, FR10).
+
+QO.27: PriceSnapshot — freeze prices once per pipeline run so all downstream
+components use consistent data. Created at pipeline start, passed through.
+"""
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import httpx
@@ -39,6 +43,122 @@ class MarketDataPoint:
             self.data_type,
             self.source,
         ]
+
+
+@dataclass
+class PriceSnapshot:
+    """QO.27: Frozen price data collected once per pipeline run.
+
+    WHY: Different pipeline stages may call market data at different times,
+    causing price inconsistencies. PriceSnapshot captures prices ONCE at
+    pipeline start, and all downstream components use the same snapshot.
+
+    Components accepting price_snapshot parameter should use it instead of
+    calling collect_market_data() independently.
+    """
+
+    market_data: list[MarketDataPoint] = field(default_factory=list)
+    timestamp: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.timestamp:
+            self.timestamp = datetime.now(timezone.utc).isoformat()
+
+    def get_price(self, symbol: str) -> float | None:
+        """Get frozen price for a symbol. Returns None if not found."""
+        for dp in self.market_data:
+            if dp.symbol == symbol:
+                return dp.price
+        return None
+
+    def get_change_24h(self, symbol: str) -> float | None:
+        """Get frozen 24h change for a symbol. Returns None if not found."""
+        for dp in self.market_data:
+            if dp.symbol == symbol:
+                return dp.change_24h
+        return None
+
+    def get_data_point(self, symbol: str) -> MarketDataPoint | None:
+        """Get full MarketDataPoint for a symbol. Returns None if not found."""
+        for dp in self.market_data:
+            if dp.symbol == symbol:
+                return dp
+        return None
+
+    def get_top_performers(self, n: int = 3) -> list[MarketDataPoint]:
+        """Get top N crypto performers by 24h change (for L2 data injection).
+
+        QO.22: Returns only crypto-type data points sorted by change_24h descending.
+        """
+        crypto_points = [dp for dp in self.market_data if dp.data_type == "crypto"]
+        return sorted(crypto_points, key=lambda dp: dp.change_24h, reverse=True)[:n]
+
+    @property
+    def btc_price(self) -> float | None:
+        """Convenience: BTC price."""
+        return self.get_price("BTC")
+
+    @property
+    def fear_greed(self) -> float | None:
+        """Convenience: Fear & Greed index value."""
+        return self.get_price("Fear&Greed")
+
+
+async def create_price_snapshot(
+    sentinel_prices: list | None = None,
+) -> PriceSnapshot:
+    """QO.27: Collect all market data once and freeze into a PriceSnapshot.
+
+    Called at pipeline start. The returned snapshot should be passed to ALL
+    downstream components instead of them calling collect_market_data() independently.
+
+    QO.41: If sentinel_prices provided, use Sentinel consensus prices as primary
+    source and fill gaps with market_data collector. This unifies prices between
+    the Sentinel dashboard and Daily Report.
+
+    Args:
+        sentinel_prices: Optional list of SentinelPrice objects from sentinel_reader.
+            Each has symbol, price, change_24h attributes.
+    """
+    market_data = await collect_market_data()
+
+    # QO.41: Merge Sentinel consensus prices — Sentinel takes priority
+    if sentinel_prices:
+        sentinel_symbols = set()
+        sentinel_points = []
+        for sp in sentinel_prices:
+            if sp.price > 0:
+                sentinel_symbols.add(sp.symbol)
+                sentinel_points.append(
+                    MarketDataPoint(
+                        symbol=sp.symbol,
+                        price=sp.price,
+                        change_24h=sp.change_24h,
+                        volume_24h=0.0,
+                        market_cap=0.0,
+                        data_type="crypto",
+                        # WHY "sentinel_consensus": Distinguishes from other sources
+                        # for debugging/tracing price origin.
+                        source="sentinel_consensus",
+                    )
+                )
+
+        # WHY: Keep market_data for symbols NOT in Sentinel (macro, indices, etc.)
+        # and for volume/market_cap data (Sentinel may not have these).
+        non_sentinel = [dp for dp in market_data if dp.symbol not in sentinel_symbols]
+        merged = sentinel_points + non_sentinel
+        logger.info(
+            f"QO.41: {len(sentinel_points)} Sentinel consensus prices merged, "
+            f"{len(non_sentinel)} market_data filled gaps"
+        )
+        market_data = merged
+
+    snapshot = PriceSnapshot(
+        market_data=market_data,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+    logger.info(f"PriceSnapshot created: {len(market_data)} data points at {snapshot.timestamp}")
+    return snapshot
 
 
 async def collect_market_data() -> list[MarketDataPoint]:

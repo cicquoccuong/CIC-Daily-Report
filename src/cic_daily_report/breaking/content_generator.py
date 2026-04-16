@@ -18,7 +18,10 @@ except ImportError:
 
 from cic_daily_report.breaking.event_detector import BreakingEvent
 from cic_daily_report.core.logger import get_logger
-from cic_daily_report.generators.article_generator import DISCLAIMER, NQ05_SYSTEM_PROMPT
+from cic_daily_report.generators.article_generator import (
+    DISCLAIMER_SHORT,
+    NQ05_SYSTEM_PROMPT,
+)
 from cic_daily_report.generators.nq05_filter import check_and_fix
 from cic_daily_report.generators.text_utils import truncate_to_limit
 
@@ -42,8 +45,9 @@ Tiêu đề: {title}
 Nguồn: {source}
 {summary_section}</source>
 {market_context}
+{consensus_section}
 {recent_events}
-
+{enrichment_context}
 NHIỆM VỤ: Viết bản tin {word_target} từ, tiếng Việt.
 
 FORMAT (KHÔNG thêm nguồn hay disclaimer — hệ thống tự thêm):
@@ -55,7 +59,7 @@ ai làm gì, **con số** cụ thể, quy mô, timeline. Dùng **bold** cho mọ
 - Đoạn 2 — TẠI SAO QUAN TRỌNG cho CIC (2-3 câu): \
 Nêu hệ quả CỤ THỂ cho nhà đầu tư chiến lược dài hạn. \
 KHÔNG lặp lại thông tin đoạn 1. Nếu không có info mới → viết 1 câu ngắn hoặc bỏ qua.
-
+{historical_instruction}
 CÁCH KẾT THÚC MỖI ĐOẠN:
 - Câu cuối = HỆ QUẢ CỤ THỂ (ai bị ảnh hưởng, bao nhiêu, khi nào)
 - KHÔNG viết câu chung chung kiểu "Điều này cho thấy...", \
@@ -182,6 +186,10 @@ async def generate_breaking_content(
     market_context: str = "",
     recent_events: str = "",
     skip_enrichment: bool = False,
+    consensus_snapshot: str = "",
+    cross_asset_context: str = "",
+    polymarket_shift: str = "",
+    breaking_history: str = "",
 ) -> BreakingContent:
     """Generate breaking news content for a detected event.
 
@@ -193,6 +201,15 @@ async def generate_breaking_content(
         market_context: Brief market snapshot (BTC/ETH price, F&G, DXY).
         recent_events: Recent breaking events for cross-reference.
         skip_enrichment: v0.29.0 (B4) — skip article fetch when LLM is known down.
+        consensus_snapshot: QO.19 — Current market consensus text (from consensus_engine).
+            If empty, the consensus section is omitted from the prompt.
+        cross_asset_context: QO.36 — Cross-asset correlation data (e.g., "BTC dropped
+            while Gold surged — risk-off signal"). Empty string = omitted from prompt.
+        polymarket_shift: QO.36 — Polymarket prediction shift text (e.g., "BTC 100K
+            probability dropped from 65% to 52% in 24h"). Empty = omitted.
+        breaking_history: QO.36 — Recent related events from breaking history for
+            dedup context. Different from recent_events: this is filtered to events
+            related to the SAME topic/asset. Empty = omitted.
 
     Returns:
         BreakingContent with AI-generated content.
@@ -222,14 +239,64 @@ async def generate_breaking_content(
     )
     recent_section = f"\nTin breaking gần đây:\n{recent_events}" if recent_events.strip() else ""
 
+    # QO.19: Consensus snapshot — current market consensus from consensus_engine.
+    # WHY in prompt: gives LLM context to write more relevant "TẠI SAO QUAN TRỌNG"
+    # section by connecting the event to current market sentiment.
+    consensus_section_text = (
+        f"\nĐồng thuận thị trường hiện tại:\n{consensus_snapshot}"
+        if consensus_snapshot.strip()
+        else ""
+    )
+
+    # QO.36: Cross-asset correlation data — helps LLM identify risk-on/risk-off signals.
+    # WHY conditional: only meaningful when actual correlation data exists.
+    cross_asset_section = (
+        f"\nTương quan liên thị trường:\n{cross_asset_context}"
+        if cross_asset_context.strip()
+        else ""
+    )
+
+    # QO.36: Polymarket prediction shift — shows how betting markets reacted.
+    # WHY valuable: prediction markets reflect real-money sentiment shifts,
+    # more reliable than social media sentiment.
+    polymarket_section = (
+        f"\nDịch chuyển thị trường dự đoán:\n{polymarket_shift}" if polymarket_shift.strip() else ""
+    )
+
+    # QO.36: Breaking history for related events — helps LLM avoid repeating
+    # information and provides continuity context.
+    # WHY separate from recent_events: this is filtered to same topic/asset,
+    # while recent_events is a general list of all recent breaking events.
+    history_section = (
+        f"\nLịch sử tin liên quan:\n{breaking_history}" if breaking_history.strip() else ""
+    )
+
+    # Combine QO.36 enrichment into a single block
+    enrichment_text = cross_asset_section + polymarket_section + history_section
+
+    # QO.19: Historical parallel instruction — ask LLM to reference similar past events.
+    # WHY conditional: only include when the event is significant enough (critical/important)
+    # to warrant historical comparison. Notable events are too minor for parallels.
+    historical_instruction_text = ""
+    if severity in ("critical", "important"):
+        historical_instruction_text = (
+            "\n- (Nếu có thể) 1 câu THAM CHIẾU LỊCH SỬ: "
+            "sự kiện tương tự trong quá khứ và BTC/thị trường đã phản ứng thế nào. "
+            "Ví dụ: 'Lần cuối Fed tăng lãi suất 75 bps (06/2022), BTC giảm 15% trong 48h.' "
+            "CHỈ viết khi có sự kiện tương đồng RÕ RÀNG, KHÔNG ép.\n"
+        )
+
     prompt = BREAKING_PROMPT_TEMPLATE.format(
         title=event.title,
         source=event.source,
         url=event.url,
         summary_section=summary_section,
         market_context=market_section,
+        consensus_section=consensus_section_text,
         recent_events=recent_section,
+        enrichment_context=enrichment_text,
         word_target=word_target,
+        historical_instruction=historical_instruction_text,
     )
 
     # v0.29.0 (A4): No longer catch-and-swallow LLM errors.
@@ -265,8 +332,10 @@ async def generate_breaking_content(
 
     # P1.25 + NQ05: Truncate body BEFORE appending suffix to guarantee the
     # mandatory DISCLAIMER is never cut off by the character limit.
+    # QO.07 (VD-36): Breaking news uses short disclaimer — full version takes
+    # 15-20% of a 300-400 word message. Daily articles keep full DISCLAIMER.
     source_html = _format_source_link(event.source, event.url)
-    suffix = f"\n\n🔗 {source_html}" + DISCLAIMER
+    suffix = f"\n\n🔗 {source_html}" + DISCLAIMER_SHORT
     body_limit = BREAKING_MAX_CHARS - len(suffix)
     # BUG-15: Floor at 500 chars — if suffix is extremely long, body_limit
     # could go negative, causing text[:negative] → empty string → content lost.
@@ -291,10 +360,11 @@ async def generate_breaking_content(
 
 def _raw_data_fallback(event: BreakingEvent) -> BreakingContent:
     """Fallback: send raw event data when all LLMs fail."""
+    # QO.07: Raw fallback is also a breaking message → short disclaimer
     content = RAW_DATA_TEMPLATE.format(
         title=event.title,
         source_link=_format_source_link(event.source, event.url),
-        disclaimer=DISCLAIMER,
+        disclaimer=DISCLAIMER_SHORT,
     )
 
     return BreakingContent(
@@ -305,6 +375,191 @@ def _raw_data_fallback(event: BreakingEvent) -> BreakingContent:
         model_used="raw_data",
         image_url=event.image_url,
     )
+
+
+def build_enrichment_context(
+    market_data: list | None = None,
+    prediction_data: object | None = None,
+    dedup_entries: list | None = None,
+    event_title: str = "",
+) -> dict[str, str]:
+    """QO.36: Build enrichment context dict for breaking content generation.
+
+    Assembles cross-asset correlation, Polymarket shift, and related breaking
+    history into text strings that can be passed to generate_breaking_content().
+
+    Args:
+        market_data: List of MarketDataPoint objects from market_data collector.
+        prediction_data: PredictionMarketsData object from prediction_markets collector.
+        dedup_entries: List of DedupEntry objects from dedup_manager (for history).
+        event_title: Current event title (for finding related history).
+
+    Returns:
+        Dict with keys: cross_asset_context, polymarket_shift, breaking_history.
+        Each value is a string (empty if data unavailable).
+
+    WHY helper function: Keeps enrichment logic separate from the generation
+    function. Caller (breaking_pipeline) builds context once and passes to
+    generate_breaking_content() for each event.
+    """
+    result = {
+        "cross_asset_context": "",
+        "polymarket_shift": "",
+        "breaking_history": "",
+    }
+
+    # 1. Cross-asset correlation data
+    if market_data:
+        result["cross_asset_context"] = _build_cross_asset_text(market_data)
+
+    # 2. Polymarket prediction shift
+    if prediction_data:
+        result["polymarket_shift"] = _build_polymarket_shift_text(prediction_data)
+
+    # 3. Related breaking history
+    if dedup_entries and event_title:
+        result["breaking_history"] = _build_related_history(dedup_entries, event_title)
+
+    return result
+
+
+def _build_cross_asset_text(market_data: list) -> str:
+    """QO.36: Build cross-asset correlation text from market data.
+
+    Identifies risk-on/risk-off signals by comparing crypto vs traditional
+    asset movements. E.g., "BTC dropped while Gold surged — risk-off signal."
+
+    WHY: Cross-asset correlation helps LLM write more insightful analysis.
+    """
+    btc_change = 0.0
+    _eth_change = 0.0  # WHY prefixed: reserved for future ETH correlation logic
+    gold_change = 0.0
+    dxy_change = 0.0
+    oil_change = 0.0
+    vix_value = 0.0
+
+    for dp in market_data:
+        symbol = getattr(dp, "symbol", "")
+        change = getattr(dp, "change_24h", 0.0)
+        price = getattr(dp, "price", 0.0)
+        data_type = getattr(dp, "data_type", "")
+        if symbol == "BTC" and data_type == "crypto":
+            btc_change = change
+        elif symbol == "ETH" and data_type == "crypto":
+            _eth_change = change
+        elif symbol == "Gold":
+            gold_change = change
+        elif symbol == "DXY":
+            dxy_change = change
+        elif symbol == "Oil":
+            oil_change = change
+        elif symbol == "VIX":
+            vix_value = price
+
+    parts = []
+
+    # Risk-off signal: BTC down + Gold up
+    if btc_change < -2 and gold_change > 0.5:
+        parts.append(
+            f"BTC giam {btc_change:+.1f}% trong khi Vang tang {gold_change:+.1f}% "
+            "— tin hieu risk-off"
+        )
+    # Risk-on signal: BTC up + Gold down
+    elif btc_change > 2 and gold_change < -0.5:
+        parts.append(
+            f"BTC tang {btc_change:+.1f}% trong khi Vang giam {gold_change:+.1f}% "
+            "— tin hieu risk-on"
+        )
+
+    # Dollar correlation: BTC vs DXY
+    if abs(btc_change) > 2 and abs(dxy_change) > 0.5:
+        if (btc_change > 0 and dxy_change < 0) or (btc_change < 0 and dxy_change > 0):
+            parts.append(
+                f"BTC ({btc_change:+.1f}%) va DXY ({dxy_change:+.1f}%) di nguoc — "
+                "tuong quan am binh thuong"
+            )
+        else:
+            parts.append(
+                f"BTC ({btc_change:+.1f}%) va DXY ({dxy_change:+.1f}%) cung chieu — "
+                "bat thuong, can theo doi"
+            )
+
+    # VIX fear signal
+    if vix_value >= 30:
+        parts.append(f"VIX = {vix_value:.1f} (>= 30) — thi truong truyen thong hoang so")
+
+    # Oil spike
+    if abs(oil_change) > 5:
+        direction = "tang" if oil_change > 0 else "giam"
+        parts.append(f"Dau {direction} {abs(oil_change):.1f}% — anh huong macro")
+
+    return " | ".join(parts) if parts else ""
+
+
+def _build_polymarket_shift_text(prediction_data: object) -> str:
+    """QO.36: Build Polymarket prediction shift text.
+
+    WHY: Polymarket reflects real-money bets — shifts in probabilities
+    signal changes in informed sentiment.
+    """
+    markets = getattr(prediction_data, "markets", [])
+    if not markets:
+        return ""
+
+    parts = []
+    for market in markets[:5]:  # WHY limit 5: avoid prompt bloat
+        question = getattr(market, "question", "")
+        yes_prob = getattr(market, "outcome_yes", 0.0)
+        volume = getattr(market, "volume", 0.0)
+        if question and yes_prob > 0 and volume > 10000:
+            # WHY format: concise for LLM context
+            parts.append(
+                f'"{question[:80]}" — Yes: {yes_prob * 100:.0f}% (vol: ${volume / 1000:.0f}K)'
+            )
+
+    if not parts:
+        return ""
+
+    return "Polymarket: " + " | ".join(parts)
+
+
+def _build_related_history(dedup_entries: list, event_title: str) -> str:
+    """QO.36: Find related events from breaking history.
+
+    WHY: Gives LLM context about what was already reported on this topic,
+    enabling it to write follow-up angles instead of repeating.
+    """
+    title_lower = event_title.lower()
+    # WHY: Extract key entities from title for matching
+    title_words = set(title_lower.split())
+    # Filter to significant words (>3 chars, not common words)
+    _STOP_WORDS = {"the", "and", "for", "that", "with", "from", "this", "have", "been"}
+    key_words = {w for w in title_words if len(w) > 3 and w not in _STOP_WORDS}
+
+    if not key_words:
+        return ""
+
+    related = []
+    for entry in dedup_entries:
+        entry_title = getattr(entry, "title", "").lower()
+        entry_status = getattr(entry, "status", "")
+        # WHY: Only include sent events (skip pending/skipped)
+        if entry_status not in ("sent", "sent_geo_digest"):
+            continue
+
+        # Check word overlap between event title and history entry
+        entry_words = set(entry_title.split())
+        overlap = key_words & entry_words
+        # WHY threshold 2: at least 2 key words must match for relevance
+        if len(overlap) >= 2:
+            detected_at = getattr(entry, "detected_at", "")
+            related.append(f"- [{detected_at}] {getattr(entry, 'title', '')}")
+
+    if not related:
+        return ""
+
+    # WHY limit 3: too much history bloats the prompt without adding value
+    return "\n".join(related[:3])
 
 
 async def generate_digest_content(
@@ -353,16 +608,17 @@ async def generate_digest_content(
 
     # P1.25 + NQ05: Truncate body BEFORE appending suffix to guarantee the
     # mandatory DISCLAIMER is never cut off by the character limit.
+    # QO.07 (VD-36): Digest is breaking news → use short disclaimer.
     links = "\n".join(f"🔗 {_format_source_link(e.source, e.url)}" for e in events if e.url)
-    suffix = f"\n\n{links}" + DISCLAIMER
+    suffix = f"\n\n{links}" + DISCLAIMER_SHORT
     body_limit = BREAKING_MAX_CHARS - len(suffix)
     # BUG-15: Floor at 500 chars — too many event links can make suffix huge,
     # pushing body_limit negative → text[:negative] → empty body → content lost.
     # When this happens, truncate the links list to fit.
     if body_limit < 500:
-        max_link_chars = BREAKING_MAX_CHARS - 500 - len(DISCLAIMER)
+        max_link_chars = BREAKING_MAX_CHARS - 500 - len(DISCLAIMER_SHORT)
         links = links[:max_link_chars].rsplit("\n", 1)[0]  # Cut at last complete link
-        suffix = f"\n\n{links}" + DISCLAIMER
+        suffix = f"\n\n{links}" + DISCLAIMER_SHORT
         body_limit = BREAKING_MAX_CHARS - len(suffix)
     clean_content, was_truncated = truncate_to_limit(clean_content, body_limit)
     if was_truncated:

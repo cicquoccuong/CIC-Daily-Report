@@ -10,7 +10,11 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from cic_daily_report.breaking.event_detector import BreakingEvent
+from cic_daily_report.breaking.event_detector import (
+    VN_REGULATORY_KEYWORDS,
+    BreakingEvent,
+    is_vn_regulatory,
+)
 from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("severity_classifier")
@@ -30,6 +34,102 @@ SEVERITY_EMOJI = {
     IMPORTANT: "\U0001f7e0",  # 🟠
     NOTABLE: "\U0001f7e1",  # 🟡
 }
+
+# QO.11 (VD-37): Severity legend appended to the FIRST breaking message of the day.
+# WHY: Each message has a severity emoji but no explanation — new members may not
+# know what 🔴/🟠/🟡 mean. Sending once per day avoids repetition.
+SEVERITY_LEGEND = (
+    "\n\n📋 *Mức độ tin:* \U0001f534 Nghiêm trọng • \U0001f7e0 Quan trọng • \U0001f7e1 Đáng chú ý"
+)
+
+# QO.11 fix: Legend tracking uses BOTH module-level state (within a process)
+# AND dedup_manager persistence (across processes). GitHub Actions runs the
+# breaking pipeline as a fresh process ~4x/day, so module-level state alone
+# would reset each run, causing legend to fire 4x/day instead of 1x.
+# The dedup_manager writes a synthetic "SEVERITY_LEGEND" entry to BREAKING_LOG
+# sheet, which persists across process restarts.
+_legend_last_sent_date: datetime | None = None
+
+
+def should_send_legend(
+    now: datetime | None = None,
+    dedup_mgr: object | None = None,
+) -> bool:
+    """Check if severity legend should be appended to this message.
+
+    Returns True for the first breaking message of each calendar day (UTC).
+    Uses two layers:
+    1. Module-level date tracker (fast, within single process)
+    2. DedupManager persistence via BREAKING_LOG (across process restarts)
+
+    When dedup_mgr is provided, checks for a synthetic "SEVERITY_LEGEND" entry
+    with today's date. If found, legend was already sent by a previous pipeline run.
+
+    Args:
+        now: Current time. Defaults to now.
+        dedup_mgr: Optional DedupManager instance for cross-process persistence.
+    """
+    global _legend_last_sent_date
+    current = now or datetime.now(timezone.utc)
+    current_date = current.date()
+
+    # Layer 1: Module-level fast check (within same process)
+    if _legend_last_sent_date is not None and _legend_last_sent_date.date() == current_date:
+        return False
+
+    # Layer 2: Cross-process persistence via dedup_manager
+    if dedup_mgr is not None:
+        if _is_legend_in_dedup(dedup_mgr, current_date):
+            # Already sent by a previous pipeline run today — update module state
+            _legend_last_sent_date = current
+            return False
+
+    # First legend of the day — mark it
+    _legend_last_sent_date = current
+    return True
+
+
+def mark_legend_sent(dedup_mgr: object, now: datetime | None = None) -> None:
+    """Record that legend was sent today in dedup_manager for cross-process persistence.
+
+    Writes a synthetic DedupEntry with hash="SEVERITY_LEGEND" so that subsequent
+    pipeline runs (fresh processes) can detect the legend was already sent today.
+
+    Args:
+        dedup_mgr: DedupManager instance to record into.
+        now: Current time. Defaults to now.
+    """
+    from cic_daily_report.breaking.dedup_manager import DedupEntry
+
+    current = now or datetime.now(timezone.utc)
+    entry = DedupEntry(
+        hash=f"SEVERITY_LEGEND_{current.date().isoformat()}",
+        title="SEVERITY_LEGEND",
+        source="system",
+        severity="",
+        detected_at=current.isoformat(),
+        status="sent",
+    )
+    # WHY direct append: DedupManager.check_and_filter() is for real events;
+    # legend is a synthetic marker. Direct append + hash_map update is simpler.
+    dedup_mgr._entries.append(entry)
+    dedup_mgr._hash_map[entry.hash] = entry
+
+
+def _is_legend_in_dedup(dedup_mgr: object, target_date) -> bool:
+    """Check if a SEVERITY_LEGEND entry exists for the given date in dedup_mgr.
+
+    Looks for an entry with hash matching "SEVERITY_LEGEND_{date}" pattern.
+    """
+    target_hash = f"SEVERITY_LEGEND_{target_date.isoformat()}"
+    return target_hash in dedup_mgr._hash_map
+
+
+def reset_legend_tracker() -> None:
+    """Reset legend tracker — for testing only."""
+    global _legend_last_sent_date
+    _legend_last_sent_date = None
+
 
 # Default classification keywords (configurable via CAU_HINH)
 # WHY "ban" removed from CRITICAL (VD-21): Too broad — matches "Binance ban",
@@ -225,7 +325,8 @@ _GEOPOLITICAL_KEYWORDS = {
 def _is_crypto_relevant(title: str) -> bool:
     """Check if event title is relevant to crypto market.
 
-    Returns True if title contains any crypto keyword or geopolitical keyword.
+    Returns True if title contains any crypto keyword, geopolitical keyword,
+    or VN regulatory keyword (QO.17).
     Non-crypto, non-geopolitical events (e.g., sports betting platforms)
     should not trigger breaking alerts for a crypto community.
     """
@@ -233,6 +334,9 @@ def _is_crypto_relevant(title: str) -> bool:
     if any(kw in title_lower for kw in _CRYPTO_RELEVANCE_KEYWORDS):
         return True
     if any(kw in title_lower for kw in _GEOPOLITICAL_KEYWORDS):
+        return True
+    # QO.17: VN regulatory keywords are always crypto-relevant
+    if any(kw in title_lower for kw in VN_REGULATORY_KEYWORDS):
         return True
     return False
 
@@ -322,6 +426,13 @@ def classify_batch(
 def _determine_severity(event: BreakingEvent, config: ClassificationConfig) -> str:
     """Determine severity based on panic_score, keywords, and price movement."""
     title_lower = event.title.lower()
+
+    # QO.17: VN regulatory events → auto CRITICAL (before any other checks).
+    # WHY first: VN regulation directly impacts CIC community, must never be
+    # downgraded by analysis-downgrade or other heuristics.
+    if is_vn_regulatory(event.title):
+        logger.info(f"QO.17: VN regulatory event auto-CRITICAL: '{event.title[:60]}'")
+        return CRITICAL
 
     # Check critical keywords (word-boundary matching to avoid false positives)
     has_critical_keyword = False

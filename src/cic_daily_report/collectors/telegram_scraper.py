@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re as _re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -69,6 +70,50 @@ TIER1_CHANNELS: list[TelegramChannelConfig] = [
     ),
     TelegramChannelConfig("@GreeksLiveTG", "Greeks Live", 1, "EN", "Data", "llm_full"),
 ]
+
+# QO.44: Tier 2 — Major News (7 channels).
+# WHY "keyword" processing: these channels post short factual news that
+# can be classified by keyword extraction, saving LLM quota for Tier 1.
+TIER2_CHANNELS: list[TelegramChannelConfig] = [
+    TelegramChannelConfig("@cointelegraph", "CoinTelegraph", 2, "EN", "News", "keyword"),
+    TelegramChannelConfig(
+        "@binance_announcements", "Binance Announcements", 2, "EN", "News", "keyword"
+    ),
+    TelegramChannelConfig("@WatcherGuru", "Watcher Guru", 2, "EN", "News", "keyword"),
+    TelegramChannelConfig("@CryptoRankNews", "CryptoRank News", 2, "EN", "News", "keyword"),
+    TelegramChannelConfig("@layergg", "Layer.gg", 2, "VN", "News", "keyword"),
+    TelegramChannelConfig("@bitcoin", "Bitcoin", 2, "EN", "News", "keyword"),
+    TelegramChannelConfig("@coffeecryptonews", "Coffee Crypto News", 2, "VN", "News", "keyword"),
+]
+
+# QO.44: Tier 3 — Data & Alerts (16 channels).
+# WHY "regex" processing: these channels post structured data (whale alerts,
+# funding rates, OI changes) that can be parsed with regex patterns.
+TIER3_CHANNELS: list[TelegramChannelConfig] = [
+    TelegramChannelConfig("@whale_alert_io", "Whale Alert", 3, "EN", "Data", "regex"),
+    TelegramChannelConfig(
+        "@cryptoquant_official", "CryptoQuant Official", 3, "EN", "Data", "regex"
+    ),
+    TelegramChannelConfig("@cryptoquant_alert", "CryptoQuant Alert", 3, "EN", "Data", "regex"),
+    TelegramChannelConfig("@FundingRates1", "Funding Rates", 3, "EN", "Data", "regex"),
+    TelegramChannelConfig("@oi_detector", "OI Detector", 3, "EN", "Data", "regex"),
+    TelegramChannelConfig("@bitcoin_price", "Bitcoin Price", 3, "EN", "Data", "regex"),
+    TelegramChannelConfig("@eth_price", "ETH Price", 3, "EN", "Data", "regex"),
+    TelegramChannelConfig("@Database52Hz", "Database 52Hz", 3, "VN", "Data", "regex"),
+    TelegramChannelConfig("@TokenUnlocksAlert", "Token Unlocks Alert", 3, "EN", "Data", "regex"),
+    TelegramChannelConfig("@WhaleFreedomAlert", "Whale Freedom Alert", 3, "EN", "Data", "regex"),
+    TelegramChannelConfig(
+        "@CoinglassOfficialChannel", "Coinglass Official", 3, "EN", "Data", "regex"
+    ),
+    TelegramChannelConfig("@ArkhamIntelligence", "Arkham Intelligence", 3, "EN", "Data", "regex"),
+    TelegramChannelConfig("@MaterialIndicatorsOG", "Material Indicators", 3, "EN", "Data", "regex"),
+    TelegramChannelConfig("@rektcapital", "Rekt Capital", 3, "EN", "Insight", "regex"),
+    TelegramChannelConfig("@DefiLlama", "DefiLlama", 3, "EN", "Data", "regex"),
+    TelegramChannelConfig("@Coinank_Community", "Coinank Community", 3, "EN", "Data", "regex"),
+]
+
+# QO.44: Convenience list of all channels across all tiers (39 total).
+ALL_CHANNELS: list[TelegramChannelConfig] = TIER1_CHANNELS + TIER2_CHANNELS + TIER3_CHANNELS
 
 # Legacy default channels kept for backward compat (unused in P1.5+)
 DEFAULT_CHANNELS = [
@@ -256,6 +301,314 @@ async def _classify_messages_batch(
     return messages
 
 
+# --- QO.44: Tier 2 Keyword Classification ---
+
+# WHY keyword-based: Tier 2 channels post factual news. Keyword extraction
+# is cheaper than LLM calls and sufficient for sentiment + topic detection.
+
+_BULLISH_KEYWORDS = {
+    "surge",
+    "soar",
+    "rally",
+    "breakout",
+    "bullish",
+    "pump",
+    "ath",
+    "all-time high",
+    "accumulation",
+    "buy",
+    "long",
+    "upgrade",
+    "tang",
+    "bung no",
+    "pha dinh",
+    "tich luy",
+}
+_BEARISH_KEYWORDS = {
+    "crash",
+    "dump",
+    "plunge",
+    "bearish",
+    "liquidation",
+    "hack",
+    "exploit",
+    "rug",
+    "sell",
+    "short",
+    "downgrade",
+    "ban",
+    "giam",
+    "sap",
+    "thanh ly",
+    "tan cong",
+}
+
+
+def _classify_by_keywords(messages: list[TelegramMessage]) -> list[TelegramMessage]:
+    """QO.44: Classify Tier 2 messages using keyword matching.
+
+    WHY not LLM: saves Groq quota for Tier 1 classification.
+    Simple positive/negative word count ratio gives adequate sentiment
+    for news-type messages.
+
+    Returns messages with sentiment field populated.
+    """
+    for msg in messages:
+        text_lower = msg.message_text.lower()
+        bull_count = sum(1 for kw in _BULLISH_KEYWORDS if kw in text_lower)
+        bear_count = sum(1 for kw in _BEARISH_KEYWORDS if kw in text_lower)
+
+        if bull_count > bear_count:
+            msg.sentiment = "BULLISH"
+        elif bear_count > bull_count:
+            msg.sentiment = "BEARISH"
+        else:
+            msg.sentiment = "NEUTRAL"
+
+        msg.thesis = f"keyword: bull={bull_count} bear={bear_count}"
+
+    classified = sum(1 for m in messages if m.sentiment)
+    logger.info(f"Tier 2 keyword classification: {classified}/{len(messages)} classified")
+    return messages
+
+
+# --- QO.44: Tier 3 Regex Parsing ---
+
+# WHY regex patterns: Tier 3 channels post structured data (whale transfers,
+# funding rates, OI changes). Regex extracts the data directly without LLM.
+_WHALE_PATTERN = _re.compile(
+    r"(\d[\d,]*)\s+(BTC|ETH|USDT|USDC|XRP)\b.*?(transferred|moved|sent)",
+    _re.IGNORECASE,
+)
+_FUNDING_PATTERN = _re.compile(
+    r"(BTC|ETH)\s+funding.*?([+-]?\d+\.?\d*)%",
+    _re.IGNORECASE,
+)
+_PRICE_PATTERN = _re.compile(
+    r"(BTC|ETH|Bitcoin|Ethereum)\s*[:\s]+\$?([\d,]+\.?\d*)",
+    _re.IGNORECASE,
+)
+_LIQUIDATION_PATTERN = _re.compile(
+    r"\$?([\d,.]+[MBK]?)\s+(liquidat|liq\.)",
+    _re.IGNORECASE,
+)
+
+
+def _parse_structured_data(messages: list[TelegramMessage]) -> list[TelegramMessage]:
+    """QO.44: Parse Tier 3 messages using regex patterns.
+
+    Extracts structured data (amounts, coins, directions) from
+    data/alert channels. Results stored in key_levels and thesis fields.
+
+    WHY not LLM: structured data has predictable formats. Regex is faster,
+    cheaper, and more reliable than LLM for pattern extraction.
+    """
+    for msg in messages:
+        text = msg.message_text
+        parts = []
+
+        # Whale transfers
+        whale_match = _WHALE_PATTERN.search(text)
+        if whale_match:
+            amount = whale_match.group(1)
+            coin = whale_match.group(2).upper()
+            parts.append(f"whale:{coin} {amount}")
+
+        # Funding rates
+        funding_match = _FUNDING_PATTERN.search(text)
+        if funding_match:
+            coin = funding_match.group(1).upper()
+            rate = funding_match.group(2)
+            parts.append(f"funding:{coin} {rate}%")
+            # WHY: extreme funding rates signal sentiment
+            try:
+                rate_val = float(rate)
+                if rate_val > 0.05:
+                    msg.sentiment = "BULLISH"
+                elif rate_val < -0.05:
+                    msg.sentiment = "BEARISH"
+                else:
+                    msg.sentiment = "NEUTRAL"
+            except ValueError:
+                pass
+
+        # Price data
+        price_match = _PRICE_PATTERN.search(text)
+        if price_match:
+            coin = price_match.group(1).upper()
+            if coin in ("BITCOIN",):
+                coin = "BTC"
+            elif coin in ("ETHEREUM",):
+                coin = "ETH"
+            price = price_match.group(2)
+            msg.key_levels = f"{coin} ${price}"
+
+        # Liquidations
+        liq_match = _LIQUIDATION_PATTERN.search(text)
+        if liq_match:
+            amount = liq_match.group(1)
+            parts.append(f"liquidation:${amount}")
+
+        if parts:
+            msg.thesis = "regex:" + " | ".join(parts)
+        if not msg.sentiment:
+            msg.sentiment = "NEUTRAL"
+
+    parsed = sum(1 for m in messages if m.thesis)
+    logger.info(f"Tier 3 regex parsing: {parsed}/{len(messages)} with extracted data")
+    return messages
+
+
+# --- QO.45: Telethon Health Monitoring ---
+
+
+@dataclass
+class ChannelHealthStatus:
+    """QO.45: Health status for a single Telegram channel.
+
+    Tracks consecutive failures and message counts to detect
+    channels that are down or no longer posting.
+    """
+
+    handle: str
+    consecutive_failures: int = 0
+    last_success: str = ""
+    last_failure: str = ""
+    last_message_count: int = 0
+    is_healthy: bool = True
+
+    # WHY threshold 3: transient network errors are common with Telegram.
+    # 3 consecutive failures = ~9h at 3h intervals, strong signal of real issue.
+    FAILURE_THRESHOLD: int = 3
+
+
+class TelethonHealthMonitor:
+    """QO.45: Monitors Telethon channel health and triggers RSS fallback.
+
+    Tracks per-channel scrape results. If a channel fails N consecutive
+    times (default 3), marks it unhealthy and returns it in the
+    unhealthy list for RSS fallback consideration.
+
+    WHY in-memory: Health state resets on pipeline restart, which is
+    acceptable since GitHub Actions runs are ephemeral. For persistent
+    tracking, we'd need to store in Sheets (future enhancement).
+    """
+
+    def __init__(self, failure_threshold: int = 3) -> None:
+        self._statuses: dict[str, ChannelHealthStatus] = {}
+        self._failure_threshold = failure_threshold
+
+    def record_success(self, handle: str, message_count: int) -> None:
+        """Record a successful channel scrape."""
+        status = self._get_or_create(handle)
+        status.consecutive_failures = 0
+        status.last_success = datetime.now(timezone.utc).isoformat()
+        status.last_message_count = message_count
+        status.is_healthy = True
+
+    def record_failure(self, handle: str, reason: str = "") -> None:
+        """Record a failed channel scrape."""
+        status = self._get_or_create(handle)
+        status.consecutive_failures += 1
+        status.last_failure = datetime.now(timezone.utc).isoformat()
+
+        if status.consecutive_failures >= self._failure_threshold:
+            status.is_healthy = False
+            logger.warning(
+                f"Channel {handle} marked UNHEALTHY after "
+                f"{status.consecutive_failures} consecutive failures"
+                f"{f': {reason}' if reason else ''}"
+            )
+
+    def get_unhealthy_channels(self) -> list[ChannelHealthStatus]:
+        """Get list of unhealthy channels (for RSS fallback)."""
+        return [s for s in self._statuses.values() if not s.is_healthy]
+
+    def get_status(self, handle: str) -> ChannelHealthStatus | None:
+        """Get health status for a specific channel."""
+        return self._statuses.get(handle)
+
+    def get_all_statuses(self) -> list[ChannelHealthStatus]:
+        """Get health statuses for all tracked channels."""
+        return list(self._statuses.values())
+
+    def _get_or_create(self, handle: str) -> ChannelHealthStatus:
+        """Get or create a health status entry."""
+        if handle not in self._statuses:
+            self._statuses[handle] = ChannelHealthStatus(handle=handle)
+        return self._statuses[handle]
+
+
+# QO.45: RSS fallback URLs for major channels.
+# WHY: When Telethon scraping fails for a channel, we can try its RSS feed
+# as a degraded alternative (no sentiment, but at least we get headlines).
+RSS_FALLBACK_URLS: dict[str, str] = {
+    "@cointelegraph": "https://cointelegraph.com/rss",
+    "@bitcoin": "https://news.bitcoin.com/feed/",
+    "@WatcherGuru": "https://watcher.guru/news/feed",
+    "@CryptoRankNews": "https://cryptorank.io/news/feed",
+    "@rektcapital": "https://rektcapital.substack.com/feed",
+    "@DefiLlama": "https://defillama.com/feed",
+}
+
+
+async def _rss_fallback_scrape(
+    unhealthy_channels: list[ChannelHealthStatus],
+) -> list[TelegramMessage]:
+    """QO.45: Fetch headlines from RSS feeds for unhealthy channels.
+
+    WHY RSS: degraded but functional alternative when Telethon fails.
+    Returns messages with source = "rss_fallback:{channel}" so downstream
+    can distinguish them from Telethon-sourced messages.
+
+    Only attempts RSS for channels that have a known RSS URL.
+    """
+    messages: list[TelegramMessage] = []
+
+    for status in unhealthy_channels:
+        rss_url = RSS_FALLBACK_URLS.get(status.handle, "")
+        if not rss_url:
+            continue
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(rss_url, follow_redirects=True)
+                resp.raise_for_status()
+
+            # WHY simple parsing: RSS feeds have <title> and <link> tags.
+            # Full XML parsing would be better but adds dependency.
+            # This regex approach handles most RSS/Atom feeds adequately.
+            titles = _re.findall(
+                r"<title><!\[CDATA\[(.*?)\]\]></title>|<title>(.*?)</title>",
+                resp.text,
+            )
+            links = _re.findall(r"<link>(.*?)</link>", resp.text)
+
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            # WHY skip first: first <title> is usually the feed title, not an item
+            for i, title_groups in enumerate(titles[1:6]):  # Max 5 items
+                title = title_groups[0] or title_groups[1]
+                url = links[i + 1] if i + 1 < len(links) else ""
+                messages.append(
+                    TelegramMessage(
+                        channel_name=f"rss_fallback:{status.handle}",
+                        message_text=title,
+                        date=now_str,
+                        message_id=0,
+                        language="EN",
+                        category="News",
+                        url=url,
+                    )
+                )
+
+            if messages:
+                logger.info(f"RSS fallback for {status.handle}: {len(messages)} items")
+        except Exception as e:
+            logger.debug(f"RSS fallback failed for {status.handle}: {e}")
+
+    return messages
+
+
 # --- Telethon Scraping ---
 
 
@@ -276,6 +629,7 @@ async def _scrape_channels(
     api_hash: str,
     session_string: str,
     channels: list[TelegramChannelConfig],
+    health_monitor: TelethonHealthMonitor | None = None,
 ) -> list[TelegramMessage]:
     """Scrape messages from Telegram channels using Telethon async client.
 
@@ -284,6 +638,8 @@ async def _scrape_channels(
 
     WHY async (not telethon.sync): Python 3.14 removed implicit event loop
     creation that telethon.sync relied on. Pure async is future-proof.
+
+    QO.45: health_monitor tracks per-channel success/failure for RSS fallback.
     """
     from telethon import TelegramClient
     from telethon.sessions import StringSession
@@ -307,10 +663,16 @@ async def _scrape_channels(
                     timeout=_CHANNEL_TIMEOUT_SEC,
                 )
                 all_messages.extend(channel_messages)
+                # QO.45: Record success in health monitor
+                if health_monitor:
+                    health_monitor.record_success(ch_config.handle, len(channel_messages))
             except asyncio.TimeoutError:
                 logger.warning(
                     f"Channel {ch_config.handle} timed out after {_CHANNEL_TIMEOUT_SEC}s — skipping"
                 )
+                # QO.45: Record failure in health monitor
+                if health_monitor:
+                    health_monitor.record_failure(ch_config.handle, "timeout")
             except Exception as e:
                 # WHY broad except: one channel failing must not stop others.
                 # Common causes: channel not found, not joined, restricted.
@@ -321,6 +683,9 @@ async def _scrape_channels(
                     )
                 else:
                     logger.warning(f"Channel {ch_config.handle} scrape failed: {e}")
+                # QO.45: Record failure in health monitor
+                if health_monitor:
+                    health_monitor.record_failure(ch_config.handle, str(e))
     finally:
         await client.disconnect()
 
@@ -423,6 +788,7 @@ async def _follow_links(messages: list[TelegramMessage]) -> list[TelegramMessage
 
 async def collect_telegram(
     channels: list[TelegramChannelConfig] | None = None,
+    health_monitor: TelethonHealthMonitor | None = None,
 ) -> list[TelegramMessage]:
     """Collect recent messages from Telegram channels.
 
@@ -430,6 +796,8 @@ async def collect_telegram(
     Falls back gracefully if any are missing.
 
     P1.5: Uses Telethon async client + Groq LLM classification.
+    QO.44: Supports Tier 1 (LLM), Tier 2 (keyword), Tier 3 (regex).
+    QO.45: Health monitoring + RSS fallback for unhealthy channels.
     """
     api_id = os.getenv("TELEGRAM_API_ID", "")
     api_hash = os.getenv("TELEGRAM_API_HASH", "")
@@ -442,27 +810,70 @@ async def collect_telegram(
         )
         return []
 
-    # WHY default to TIER1_CHANNELS: Phase 1 only uses Tier 1.
-    # Tier 2/3 channels will be added in later phases.
-    channels = channels or TIER1_CHANNELS
+    # QO.44: Default to ALL_CHANNELS (39 total: Tier 1+2+3).
+    # WHY ALL_CHANNELS: Phase 2 expands to all 39 channels.
+    channels = channels or ALL_CHANNELS
     logger.info(f"Collecting from {len(channels)} Telegram channels")
 
+    # QO.45: Initialize health monitor if not provided
+    if health_monitor is None:
+        health_monitor = TelethonHealthMonitor()
+
     try:
-        messages = await _scrape_channels(api_id, api_hash, session_string, channels)
+        messages = await _scrape_channels(
+            api_id, api_hash, session_string, channels, health_monitor
+        )
         logger.info(f"Telegram: collected {len(messages)} messages")
 
+        # QO.44: Split messages by tier for tier-specific processing
+        tier1_msgs = [m for m in messages if _get_tier(m.channel_name, channels) == 1]
+        tier2_msgs = [m for m in messages if _get_tier(m.channel_name, channels) == 2]
+        tier3_msgs = [m for m in messages if _get_tier(m.channel_name, channels) == 3]
+
         # P1.21: Follow links BEFORE classification so LLM sees article content
-        if messages:
-            messages = await _follow_links(messages)
+        # WHY only Tier 1: Tier 2/3 don't need enriched context for their processing
+        if tier1_msgs:
+            tier1_msgs = await _follow_links(tier1_msgs)
 
-        # P1.5: Classify messages using Groq LLM
-        if messages:
-            messages = await _classify_messages_batch(messages)
+        # P1.5: Classify Tier 1 messages using Groq LLM
+        if tier1_msgs:
+            tier1_msgs = await _classify_messages_batch(tier1_msgs)
 
-        return messages
+        # QO.44: Classify Tier 2 messages using keyword matching
+        if tier2_msgs:
+            tier2_msgs = _classify_by_keywords(tier2_msgs)
+
+        # QO.44: Parse Tier 3 messages using regex patterns
+        if tier3_msgs:
+            tier3_msgs = _parse_structured_data(tier3_msgs)
+
+        all_processed = tier1_msgs + tier2_msgs + tier3_msgs
+
+        # QO.45: Check for unhealthy channels and try RSS fallback
+        unhealthy = health_monitor.get_unhealthy_channels()
+        if unhealthy:
+            logger.info(f"QO.45: {len(unhealthy)} unhealthy channels, attempting RSS fallback")
+            rss_messages = await _rss_fallback_scrape(unhealthy)
+            if rss_messages:
+                all_processed.extend(rss_messages)
+                logger.info(f"QO.45: RSS fallback added {len(rss_messages)} messages")
+
+        return all_processed
     except Exception as e:
         if "auth" in str(e).lower() or "session" in str(e).lower():
             logger.error(f"TG session expired — manual re-auth needed: {e}")
         else:
             logger.error(f"Telegram scraping failed: {e}")
         return []
+
+
+def _get_tier(channel_name: str, channels: list[TelegramChannelConfig]) -> int:
+    """QO.44: Get tier for a channel by its display name.
+
+    WHY by name not handle: TelegramMessage stores channel_name (display name),
+    not the handle. We match against the config list.
+    """
+    for ch in channels:
+        if ch.name == channel_name:
+            return ch.tier
+    return 1  # WHY default 1: unknown channels get full LLM processing (safest)

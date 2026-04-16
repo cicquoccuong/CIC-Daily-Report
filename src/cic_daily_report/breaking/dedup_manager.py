@@ -1,7 +1,11 @@
 """Alert Dedup & Cooldown Manager (Story 5.4) — prevents duplicate breaking alerts.
 
 Uses hash(title + source) checked against BREAKING_LOG sheet.
-4h TTL cooldown, 7-day auto-cleanup.
+12h TTL cooldown, 7-day auto-cleanup.
+
+QO.30 (Wave 3): COOLDOWN_HOURS, SIMILARITY_THRESHOLD, ENTITY_OVERLAP_THRESHOLD
+now configurable from CAU_HINH via config_loader. Module-level constants kept
+as DEFAULT FALLBACK.
 """
 
 from __future__ import annotations
@@ -18,8 +22,20 @@ from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("dedup_manager")
 
+# QO.30: Constants kept as DEFAULT FALLBACK — actual values read from
+# CAU_HINH at runtime via DedupManager constructor.
 COOLDOWN_HOURS = 12  # WHY: 4h too short with 3h interval → duplicates (VD-02)
 CLEANUP_DAYS = 7
+
+# QO.12: Metric-type dedup keywords for pattern-matching
+# WHY separate: F&G and BTC/ETH price drops repeat frequently in CryptoPanic,
+# causing VD-01 (F&G 4-5x/day) and noisy price updates.
+_FG_KEYWORDS = {"fear & greed", "fear and greed", "f&g", "extreme fear", "extreme greed"}
+_BTC_ETH_DROP_KEYWORDS = {"btc", "bitcoin", "eth", "ethereum"}
+_PRICE_DROP_INDICATORS = {"drop", "crash", "fall", "plunge", "dump", "decline", "tumble", "sink"}
+
+# QO.12: Minimum price delta (%) to re-send BTC/ETH drop alerts
+METRIC_DEDUP_PRICE_DELTA = 5.0
 
 
 @dataclass
@@ -85,6 +101,19 @@ def compute_hash(title: str, source: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+def _extract_percentage(title: str) -> float | None:
+    """Extract first percentage value from a title (e.g., '7.5%' → 7.5).
+
+    QO.12: Used for BTC/ETH price drop delta comparison.
+    Returns None if no percentage found.
+    """
+    match = re.search(r"(\d+(?:\.\d+)?)\s*%", title)
+    if match:
+        return float(match.group(1))
+    return None
+
+
+# QO.30: Module-level defaults — runtime values read from CAU_HINH in DedupManager.
 SIMILARITY_THRESHOLD = 0.70
 ENTITY_OVERLAP_THRESHOLD = 0.60  # v0.28.0: entity-based dedup
 
@@ -94,7 +123,9 @@ _ENTITY_PATTERN = re.compile(
     r"BTC|ETH|SOL|BNB|XRP|ADA|DOGE|AVAX|DOT|MATIC|LINK|UNI|ATOM|LTC|NEAR|APT|ARB|OP|SUI"
     r"|Bitcoin|Ethereum|Solana|Ripple|Cardano|Dogecoin"
     r"|Binance|Coinbase|Kraken|OKX|Bybit|MEXC|Bitget|Kalshi|Robinhood"
+    # QO.13: Expanded regulatory bodies — international + VN-specific
     r"|SEC|CFTC|DOJ|FBI|Fed|ECB|MiCA|FATF"
+    r"|BOJ|PBOC|IMF|ONUS|VASP|SBV|RBI"
     r"|BlackRock|Fidelity|Grayscale|MicroStrategy|Tesla|Tether|Circle"
     r"|Trump|Gensler|Powell|CZ|SBF|Vitalik"
     r"|Nevada|California|Wyoming|Congress|Senate|House"
@@ -102,7 +133,9 @@ _ENTITY_PATTERN = re.compile(
     # for DeFi, stablecoin, geopolitical, security, and institutional news
     r"|Drift|Aave|Compound|Maker|MakerDAO|Lido|Uniswap|Curve|dYdX|GMX|Pendle|Ethena|Morpho|Balancer|Yearn|Frax"
     r"|USDC|USDT|DAI|USDS|USDe|FDUSD|TUSD|BUSD"
+    # QO.13: Expanded country list — key crypto-regulatory jurisdictions
     r"|Canada|China|Japan|Korea|India|Russia|Iran|Israel|UK|Australia|Singapore|Brazil|Vietnam"
+    r"|EU|Turkey|Thailand|Indonesia|Philippines|Argentina|Nigeria|UAE|Switzerland|Germany|France"
     r"|hack|exploit|hacker|attack|bridge|oracle|vulnerability|breach|stolen|drain"
     r"|VanEck|ARK|Franklin|JPMorgan"
     r")\b",
@@ -217,7 +250,11 @@ class DedupManager:
         "pending": 0,
     }
 
-    def __init__(self, existing_entries: list[DedupEntry] | None = None) -> None:
+    def __init__(
+        self,
+        existing_entries: list[DedupEntry] | None = None,
+        config_loader: object | None = None,
+    ) -> None:
         raw = existing_entries or []
         # Dedup by hash — keep entry with most-progressed status (B1)
         best: dict[str, DedupEntry] = {}
@@ -233,6 +270,27 @@ class DedupManager:
         self._entries = list(best.values())
         self._hash_map = best
 
+        # QO.30: Read dedup thresholds from CAU_HINH at runtime.
+        # WHY in __init__: DedupManager is created once per pipeline run, so
+        # config is read once and cached for the entire run (no repeated API calls).
+        self._cooldown_hours = COOLDOWN_HOURS
+        self._similarity_threshold = SIMILARITY_THRESHOLD
+        self._entity_overlap_threshold = ENTITY_OVERLAP_THRESHOLD
+        if config_loader is not None:
+            try:
+                self._cooldown_hours = config_loader.get_setting_int(
+                    "COOLDOWN_HOURS", COOLDOWN_HOURS
+                )
+                self._similarity_threshold = config_loader.get_setting_float(
+                    "SIMILARITY_THRESHOLD", SIMILARITY_THRESHOLD
+                )
+                self._entity_overlap_threshold = config_loader.get_setting_float(
+                    "ENTITY_OVERLAP_THRESHOLD", ENTITY_OVERLAP_THRESHOLD
+                )
+            except Exception as e:
+                # WHY: Never break dedup if config read fails — use module defaults
+                logger.warning(f"Config read failed for dedup thresholds, using defaults: {e}")
+
     @property
     def entries(self) -> list[DedupEntry]:
         return self._entries
@@ -245,6 +303,9 @@ class DedupManager:
 
         v0.30.0: Added URL-based dedup as first check — same URL = same article,
         regardless of title/source differences across runs.
+
+        QO.12: Added metric-type dedup — F&G max 1/day, BTC/ETH drops only on
+        significant delta (>= 5% from last sent value).
 
         Args:
             events: Detected breaking events to check.
@@ -269,16 +330,28 @@ class DedupManager:
                 logger.info(f"Dedup: skipped duplicate event '{event.title}'")
                 continue
 
+            # QO.12: Metric-type dedup — F&G max 1/day, BTC/ETH price drops
+            # only when delta >= 5% from last sent value
+            if self._is_metric_duplicate(event, now):
+                result.duplicates_skipped += 1
+                continue
+
             # Similarity check — catch near-duplicates with different wording
             # Only check against entries within cooldown window
             recent_entries = [e for e in self._entries if not self._is_cooldown_expired(e, now)]
-            if _is_similar_to_recent(event.title, recent_entries):
+            # QO.30: Use instance thresholds from config (not module-level constants)
+            if _is_similar_to_recent(
+                event.title, recent_entries, threshold=self._similarity_threshold
+            ):
                 result.duplicates_skipped += 1
                 logger.info(f"Dedup: skipped similar event '{event.title}'")
                 continue
 
             # v0.28.0: Entity-based dedup — catch same-event with different wording
-            if _is_entity_overlap(event.title, recent_entries):
+            # QO.30: Use instance threshold from config
+            if _is_entity_overlap(
+                event.title, recent_entries, threshold=self._entity_overlap_threshold
+            ):
                 result.duplicates_skipped += 1
                 logger.info(f"Dedup: skipped entity-overlap event '{event.title}'")
                 continue
@@ -301,6 +374,78 @@ class DedupManager:
             f"Dedup: {len(result.new_events)} new, {result.duplicates_skipped} duplicates skipped"
         )
         return result
+
+    def _is_metric_duplicate(self, event: BreakingEvent, now: datetime) -> bool:
+        """QO.12: Metric-type dedup for recurring data-driven events.
+
+        Rules:
+        - F&G (Fear & Greed): Max 1 message per calendar day (UTC).
+          If any F&G event was already sent/pending today, skip.
+        - BTC/ETH price drops: Only send if the percentage in the title
+          differs by >= METRIC_DEDUP_PRICE_DELTA from the last sent value.
+
+        WHY: F&G and BTC/ETH price drops are the noisiest event types
+        (VD-01: F&G repeated 4-5x/day). Normal dedup misses them because
+        each instance has a slightly different title/score.
+        """
+        title_lower = event.title.lower()
+        today = now.date()
+
+        # --- F&G dedup: max 1 per calendar day ---
+        if any(kw in title_lower for kw in _FG_KEYWORDS):
+            for entry in self._entries:
+                if not entry.detected_at:
+                    continue
+                try:
+                    entry_time = datetime.fromisoformat(entry.detected_at)
+                    if entry_time.tzinfo is None:
+                        entry_time = entry_time.replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError):
+                    continue
+                if entry_time.date() != today:
+                    continue
+                entry_lower = entry.title.lower()
+                if any(kw in entry_lower for kw in _FG_KEYWORDS):
+                    logger.info(
+                        f"QO.12: F&G dedup — already sent today, skipping '{event.title[:50]}'"
+                    )
+                    return True
+            return False
+
+        # --- BTC/ETH price drop dedup: only on significant delta ---
+        has_asset = any(kw in title_lower for kw in _BTC_ETH_DROP_KEYWORDS)
+        has_drop = any(kw in title_lower for kw in _PRICE_DROP_INDICATORS)
+        if has_asset and has_drop:
+            new_pct = _extract_percentage(event.title)
+            if new_pct is None:
+                return False  # No percentage found — let normal dedup handle it
+
+            for entry in self._entries:
+                if not entry.detected_at:
+                    continue
+                try:
+                    entry_time = datetime.fromisoformat(entry.detected_at)
+                    if entry_time.tzinfo is None:
+                        entry_time = entry_time.replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError):
+                    continue
+                if entry_time.date() != today:
+                    continue
+                entry_lower = entry.title.lower()
+                entry_has_asset = any(kw in entry_lower for kw in _BTC_ETH_DROP_KEYWORDS)
+                entry_has_drop = any(kw in entry_lower for kw in _PRICE_DROP_INDICATORS)
+                if not (entry_has_asset and entry_has_drop):
+                    continue
+                old_pct = _extract_percentage(entry.title)
+                if old_pct is not None and abs(new_pct - old_pct) < METRIC_DEDUP_PRICE_DELTA:
+                    logger.info(
+                        f"QO.12: BTC/ETH drop dedup — delta {abs(new_pct - old_pct):.1f}% "
+                        f"< {METRIC_DEDUP_PRICE_DELTA}%, skipping '{event.title[:50]}'"
+                    )
+                    return True
+            return False
+
+        return False
 
     def _is_url_duplicate(self, url: str, now: datetime) -> bool:
         """Check if URL matches any entry within 7-day window.
@@ -345,7 +490,10 @@ class DedupManager:
         return not self._is_cooldown_expired(existing, now)
 
     def _is_cooldown_expired(self, entry: DedupEntry, now: datetime) -> bool:
-        """Check if an entry's cooldown has expired."""
+        """Check if an entry's cooldown has expired.
+
+        QO.30: Uses self._cooldown_hours (from config) instead of module constant.
+        """
         if not entry.detected_at:
             return False  # No timestamp — treat as within cooldown
 
@@ -355,7 +503,7 @@ class DedupManager:
             if detected.tzinfo is None:
                 detected = detected.replace(tzinfo=timezone.utc)
             age = now - detected
-            return age >= timedelta(hours=COOLDOWN_HOURS)
+            return age >= timedelta(hours=self._cooldown_hours)
         except (ValueError, TypeError):
             return False  # Can't parse timestamp — treat as within cooldown
 

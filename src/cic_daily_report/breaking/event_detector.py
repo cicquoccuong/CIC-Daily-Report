@@ -63,10 +63,13 @@ CONTEXT_REQUIRED_KEYWORDS = [
 ]
 
 # Combined list for backward compat (DetectionConfig default).
-# WHY order: always-trigger first (crypto + geo), then context-required.
+# WHY order: always-trigger first (crypto + geo + VN regulatory), then context-required.
+# QO.17: VN regulatory keywords included so they also trigger event detection.
 DEFAULT_KEYWORD_TRIGGERS = (
     ALWAYS_TRIGGER_KEYWORDS + GEOPOLITICAL_KEYWORDS + CONTEXT_REQUIRED_KEYWORDS
 )
+# NOTE: VN_REGULATORY_KEYWORDS defined below (after _CRYPTO_CONTEXT_WORDS) are checked
+# separately in _match_keywords to avoid polluting the basic keyword list ordering.
 
 DEFAULT_PANIC_THRESHOLD = 70
 
@@ -159,6 +162,223 @@ _CRYPTO_CONTEXT_WORDS = {
     "hedera",
     "filecoin",
 }
+
+# QO.17: VN regulatory keywords — events matching these get auto CRITICAL severity.
+# WHY separate list: VN crypto regulation directly impacts the CIC community (VN-based).
+# These keywords bypass normal severity scoring because any VN regulatory action
+# on crypto is high-impact for our audience regardless of panic_score.
+VN_REGULATORY_KEYWORDS = [
+    # Vietnamese legal document types
+    "thông tư",
+    "nghị định",
+    "quy định crypto",
+    "cấm giao dịch",
+    # Vietnamese regulatory bodies
+    "bộ tài chính",
+    "ngân hàng nhà nước",
+    # English abbreviations for VN regulatory entities
+    "sbv",  # State Bank of Vietnam
+    "onus",  # VN crypto exchange
+    "vasp",  # Virtual Asset Service Provider (VN regulatory term)
+    # VN-specific regulatory phrases (English)
+    "vietnam crypto ban",
+    "vietnam regulation",
+    "vietnam blockchain",
+    "vietnam digital asset",
+    # Common VN regulatory terms in English news
+    "vietnamese regulation",
+    "vietnam ministry of finance",
+    "state bank of vietnam",
+]
+
+# QO.15: Crypto relevance keywords — reuses severity_classifier._CRYPTO_RELEVANCE_KEYWORDS
+# concept but placed HERE so filtering happens BEFORE severity classification.
+# WHY duplicate: event_detector should be self-contained for early filtering.
+# The severity_classifier keeps its own copy for backward compat.
+_CRYPTO_RELEVANCE_KEYWORDS = {
+    # Assets — tickers
+    "bitcoin",
+    "btc",
+    "ethereum",
+    "eth",
+    "crypto",
+    "blockchain",
+    "solana",
+    "sol",
+    "bnb",
+    "xrp",
+    "cardano",
+    "ada",
+    "doge",
+    "altcoin",
+    "memecoin",
+    "token",
+    "coin",
+    "nft",
+    "web3",
+    "stablecoin",
+    "usdt",
+    "usdc",
+    "defi",
+    # Assets — project names
+    "ripple",
+    "dogecoin",
+    "avalanche",
+    "avax",
+    "polkadot",
+    "dot",
+    "polygon",
+    "matic",
+    "chainlink",
+    "link",
+    "litecoin",
+    "ltc",
+    "uniswap",
+    "cosmos",
+    "toncoin",
+    "ton",
+    "stellar",
+    "xlm",
+    "aptos",
+    "arbitrum",
+    "optimism",
+    "sui",
+    "near",
+    "shib",
+    "tron",
+    "hedera",
+    "filecoin",
+    # Exchanges & infra
+    "binance",
+    "coinbase",
+    "kraken",
+    "okx",
+    "bybit",
+    "exchange",
+    "mining",
+    "miner",
+    "halving",
+    "wallet",
+    "ledger",
+    "trezor",
+    "smart contract",
+    "layer 2",
+    "rollup",
+    "airdrop",
+    # Regulatory
+    "etf",
+    "sec",
+    "cftc",
+    "regulation",
+    "ban",
+    # Security
+    "hack",
+    "exploit",
+    "breach",
+    "vulnerability",
+    "rug pull",
+    "stolen",
+    # Sentiment
+    "fear & greed",
+    "fear and greed",
+    "f&g",
+    "extreme fear",
+    "extreme greed",
+    # Market events
+    "market",
+    "crash",
+    "liquidation",
+    "liquidated",
+    "rally",
+    "pump",
+    "dump",
+    "bull",
+    "bear",
+    "price",
+    "surge",
+    "plunge",
+    "partnership",
+    "acquisition",
+    "lawsuit",
+}
+
+# QO.15: Geopolitical keywords that bypass crypto relevance check.
+# WHY synced with severity_classifier._GEOPOLITICAL_KEYWORDS + event_detector.GEOPOLITICAL_KEYWORDS:
+# Must cover all geo terms that existing code treats as always-trigger.
+_GEOPOLITICAL_RELEVANCE_KEYWORDS = {
+    "war",
+    "attack",
+    "missile",
+    "sanctions",
+    "iran",
+    "escalation",
+    "invasion",
+    "fed",
+    "interest rate",
+    "inflation",
+    "tariff",
+    # From GEOPOLITICAL_KEYWORDS list (event_detector top-level)
+    "blockade",
+    "airstrike",
+    "nuclear",
+    "ceasefire",
+    "oil crisis",
+    "energy crisis",
+    "embargo",
+    "hormuz",
+}
+
+
+def is_crypto_relevant(title: str) -> bool:
+    """Check if event title is relevant to crypto market (QO.15).
+
+    Runs at event_detector level BEFORE severity classification to filter
+    out non-crypto events early (saving LLM scoring quota, etc.).
+
+    Returns True if title contains any crypto keyword, geopolitical keyword,
+    or VN regulatory keyword. Non-crypto, non-geopolitical events (e.g.,
+    sports betting platforms) should not enter the pipeline at all.
+    """
+    title_lower = title.lower()
+    if any(kw in title_lower for kw in _CRYPTO_RELEVANCE_KEYWORDS):
+        return True
+    if any(kw in title_lower for kw in _GEOPOLITICAL_RELEVANCE_KEYWORDS):
+        return True
+    # QO.17: VN regulatory keywords are always relevant
+    if any(kw in title_lower for kw in VN_REGULATORY_KEYWORDS):
+        return True
+    return False
+
+
+def is_vn_regulatory(title: str) -> bool:
+    """Check if event matches VN regulatory keywords (QO.17).
+
+    Used by severity_classifier to auto-assign CRITICAL severity.
+    """
+    title_lower = title.lower()
+    return any(kw in title_lower for kw in VN_REGULATORY_KEYWORDS)
+
+
+def is_geo_event(title: str) -> bool:
+    """Check if event is geopolitical/macro — not crypto-specific (QO.14).
+
+    Returns True if title matches geopolitical keywords but does NOT contain
+    crypto-specific terms. Used by breaking_pipeline to route geo events
+    to digest instead of individual messages.
+
+    WHY separate from is_crypto_relevant: geo events ARE relevant (they
+    affect crypto markets), but they should be GROUPED into digests
+    rather than sent individually to reduce noise.
+    """
+    title_lower = title.lower()
+    # Must match at least one geopolitical keyword
+    has_geo = any(kw in title_lower for kw in _GEOPOLITICAL_RELEVANCE_KEYWORDS)
+    if not has_geo:
+        return False
+    # If it ALSO has crypto-specific keywords, it's a crypto event with geo context
+    # — treat as crypto, not geo. E.g., "Fed rate cut boosts Bitcoin" → crypto event.
+    has_crypto = any(kw in title_lower for kw in _CRYPTO_RELEVANCE_KEYWORDS)
+    return not has_crypto
 
 
 @dataclass
@@ -281,6 +501,12 @@ def _evaluate_items(
         votes = item.get("votes", {})
         panic_score = _calculate_panic_score(votes)
 
+        # QO.15: Early crypto relevance filter — skip non-crypto events BEFORE
+        # any scoring/keyword matching. Saves processing for irrelevant items.
+        if not is_crypto_relevant(title):
+            logger.debug(f"Skipping non-crypto event at detector level: '{title[:60]}'")
+            continue
+
         # Check panic_score threshold
         score_triggered = panic_score >= config.panic_threshold
 
@@ -343,6 +569,8 @@ def _match_keywords(title: str, keywords: list[str]) -> list[str]:
     v0.29.0: Context-aware — CONTEXT_REQUIRED keywords only match when
     the title also contains a crypto-related word (prevents "plane crash"
     triggering breaking alerts for a crypto community).
+
+    QO.17: Also checks VN_REGULATORY_KEYWORDS (always-trigger).
     """
     title_lower = title.lower()
     title_words = set(title_lower.split())
@@ -375,4 +603,12 @@ def _match_keywords(title: str, keywords: list[str]) -> list[str]:
         elif has_crypto_context:
             matched.append(kw)
         # else: skip — generic keyword without crypto context
+
+    # QO.17: VN regulatory keywords — always trigger, checked separately
+    # to avoid requiring them in the caller's keyword list.
+    for kw in VN_REGULATORY_KEYWORDS:
+        kw_lower = kw.lower()
+        if kw_lower in title_lower and kw not in matched:
+            matched.append(kw)
+
     return matched

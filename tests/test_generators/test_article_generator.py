@@ -858,3 +858,89 @@ class TestConsensusDataInTierArticles:
         call_args = mock_llm.generate.call_args
         prompt = call_args.kwargs.get("prompt", call_args[1].get("prompt", ""))
         assert "EXPERT CONSENSUS" not in prompt
+
+
+class TestQO25VietnameseGlossary:
+    """QO.25: Vietnamese glossary injected into NQ05_SYSTEM_PROMPT."""
+
+    def test_glossary_section_present(self):
+        """NQ05_SYSTEM_PROMPT must contain the glossary header."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "THUẬT NGỮ TIẾNG VIỆT" in NQ05_SYSTEM_PROMPT
+
+    def test_market_cap_translated(self):
+        """Market Cap → Vốn hóa."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "Vốn hóa" in NQ05_SYSTEM_PROMPT
+
+    def test_resistance_kept_vietnamese(self):
+        """Resistance → Kháng cự (per feedback_keep_technical_terms.md)."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "Kháng cự" in NQ05_SYSTEM_PROMPT
+
+    def test_support_kept_vietnamese(self):
+        """Support → Hỗ trợ (per feedback_keep_technical_terms.md)."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "Hỗ trợ" in NQ05_SYSTEM_PROMPT
+
+    def test_volume_translated(self):
+        """Volume → Khối lượng."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "Khối lượng" in NQ05_SYSTEM_PROMPT
+
+    def test_whale_translated(self):
+        """Whale → Cá voi."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "Cá voi" in NQ05_SYSTEM_PROMPT
+
+    def test_bull_bear_translated(self):
+        """Bull/Bear → Tăng giá/Giảm giá."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "Tăng giá" in NQ05_SYSTEM_PROMPT
+        assert "Giảm giá" in NQ05_SYSTEM_PROMPT
+
+    def test_volatility_translated(self):
+        """Volatility → Biến động."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "Biến động" in NQ05_SYSTEM_PROMPT
+
+    def test_liquidation_translated(self):
+        """Liquidation → Thanh lý."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "Thanh lý" in NQ05_SYSTEM_PROMPT
+
+    def test_leverage_translated(self):
+        """Leverage → Đòn bẩy."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "Đòn bẩy" in NQ05_SYSTEM_PROMPT
+
+    def test_funding_rate_translated(self):
+        """Funding Rate → Phí tài trợ."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "Phí tài trợ" in NQ05_SYSTEM_PROMPT
+
+    def test_keeps_english_terms(self):
+        """Altcoin, DeFi, Stablecoin, Halving kept in English."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "Altcoin" in NQ05_SYSTEM_PROMPT
+        assert "DeFi" in NQ05_SYSTEM_PROMPT
+        assert "Stablecoin" in NQ05_SYSTEM_PROMPT
+        assert "Halving" in NQ05_SYSTEM_PROMPT
+
+    def test_glossary_is_mandatory_instruction(self):
+        """Glossary section uses BẮT BUỘC to enforce compliance."""
+        from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+
+        assert "BẮT BUỘC" in NQ05_SYSTEM_PROMPT

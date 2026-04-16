@@ -126,10 +126,13 @@ class TestFullBreakingFlow:
         assert classified.delivery_action == "deferred_to_morning"
 
     async def test_content_has_nq05_disclaimer(self):
-        """All generated content includes NQ05 disclaimer."""
+        """All generated content includes NQ05 disclaimer.
+        QO.07: Breaking now uses short disclaimer (DYOR) instead of full.
+        """
         llm = _mock_llm()
         content = await generate_breaking_content(_event(), llm)
-        assert "Tuyên bố miễn trừ trách nhiệm" in content.content
+        assert "Tuyên bố miễn trừ" in content.content
+        assert "DYOR" in content.content
 
     async def test_llm_failure_propagates(self):
         """v0.29.0 (A4): LLM errors propagate to caller instead of raw fallback."""
@@ -330,7 +333,9 @@ class TestPhase2Helpers:
     """Phase 2: Market snapshot and recent events formatting helpers."""
 
     def test_format_market_snapshot(self):
-        """Market data → formatted string with BTC, ETH, F&G, DXY."""
+        """Market data → formatted string with BTC, ETH, F&G, DXY.
+        QO.09: DXY included when has_macro_event=True or abs(change) >= 0.5.
+        """
         from cic_daily_report.breaking_pipeline import _format_market_snapshot
 
         market_data = [
@@ -364,7 +369,7 @@ class TestPhase2Helpers:
             MarketDataPoint(
                 symbol="DXY",
                 price=99.8,
-                change_24h=-0.3,
+                change_24h=-0.7,  # QO.09: abs >= 0.5 → DXY included
                 volume_24h=0,
                 market_cap=0,
                 data_type="index",

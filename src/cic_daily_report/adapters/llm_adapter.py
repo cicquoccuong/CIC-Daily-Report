@@ -120,7 +120,11 @@ def _build_providers() -> list[LLMProvider]:
     """
     providers: list[LLMProvider] = []
 
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    # P1.18: Prefer DR-specific key for independent rate limits and billing
+    # between CIC-Sentinel (GAS) and CIC-Daily-Report (Python).
+    # WHY separate keys: a single shared key means quota exhaustion in one
+    # project breaks the other. DR key isolates usage; falls back to shared.
+    gemini_key = os.getenv("GEMINI_API_KEY_DR") or os.getenv("GEMINI_API_KEY", "")
     if gemini_key:
         # v0.30.0: Both Gemini models share 15 RPM total on same API key.
         # Use shared rate limiter group "gemini" with 7 RPM each (14 max combined,
@@ -235,7 +239,8 @@ class LLMAdapter:
 
         if not self._providers:
             raise LLMError(
-                "No LLM providers available — set GROQ_API_KEY or GEMINI_API_KEY",
+                "No LLM providers available — set GROQ_API_KEY"
+                " or GEMINI_API_KEY_DR (or GEMINI_API_KEY)",
                 source="llm_adapter",
             )
 

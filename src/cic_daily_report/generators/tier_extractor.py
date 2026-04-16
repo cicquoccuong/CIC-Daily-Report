@@ -4,6 +4,11 @@ Each tier gets a focused extraction from the single Master Analysis,
 maintaining consistency while adapting content to the target audience.
 
 Sequential extraction with cooldowns to respect 7 RPM rate limits.
+
+QO.21: Cross-tier overlap check after extraction.
+QO.22: L2 force data injection (BTC price, F&G, top altcoins).
+QO.23: Research vs L5 scope separation.
+QO.26: Consensus display enforcement for Summary + L3+.
 """
 
 from __future__ import annotations
@@ -23,6 +28,9 @@ from cic_daily_report.generators.article_generator import (
 from cic_daily_report.generators.master_analysis import MasterAnalysis
 
 logger = get_logger("tier_extractor")
+
+# QO.22: Minimum number of specific data points (numbers) required in L2 output.
+L2_MIN_DATA_POINTS = 3
 
 # WHY 120s: Gemini 2.5 Flash has 7 RPM limit — if we hit 429, wait 2 full minutes
 # to let the per-minute window reset before retrying.
@@ -185,17 +193,179 @@ EXTRACTION_CONFIGS: dict[str, ExtractionConfig] = {
 }
 
 
+def _count_numbers_in_text(text: str) -> int:
+    """QO.22: Count specific data points (numbers) in generated text.
+
+    Counts occurrences of:
+    - Percentages: 3.2%, +5.1%
+    - Dollar amounts: $87,500
+    - Plain numbers with context: 45 (F&G), 56.8% (Dominance)
+    - Abbreviated numbers: 2.8T, 45.2B, 200K
+    """
+    patterns = [
+        r"\d+[.,]\d+%",  # percentages
+        r"\$[\d,.]+\d",  # dollar amounts
+        r"\d+[.,]?\d*[KMBTkmbt]\b",  # abbreviated numbers
+        r"(?:F&G|Fear\s*&?\s*Greed|RSI|MVRV|NUPL)\s*[=:]\s*\d+",  # metrics with values
+    ]
+    count = 0
+    for pattern in patterns:
+        count += len(re.findall(pattern, text))
+    return count
+
+
+def build_l2_data_injection(price_snapshot: object | None = None) -> str:
+    """QO.22: Build mandatory data injection string for L2 extraction.
+
+    Injects key data into L2 prompt so the output contains specific numbers:
+    - BTC current price + 24h change %
+    - Fear & Greed index value + label
+    - Top 3 altcoin performers (% change)
+
+    Args:
+        price_snapshot: PriceSnapshot object (optional, for frozen prices).
+
+    Returns:
+        Formatted injection string to append to L2 prompt.
+    """
+    if price_snapshot is None:
+        return ""
+
+    parts = []
+
+    # BTC price + 24h change
+    btc_price = price_snapshot.get_price("BTC")
+    btc_change = price_snapshot.get_change_24h("BTC")
+    if btc_price is not None:
+        change_str = f" ({btc_change:+.1f}%)" if btc_change is not None else ""
+        parts.append(f"BTC: ${btc_price:,.0f}{change_str}")
+
+    # Fear & Greed
+    fg = price_snapshot.get_price("Fear&Greed")
+    if fg is not None:
+        if fg <= 25:
+            label = "S\u1ee3 h\u00e3i c\u1ef1c \u0111\u1ed9"
+        elif fg <= 45:
+            label = "S\u1ee3 h\u00e3i"
+        elif fg <= 55:
+            label = "Trung t\u00ednh"
+        elif fg <= 75:
+            label = "Tham lam"
+        else:
+            label = "Tham lam c\u1ef1c \u0111\u1ed9"
+        parts.append(f"Fear & Greed: {int(fg)} ({label})")
+
+    # Top 3 altcoin performers
+    top_performers = price_snapshot.get_top_performers(3)
+    if top_performers:
+        alts = []
+        for dp in top_performers:
+            if dp.symbol not in ("BTC", "USDT"):
+                alts.append(f"{dp.symbol} {dp.change_24h:+.1f}%")
+        if alts:
+            parts.append(f"Top altcoins: {', '.join(alts[:3])}")
+
+    if not parts:
+        return ""
+
+    return (
+        "\n\nD\u1eee LI\u1ec6U B\u1eaeT BU\u1ed8C (PH\u1ea2I \u0111\u01b0a v\u00e0o "
+        "b\u00e0i vi\u1ebft):\n" + "\n".join(f"- {p}" for p in parts) + "\n"
+    )
+
+
+def build_l2_retry_instruction(price_snapshot: object | None = None) -> str:
+    """QO.22: Build explicit retry instruction when L2 lacks data points.
+
+    Returns instruction string demanding specific numbers in output.
+    """
+    parts = []
+    if price_snapshot:
+        btc_price = price_snapshot.get_price("BTC")
+        fg = price_snapshot.get_price("Fear&Greed")
+        top = price_snapshot.get_top_performers(3)
+        if btc_price:
+            parts.append(f"BTC gi\u00e1 ${btc_price:,.0f}")
+        if fg:
+            parts.append(f"F&G {int(fg)}")
+        if top:
+            parts.append(f"top altcoin {top[0].symbol} {top[0].change_24h:+.1f}%")
+
+    data_str = ", ".join(parts) if parts else "BTC price, F&G, top altcoin"
+    return (
+        f"\n\nB\u1eaeT BU\u1ed8C bao g\u1ed3m: {data_str}. "
+        "M\u1ed6I s\u1ed1 li\u1ec7u PH\u1ea2I xu\u1ea5t hi\u1ec7n trong b\u00e0i "
+        "vi\u1ebft d\u01b0\u1edbi d\u1ea1ng c\u1ee5 th\u1ec3.\n"
+    )
+
+
+def build_consensus_section(consensus_data: list | None = None) -> str:
+    """QO.26: Build a consensus section string for injection into tier output.
+
+    Args:
+        consensus_data: List of MarketConsensus objects from consensus_engine.
+
+    Returns:
+        Formatted consensus section string, or empty string if no data.
+    """
+    if not consensus_data:
+        return ""
+
+    lines = ["\n\n**\u0110\u1ed2NG THU\u1eacN TH\u1eca TR\u01af\u1edcNG**"]
+    for c in consensus_data:
+        if c.asset == "market_overall":
+            # WHY Vietnamese labels: user-facing text must be Vietnamese
+            label_map = {
+                "STRONG_BULLISH": "T\u0102NG M\u1ea0NH",
+                "BULLISH": "T\u0102NG",
+                "NEUTRAL": "TRUNG L\u1eacP",
+                "BEARISH": "GI\u1ea2M",
+                "STRONG_BEARISH": "GI\u1ea2M M\u1ea0NH",
+            }
+            vn_label = label_map.get(c.label, c.label)
+            lines.append(
+                f"Xu h\u01b0\u1edbng chung: **{vn_label}** "
+                f"(score: {c.score:+.2f}, "
+                f"{c.source_count} ngu\u1ed3n)"
+            )
+    if len(lines) <= 1:
+        # No market_overall found, try BTC
+        for c in consensus_data:
+            if c.asset == "BTC":
+                label_map = {
+                    "STRONG_BULLISH": "T\u0102NG M\u1ea0NH",
+                    "BULLISH": "T\u0102NG",
+                    "NEUTRAL": "TRUNG L\u1eacP",
+                    "BEARISH": "GI\u1ea2M",
+                    "STRONG_BEARISH": "GI\u1ea2M M\u1ea0NH",
+                }
+                vn_label = label_map.get(c.label, c.label)
+                lines.append(
+                    f"BTC: **{vn_label}** (score: {c.score:+.2f}, {c.source_count} ngu\u1ed3n)"
+                )
+
+    if len(lines) <= 1:
+        return ""  # No meaningful consensus data
+
+    return "\n".join(lines)
+
+
 async def extract_tier(
     llm: LLMAdapter,
     master: MasterAnalysis,
     config: ExtractionConfig,
     tier_context_str: str = "",
+    price_snapshot: object | None = None,
+    consensus_data: list | None = None,
 ) -> GeneratedArticle:
     """Extract a single tier article from the Master Analysis.
 
     WHY: Each tier gets its own LLM call with focused instructions so the
     extraction adapts depth/language to the target audience while staying
     consistent with the single Master source.
+
+    QO.22: For L2, injects mandatory data points (BTC price, F&G, top altcoins).
+    QO.26: For Summary + L3+, adds consensus display instruction.
     """
     start = time.monotonic()
 
@@ -217,6 +387,22 @@ async def extract_tier(
     if config.format_instructions:
         prompt += f"\n{config.format_instructions}\n"
 
+    # QO.22: L2 mandatory data injection
+    if config.tier == "L2" and price_snapshot is not None:
+        l2_injection = build_l2_data_injection(price_snapshot)
+        if l2_injection:
+            prompt += l2_injection
+
+    # QO.26: Consensus display instruction for Summary + L3+
+    # WHY: Spec says "Summary + L3+ tiers must include ĐỒNG THUẬN section"
+    if config.tier in ("Summary", "L3", "L4", "L5") and consensus_data:
+        prompt += (
+            "\n\nY\u00caU C\u1ea6U B\u1eaeT BU\u1ed8C: "
+            "Bao g\u1ed3m section '\u0110\u1ed2NG THU\u1eacN TH\u1eca TR\u01af\u1edcNG' "
+            "v\u1edbi: xu h\u01b0\u1edbng (T\u0102NG/GI\u1ea2M/TRUNG L\u1eacP), "
+            "score, s\u1ed1 ngu\u1ed3n. D\u00f9ng bold cho ti\u00eau \u0111\u1ec1.\n"
+        )
+
     # WHY: LLM sometimes adds meta-commentary before actual content (VD-16).
     prompt += (
         "\n\u0110\u1ecaNH D\u1ea0NG: Vi\u1ebft b\u00e0i ph\u00e2n t\u00edch "
@@ -228,6 +414,17 @@ async def extract_tier(
         "('Tuy\u1ec7t v\u1eddi!', 'D\u01b0\u1edbi \u0111\u00e2y l\u00e0...', "
         "'Ch\u1eafc ch\u1eafn!').\n"
     )
+
+    # QO.23: L5 explicit scope boundary
+    if config.tier == "L5":
+        prompt += (
+            "\nPH\u1ea0M VI L5: B\u00e0i n\u00e0y cover: ph\u00e2n t\u00edch th\u1ecb "
+            "tr\u01b0\u1eddng to\u00e0n di\u1ec7n, price action, sentiment, predictions. "
+            "KH\u00d4NG cover: on-chain deep dive, ph\u00e2n t\u00edch institutional "
+            "(thu\u1ed9c v\u1ec1 b\u00e0i Research ri\u00eang). "
+            "B\u00e0i Research s\u1ebd ph\u00e2n t\u00edch MVRV, NUPL, SOPR, ETF flow, "
+            "KH\u00d4NG l\u1eb7p n\u1ed9i dung \u0111\u00f3 \u1edf \u0111\u00e2y.\n"
+        )
 
     prompt += (
         "\nQUY T\u1eaeC:\n"
@@ -275,6 +472,58 @@ async def extract_tier(
         flags=re.IGNORECASE,
     )
 
+    # QO.22: L2 data validation — retry if < 3 numbers in output
+    if config.tier == "L2" and price_snapshot is not None:
+        num_count = _count_numbers_in_text(content)
+        if num_count < L2_MIN_DATA_POINTS:
+            logger.warning(
+                f"L2 has {num_count} data points (min {L2_MIN_DATA_POINTS}), "
+                f"retrying with explicit instruction"
+            )
+            retry_instruction = build_l2_retry_instruction(price_snapshot)
+            retry_response: LLMResponse = await llm.generate(
+                prompt=prompt + retry_instruction,
+                system_prompt=NQ05_SYSTEM_PROMPT,
+                max_tokens=config.max_tokens,
+                temperature=config.temperature,
+            )
+            retry_content = retry_response.text.strip()
+            retry_content = re.sub(
+                r"^(?:Tuyệt vời!?\s*|Chắc chắn!?\s*|Dưới đây là\s*|"
+                r"Sure!?\s*|Certainly!?\s*).*?\n+",
+                "",
+                retry_content,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            retry_count = _count_numbers_in_text(retry_content)
+            if retry_count > num_count:
+                content = retry_content
+                response = retry_response
+                logger.info(f"L2 retry improved: {num_count} → {retry_count} data points")
+            else:
+                logger.warning(
+                    f"L2 retry did not improve ({retry_count} data points), keeping original"
+                )
+
+    # QO.26: Consensus section enforcement for Summary + L3+
+    # WHY: After generation, check if consensus section exists. If missing, append it.
+    if config.tier in ("Summary", "L3", "L4", "L5") and consensus_data:
+        has_consensus = any(
+            kw in content.lower()
+            for kw in [
+                "\u0111\u1ed3ng thu\u1eadn",  # "đồng thuận"
+                "consensus",
+                "t\u0103ng m\u1ea1nh",  # label keywords
+                "trung l\u1eadp",
+            ]
+        )
+        if not has_consensus:
+            consensus_section = build_consensus_section(consensus_data)
+            if consensus_section:
+                content = content + consensus_section
+                logger.info(f"QO.26: Appended consensus section to {config.tier}")
+
     # Summary does NOT get DISCLAIMER appended — it uses NQ05 post-filter in pipeline
     # Tier articles DO get DISCLAIMER for NQ05 compliance
     if config.tier != "Summary":
@@ -298,12 +547,22 @@ async def extract_all(
     llm: LLMAdapter,
     master: MasterAnalysis,
     tier_contexts: dict[str, str],
+    price_snapshot: object | None = None,
+    consensus_data: list | None = None,
+    config_loader: object | None = None,
 ) -> list[GeneratedArticle]:
     """Extract all tiers + summary from Master Analysis sequentially.
 
     WHY sequential: 7 RPM rate limit on Gemini 2.5 Flash means we cannot
     fire all 6 extractions in parallel — we'd hit 429 immediately.
     Sequential + adaptive cooldown keeps us within limits.
+
+    QO.21: After all tiers extracted, runs cross-tier overlap check.
+    If overlap > 40% for any pair, retries the higher tier with
+    anti-repetition instruction (max 1 retry per tier).
+    QO.22: Passes price_snapshot to L2 for data injection.
+    QO.26: Passes consensus_data for display enforcement.
+    QO.38: Cross-tier check configurable via CROSS_TIER_CHECK_ENABLED in CAU_HINH.
     """
     articles: list[GeneratedArticle] = []
 
@@ -312,7 +571,14 @@ async def extract_all(
 
         for attempt in range(2):
             try:
-                article = await extract_tier(llm, master, config, tier_ctx)
+                article = await extract_tier(
+                    llm,
+                    master,
+                    config,
+                    tier_ctx,
+                    price_snapshot=price_snapshot,
+                    consensus_data=consensus_data,
+                )
                 articles.append(article)
                 logger.info(f"Extracted {config.tier}: {article.word_count} words")
 
@@ -328,6 +594,64 @@ async def extract_all(
                     continue
                 logger.error(f"Extraction failed for {config.tier}: {e}")
                 break
+
+    # QO.21 + QO.38: Cross-tier overlap check after all extractions.
+    # QO.38: Configurable via CROSS_TIER_CHECK_ENABLED in CAU_HINH.
+    from cic_daily_report.generators.quality_gate import is_cross_tier_check_enabled
+
+    tier_articles = [a for a in articles if a.tier.startswith("L")]
+    if len(tier_articles) >= 2 and is_cross_tier_check_enabled(config_loader):
+        from cic_daily_report.generators.quality_gate import check_cross_tier_overlap
+
+        tier_contents = {a.tier: a.content for a in tier_articles}
+        overlap_result = check_cross_tier_overlap(tier_contents)
+
+        if not overlap_result["passed"]:
+            # Retry higher tier in each exceeded pair with anti-repetition instruction
+            for pair_key in overlap_result["exceeded"]:
+                tier_a, tier_b = pair_key.split("\u2194")  # "↔"
+                # Retry the higher tier (tier_b)
+                higher_config = EXTRACTION_CONFIGS.get(tier_b)
+                if higher_config is None:
+                    continue
+
+                # Find the lower tier content for anti-repetition context
+                lower_article = next((a for a in articles if a.tier == tier_a), None)
+                if lower_article is None:
+                    continue
+
+                logger.info(
+                    f"QO.21: Retrying {tier_b} with anti-repetition "
+                    f"(overlap with {tier_a}: "
+                    f"{overlap_result['pairs'].get(pair_key, 0):.0%})"
+                )
+
+                anti_rep_ctx = (
+                    tier_contexts.get(tier_b, "")
+                    + f"\n\n\u26a0\ufe0f ANTI-REPETITION: B\u00e0i {tier_a} \u0111\u00e3 "
+                    f"vi\u1ebft nh\u1eefng n\u1ed9i dung sau. "
+                    f"TUY\u1ec6T \u0110\u1ed0I KH\u00d4NG l\u1eb7p l\u1ea1i:\n"
+                    f"{lower_article.content[:1000]}\n"
+                )
+
+                try:
+                    retry_article = await extract_tier(
+                        llm,
+                        master,
+                        higher_config,
+                        anti_rep_ctx,
+                        price_snapshot=price_snapshot,
+                        consensus_data=consensus_data,
+                    )
+                    # Replace the old article with the retry
+                    articles = [retry_article if a.tier == tier_b else a for a in articles]
+                    logger.info(f"QO.21: {tier_b} retried successfully")
+
+                    cooldown = llm.suggest_cooldown()
+                    if cooldown > 0:
+                        await asyncio.sleep(cooldown)
+                except Exception as e:
+                    logger.warning(f"QO.21: {tier_b} retry failed: {e}")
 
     logger.info(f"Extracted {len(articles)}/{len(EXTRACTION_CONFIGS)} articles from Master")
     return articles

@@ -94,6 +94,21 @@ class NQ05Term:
 
 
 @dataclass
+class SentinelPrice:
+    """QO.41: Consensus price from Sentinel's scoring engine.
+
+    WHY: Sentinel aggregates prices from multiple exchanges (Binance, OKX, etc.)
+    and stores a consensus value. Using this as primary source unifies prices
+    between the Sentinel dashboard and Daily Report.
+    """
+
+    symbol: str
+    price: float
+    change_24h: float
+    source: str = "sentinel"
+
+
+@dataclass
 class SentinelData:
     """Aggregated data from all Sentinel tabs."""
 
@@ -103,6 +118,8 @@ class SentinelData:
     fa_top_movers: list[SentinelFAScore] = field(default_factory=list)
     registry: list[SentinelCoin] = field(default_factory=list)
     nq05_blacklist: list[NQ05Term] = field(default_factory=list)
+    # QO.41: Consensus prices from Sentinel's scoring engine
+    consensus_prices: list[SentinelPrice] = field(default_factory=list)
     read_timestamp: str = ""
     stale_flags: list[str] = field(default_factory=list)
 
@@ -206,6 +223,14 @@ class SentinelReader:
             logger.warning(f"Sentinel NQ05 read failed: {e}")
             stale_flags.append("nq05_error")
 
+        # QO.41: Read consensus prices from scoring engine
+        consensus_prices = []
+        try:
+            consensus_prices = self.read_prices()
+        except Exception as e:
+            logger.warning(f"Sentinel prices read failed: {e}")
+            stale_flags.append("prices_error")
+
         return SentinelData(
             season=season,
             sonicr_btc=sonicr_btc,
@@ -213,6 +238,7 @@ class SentinelReader:
             fa_top_movers=fa_top,
             registry=registry,
             nq05_blacklist=nq05,
+            consensus_prices=consensus_prices,
             read_timestamp=now,
             stale_flags=stale_flags,
         )
@@ -337,6 +363,50 @@ class SentinelReader:
                 )
             )
 
+        return results
+
+    def read_prices(self) -> list[SentinelPrice]:
+        """QO.41: Read consensus prices from 03_SCORING_ENGINE tab.
+
+        WHY: Sentinel's scoring engine has multi-exchange aggregated prices
+        for all tracked assets. Using these as primary source unifies prices
+        across the CIC ecosystem (Sentinel dashboard + Daily Report).
+
+        Looks for columns: SYMBOL, PRICE/GIA, CHANGE_24H/THAY_DOI_24H.
+        Returns empty list if columns not found (graceful degradation).
+        """
+        ss = self._connect()
+        ws = ss.worksheet("03_SCORING_ENGINE")
+        rows = ws.get_all_values()
+
+        if len(rows) < 2:
+            return []
+
+        header = [h.strip().upper() for h in rows[0]]
+        symbol_col = _find_col(header, ("SYMBOL", "MA_COIN"))
+        price_col = _find_col(header, ("PRICE", "GIA", "PRICE_USD"))
+        change_col = _find_col(header, ("CHANGE_24H", "THAY_DOI_24H", "PCT_CHANGE_24H"))
+
+        # WHY: If price column doesn't exist, Sentinel may not have price data yet.
+        # Return empty list instead of failing — caller falls back to market_data.
+        if symbol_col is None or price_col is None:
+            logger.info("Sentinel 03_SCORING_ENGINE missing PRICE column — no consensus prices")
+            return []
+
+        results: list[SentinelPrice] = []
+        for row in rows[1:]:
+            if len(row) <= max(symbol_col, price_col):
+                continue
+            symbol = row[symbol_col].strip().upper()
+            price = _safe_float(row[price_col])
+            if not symbol or price <= 0:
+                continue
+            change = 0.0
+            if change_col is not None and change_col < len(row):
+                change = _safe_float(row[change_col])
+            results.append(SentinelPrice(symbol=symbol, price=price, change_24h=change))
+
+        logger.info(f"Sentinel consensus prices: {len(results)} assets read")
         return results
 
     def read_nq05_blacklist(self) -> list[NQ05Term]:

@@ -1,5 +1,92 @@
 # Changelog
 
+## [Unreleased] - 2026-04-16
+
+### Wave 4 — v2.0 Phase 2 Enhancements (QO.34-48) — 6 collectors moi, breaking enrichment, Sentinel price unification, DR_EXPORT, cic_action_watcher, TG expansion, Telethon fallback
+
+- **QO.34 TradingView ideas**: Thu thap public ideas qua RSS; loc theo coins trong tier; wire vao consensus engine.
+- **QO.35 Augmento social sentiment**: Ket noi HTTPS API; lay Bull/Bear/Neutral ratio cho BTC/ETH/top coins; wire vao L3+ consensus display.
+- **QO.36 Breaking enrichment (mo rong)**: Them cross-asset correlation (BTC vs SPX/Gold/DXY), Polymarket odds snapshot, historical parallel — sau QO.19 da co consensus snapshot.
+- **QO.37 Expanded content**: Tang gioi han bai viet 800→2000 chars; so bai viet 30→50; wire vao article_generator + summary_generator.
+- **QO.38 Cross-tier check configurable**: Nguong chong cheo co the cau hinh qua CAU_HINH thay vi hardcode.
+- **QO.39 Crypto events calendar**: Thu thap lich su kien qua CoinMarketCal RSS; loc theo tier coins; wire vao daily_pipeline.
+- **QO.40 DR_EXPORT tab**: Tab moi trong Google Sheets de Sentinel cross-read du lieu Daily Report; wire vao sheets_client.
+- **QO.41 Sentinel price unification**: Dong bo gia tham chieu voi Sentinel qua DR_EXPORT; tranh sai lech gia giua 2 he thong.
+- **QO.42 cic_action_watcher**: Phat hien thay doi CIC action (BUY/SELL/HOLD change) → tao su kien breaking tu dong.
+- **QO.43 Deribit options data**: Thu thap IV, max pain, put/call ratio tu Deribit API; wire vao research_data + L4/L5.
+- **QO.44 TG channel expansion**: Mo rong theo doi len Tier 2+3 channels; cap nhat danh sach trong CAU_HINH.
+- **QO.45 Telethon monitoring + RSS fallback**: Chuyen telegram_scraper sang Telethon (chinh) + RSS (du phong) khi Telethon unavailable.
+- **QO.46 Token unlock calendar**: Thu thap lich unlock token tu DeFiLlama API; wire vao breaking (unlock lon → su kien) + research.
+- **QO.47 Macro news**: Thu thap tin tuc macro tu GDELT + NewsAPI; loc theo tu khoa kinh te vi mo; wire vao breaking + L4/L5.
+- **QO.48 Headline price validation**: Kiem tra gia trong headline khop voi PriceSnapshot; tu dong chinh neu sai lech >= 1%.
+- File moi: `collectors/tradingview_collector.py`, `collectors/augmento_collector.py`, `collectors/coinmarketcal_collector.py`, `collectors/deribit_collector.py`, `collectors/token_unlock_collector.py`, `collectors/macro_news_collector.py`, `collectors/cic_action_watcher.py`, `storage/dr_exporter.py`
+- Tests: 1894 -> 2139 (+245 tests moi) | Version: 2.0.0-alpha.15
+
+## [Unreleased] - 2026-04-15
+
+### Wave 1+2 Quality Overhaul (QO.12-QO.27) — dedup thong minh, gioi han su kien, NQ05 mo rong, quality gate, data injection, price snapshot
+
+#### Wave 1 — Event Pipeline Refactor (QO.12–QO.19)
+
+- **QO.12 Metric-type daily dedup**: F&G toi da 1 lan/ngay; BTC/ETH chi gui khi bien dong >= 5% so voi lan cuoi.
+- **QO.13 Entity pattern mo rong**: Them 13 quoc gia + 7 to chuc vao bo dedup entity — giam trung lap tin tuc dia chinh tri.
+- **QO.14 Geo event digest + daily cap**: Gop tin cung quoc gia/to chuc thanh 1 digest; toi da 3 geo digest/ngay; severity CRITICAL bypass cap.
+- **QO.15 Crypto relevance check tai event_detector**: Loc som su kien khong lien quan crypto truoc khi vao pipeline — giam nhieu.
+- **QO.16 MAX_EVENTS_PER_DAY = 12**: Ap dat gioi han 12 su kien breaking/ngay de tranh spam.
+- **QO.17 VN regulatory keywords**: 17 tu khoa phap ly Viet Nam tu dong nang len severity CRITICAL (UBCKNN, NHNN, nghi dinh, thong tu...).
+- **QO.18 LLM Impact Scoring (SambaNova)**: Cham diem tac dong 1-10 bang LLM; nguong skip/digest/send co cau hinh. Counter SambaNova duoc luu file de ton tai qua restart.
+- **QO.19 Breaking enrichment**: Them consensus snapshot + historical parallel vao prompt breaking — tang chieu sau phan tich.
+
+#### Wave 2 — LLM Quality Enforcement (QO.20–QO.27)
+
+- **QO.20 Quality Gate BLOCK mode**: Retry 1 lan khi gap vi pham; co the cau hinh LOG/BLOCK/OFF. Wire vao daily_pipeline.
+- **QO.21 Cross-tier overlap check**: Kiem tra chong cheo cau giua cac tier; ty le chong lap >= 40% -> retry voi anti-repetition prompt.
+- **QO.22 L2 force data injection**: Ep toi thieu 3 diem du lieu (gia BTC, F&G, altcoin dau bang) vao L2 neu LLM bo qua.
+- **QO.23 Research vs L5 scope separation**: Ranh gioi ro rang: Research (on-chain/macro dai han) vs L5 (tong hop toan dien); tranh lap chuc nang.
+- **QO.24 NQ05 pattern mo rong**: Them 11 mau tu khoa mua/ban moi bang tieng Viet — tang do bao phu NQ05 filter.
+- **QO.25 Vietnamese glossary trong NQ05_SYSTEM_PROMPT**: 14 cap thuat ngu Anh-Viet de LLM hieu dung khai niem tai chinh VN.
+- **QO.26 Consensus display enforcement**: Section DONG THUAN bat buoc trong Summary va L3+ — hien thi ro ty le dong thuan thi truong.
+- **QO.27 PriceSnapshot freeze**: Thu thap gia 1 lan duy nhat moi pipeline run; tat ca tier dung cung snapshot, khong sai lech.
+- File moi: `breaking/llm_scorer.py`
+- PriceSnapshot wire vao daily_pipeline; Quality Gate BLOCK mode wire vao daily_pipeline.
+- Lint fix: `llm_adapter.py` do dai dong.
+- Tests: 1538 -> 1848 (+310 tests moi) | Version: 2.0.0-alpha.13
+
+#### Wave 3 — Config Externalization (QO.28-QO.33) — 22+ config keys, market/dedup/pipeline/quality thresholds doc len CAU_HINH, season multiplier tu Sentinel
+
+- **QO.28 CAU_HINH seed**: 22+ config keys voi mo ta tieng Viet + gia tri mac dinh doc len Google Sheets tab CAU_HINH.
+- **QO.29 Market trigger thresholds**: Nguong BTC/ETH/F&G/Oil/Gold/VIX/DXY/SPX doc tu CAU_HINH thay vi hardcode.
+- **QO.30 Dedup thresholds**: Cooldown/similarity/entity overlap doc tu CAU_HINH.
+- **QO.31 Pipeline limits**: Max events per run/day, digest threshold, delay doc tu CAU_HINH; `_get_pipeline_limits()` duoc wire vao `_execute_pipeline()` (truoc la dead code).
+- **QO.32 Quality thresholds**: Insight density, master/research token limits, gate mode doc tu CAU_HINH.
+- **QO.33 Season-aware multipliers**: Winter 0.7x (nhanh cam nhan), Summer 1.3x — lay tu CIC Sentinel qua CAU_HINH.
+- Tests: 1848 -> 1894 (+46 tests moi) | Version: 2.0.0-alpha.14
+
+## [Unreleased] - 2026-04-12
+
+### Wave 0 Quality Overhaul (QO.07/08/09/11) — disclaimer ngan, token tang, DXY co dieu kien, legend severity 1 lan/ngay
+
+- **QO.07 DISCLAIMER_SHORT**: Tao disclaimer ngan cho breaking news (thay the disclaimer dai chiem 15-20% tin nhan). Them warning "Rui ro cao." cho tin do nghiem trong. Fix NQ05 filter dung string match thay vi partial.
+- **QO.08 MASTER_MAX_TOKENS**: Tang tu 16384 len 20480 de tranh bi cat ngan phan phan tich master.
+- **QO.09 DXY co dieu kien**: DXY chi hien thi trong breaking khi event lien quan macro hoac bien dong DXY >= 0.5%. Bo sung 27 tu khoa macro (viec lam, ngan hang trung uong, chi so kinh te, chinh sach tai khoa). Fix dead source "market_trigger" -> "market_data".
+- **QO.11 Severity legend 1 lan/ngay**: Them giai thich emoji severity vao tin breaking dau tien trong ngay. Luu trang thai qua dedup_manager BREAKING_LOG (ton tai qua restart GitHub Actions). Ho tro ca path su kien bi hoan.
+- Tests: 1501 -> 1538 (+37 tests moi)
+
+## [Unreleased] - 2026-04-11
+
+### P1.18 — Separate LLM API keys (Sentinel vs Daily Report)
+
+- **GEMINI_API_KEY_DR**: New env var for Daily Report–specific Gemini key, isolates quota/billing
+  from CIC-Sentinel. Falls back to shared `GEMINI_API_KEY` if unset (backward compatible).
+- Updated: `llm_adapter.py`, `error_notifier.py`, `.env.example`, 2 GitHub Actions workflows
+- Tests: +3 new (DR key priority, fallback, DR-only) — total 1501 pass
+
+### P1.21 — TG link following (verified)
+
+- Confirmed complete: 4 modules use trafilatura, 7 tests pass. No changes needed.
+
+### Phase 1c — CLOSED (9/10 tasks done previously, P1.18 final)
+
 ## [Unreleased] - 2026-04-02
 
 ### Docs — Fix stale LLM chain references across 4 doc files

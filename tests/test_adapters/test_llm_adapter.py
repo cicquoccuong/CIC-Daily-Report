@@ -676,3 +676,41 @@ class TestBug02GroqQwenReasoningEffort:
         assert payload.get("reasoning_format") == "hidden"
         assert "thinking" not in payload
         assert "reasoning_effort" not in payload
+
+
+class TestP118SeparateApiKeys:
+    """P1.18: GEMINI_API_KEY_DR takes priority over shared GEMINI_API_KEY.
+
+    WHY: CIC-Sentinel and CIC-Daily-Report share the same Gemini API.
+    Separate keys isolate rate limits and billing between projects.
+    """
+
+    def test_dr_key_takes_priority(self):
+        """When both GEMINI_API_KEY_DR and GEMINI_API_KEY are set, DR key wins."""
+        env = {"GEMINI_API_KEY_DR": "dr-key-123", "GEMINI_API_KEY": "shared-key-456"}
+        with patch.dict("os.environ", env, clear=False):
+            providers = _build_providers()
+        gemini_providers = [p for p in providers if p.name.startswith("gemini")]
+        assert len(gemini_providers) >= 1
+        for p in gemini_providers:
+            assert p.api_key == "dr-key-123"
+
+    def test_fallback_to_shared_key(self):
+        """When only GEMINI_API_KEY is set (no DR key), shared key is used."""
+        env = {"GEMINI_API_KEY": "shared-key-456"}
+        with patch.dict("os.environ", {**env, "GEMINI_API_KEY_DR": ""}, clear=False):
+            providers = _build_providers()
+        gemini_providers = [p for p in providers if p.name.startswith("gemini")]
+        assert len(gemini_providers) >= 1
+        for p in gemini_providers:
+            assert p.api_key == "shared-key-456"
+
+    def test_dr_key_only(self):
+        """When only GEMINI_API_KEY_DR is set (no shared key), DR key works."""
+        env = {"GEMINI_API_KEY_DR": "dr-key-only-789", "GEMINI_API_KEY": ""}
+        with patch.dict("os.environ", env, clear=False):
+            providers = _build_providers()
+        gemini_providers = [p for p in providers if p.name.startswith("gemini")]
+        assert len(gemini_providers) >= 1
+        for p in gemini_providers:
+            assert p.api_key == "dr-key-only-789"

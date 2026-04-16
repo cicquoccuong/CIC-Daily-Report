@@ -370,6 +370,145 @@ class TestMergeBlacklist:
         assert "pump tín hiệu" not in result.content
 
 
+class TestQO24NQ05PatternExpansion:
+    """QO.24: Expanded VN-specific buy/sell recommendation patterns."""
+
+    def test_gia_tang_ty_trong(self):
+        """'gia tang ty trong' (increase allocation) → NQ05 violation."""
+        content = "Nhà đầu tư nên gia tăng tỷ trọng BTC." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "tăng tỷ trọng" not in result.content
+
+    def test_vung_mua_ly_tuong(self):
+        """'vung mua ly tuong' (ideal buy zone) → NQ05 violation."""
+        content = "Đây là vùng mua lý tưởng cho BTC." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "vùng mua lý tưởng" not in result.content
+
+    def test_nen_mua_vao(self):
+        """'nen mua vao' (should buy in) → NQ05 violation."""
+        content = "Nhà đầu tư nên mua vào ở mức giá này." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "nên mua vào" not in result.content
+
+    def test_nen_ban_ra(self):
+        """'nen ban ra' (should sell) → NQ05 violation."""
+        content = "Nhà đầu tư nên bán ra để chốt lời." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "nên bán ra" not in result.content
+
+    def test_co_hoi_tot_de(self):
+        """'co hoi tot de' (good opportunity to) → NQ05 violation."""
+        content = "Đây là cơ hội tốt để mua thêm ETH." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "cơ hội tốt để" not in result.content
+
+    def test_thoi_diem_thich_hop_mua(self):
+        """'thoi diem thich hop' (appropriate time to buy) → NQ05 violation."""
+        content = "Đây là thời điểm thích hợp để mua BTC." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "thời điểm thích hợp" not in result.content
+
+    def test_thoi_diem_thich_hop_tich_luy(self):
+        """'thoi diem thich hop de tich luy' → NQ05 violation."""
+        content = "Thời điểm thích hợp tích lũy altcoin." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "thời điểm thích hợp" not in result.content
+
+    def test_nen_tich_luy(self):
+        """'nen tich luy' (should accumulate) → NQ05 violation."""
+        content = "Nhà đầu tư nên tích lũy BTC dần dần." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "nên tích lũy" not in result.content
+
+    def test_hay_tich_luy(self):
+        """'hay tich luy' (let's accumulate) → NQ05 violation."""
+        content = "Hãy tích lũy thêm ETH trong giai đoạn này." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "Hãy tích lũy" not in result.content
+
+    def test_nen_chot_loi(self):
+        """'nen chot loi' (should take profit) → NQ05 violation."""
+        content = "Nhà đầu tư nên chốt lời khi BTC đạt $100K." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "nên chốt lời" not in result.content
+
+    def test_hay_chot_loi(self):
+        """'hay chot loi' (let's take profit) → NQ05 violation."""
+        content = "Hãy chốt lời một phần danh mục." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "Hãy chốt lời" not in result.content
+
+    def test_vung_gia_tot_de_mua(self):
+        """'vung gia tot de mua' (good price zone to buy) → NQ05 violation."""
+        content = "Đây là vùng giá tốt để mua BTC." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "vùng giá tốt" not in result.content
+
+    def test_vung_gia_tot_de_tich_luy(self):
+        """'vung gia tot de tich luy' → NQ05 violation."""
+        content = "BTC đang ở vùng giá tốt để tích lũy." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "vùng giá tốt" not in result.content
+
+    def test_khong_nen_bo_lo(self):
+        """'khong nen bo lo' (don't miss out — FOMO) → NQ05 violation."""
+        content = "Cơ hội này không nên bỏ lỡ." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "không nên bỏ lỡ" not in result.content
+
+    def test_mua_manh(self):
+        """'mua manh' (strong buy) → NQ05 violation."""
+        content = "Các cá voi đang mua mạnh BTC." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "mua mạnh" not in result.content
+
+    def test_ban_manh(self):
+        """'ban manh' (strong sell) → NQ05 violation."""
+        content = "Nhà đầu tư bán mạnh ETH hôm nay." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "bán mạnh" not in result.content
+
+    def test_khuyen_nghi_mua(self):
+        """'khuyen nghi mua' (recommend buy) → NQ05 violation."""
+        content = "Chúng tôi khuyến nghị mua BTC." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "khuyến nghị mua" not in result.content
+
+    def test_khuyen_nghi_ban(self):
+        """'khuyen nghi ban' (recommend sell) → NQ05 violation."""
+        content = "Phân tích khuyến nghị bán ETH." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "khuyến nghị bán" not in result.content
+
+    def test_clean_content_not_falsely_flagged(self):
+        """Regular market analysis should not be flagged by QO.24 patterns."""
+        content = (
+            "BTC tăng 5% lên $75,000. Khối lượng giao dịch tăng 20%. "
+            "Chỉ số Fear & Greed ở mức 45 (Trung lập)." + DISCLAIMER
+        )
+        result = check_and_fix(content)
+        assert result.violations_found == 0
+
+
 class TestBatchFilter:
     def test_filters_multiple(self):
         contents = [

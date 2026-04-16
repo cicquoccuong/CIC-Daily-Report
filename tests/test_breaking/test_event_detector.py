@@ -111,7 +111,8 @@ class TestMatchKeywords:
 
 class TestEvaluateItems:
     def test_score_triggered(self):
-        items = [_make_item("Event", {"negative": 80, "toxic": 20})]
+        # WHY "Bitcoin event": QO.15 early filter requires crypto-relevant title
+        items = [_make_item("Bitcoin event", {"negative": 80, "toxic": 20})]
         cfg = DetectionConfig(panic_threshold=50)
         events = _evaluate_items(items, cfg)
         assert len(events) == 1
@@ -213,7 +214,8 @@ class TestDetectBreakingEvents:
             assert events == []
 
     async def test_custom_config(self):
-        mock_items = [_make_item("Alert", {"negative": 5, "positive": 5})]
+        # WHY "Bitcoin alert": QO.15 early filter requires crypto-relevant title
+        mock_items = [_make_item("Bitcoin alert", {"negative": 5, "positive": 5})]
         cfg = DetectionConfig(panic_threshold=10, keyword_triggers=["alert"])
         with (
             self._cache_patch,

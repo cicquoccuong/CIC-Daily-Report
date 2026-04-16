@@ -34,6 +34,110 @@ _DEFAULT_CONFIG_SEEDS: list[tuple[str, str, str]] = [
         "TRUE",
         "Bật/tắt email backup khi Telegram thất bại. Giá trị: TRUE hoặc FALSE.",
     ),
+    # ------------------------------------------------------------------
+    # QO.28 (Wave 3): Externalized thresholds — all 22+ keys.
+    # Operators can change these from CAU_HINH Google Sheet without deploy.
+    # Code keeps these values as DEFAULT FALLBACK.
+    # ------------------------------------------------------------------
+    # Market trigger thresholds (QO.29)
+    ("BTC_DROP_THRESHOLD", "-7.0", "Nguong BTC giam (%). Vi du: -7.0 = BTC giam 7% thi canh bao"),
+    (
+        "ETH_DROP_THRESHOLD",
+        "-10.0",
+        "Nguong ETH giam (%). Vi du: -10.0 = ETH giam 10% thi canh bao",
+    ),
+    ("FEAR_GREED_THRESHOLD", "10", "Nguong Fear & Greed Index. Duoi gia tri nay = Extreme Fear"),
+    (
+        "OIL_SPIKE_THRESHOLD",
+        "8.0",
+        "Nguong dau tang (%). Vi du: 8.0 = dau tang 8% thi canh bao",
+    ),
+    (
+        "GOLD_SPIKE_THRESHOLD",
+        "3.0",
+        "Nguong vang tang (%). Vi du: 3.0 = vang tang 3% thi canh bao",
+    ),
+    ("VIX_SPIKE_THRESHOLD", "30", "Nguong VIX (gia tri tuyet doi). VIX >= 30 = lo ngai lon"),
+    (
+        "DXY_SPIKE_THRESHOLD",
+        "2.0",
+        "Nguong DXY tang (%). Vi du: 2.0 = Dollar Index tang 2% thi canh bao",
+    ),
+    (
+        "SPX_DROP_THRESHOLD",
+        "-3.0",
+        "Nguong S&P500 giam (%). Vi du: -3.0 = S&P500 giam 3% thi canh bao",
+    ),
+    # Dedup thresholds (QO.30)
+    (
+        "COOLDOWN_HOURS",
+        "12",
+        "Thoi gian cho giua 2 tin giong nhau (gio). Vi du: 12 = cung 1 tin khong gui lai trong 12h",
+    ),
+    (
+        "SIMILARITY_THRESHOLD",
+        "0.70",
+        "Nguong tuong tu de xac dinh trung lap (0.0-1.0). Vi du: 0.70 = 70% giong = trung lap",
+    ),
+    (
+        "ENTITY_OVERLAP_THRESHOLD",
+        "0.60",
+        "Nguong trung entity (0.0-1.0). Vi du: 0.60 = 60% entity giong = trung lap",
+    ),
+    # Pipeline limits (QO.31)
+    (
+        "MAX_EVENTS_PER_RUN",
+        "3",
+        "So tin toi da moi lan chay breaking pipeline. Vi du: 3",
+    ),
+    (
+        "MAX_EVENTS_PER_DAY",
+        "12",
+        "So tin toi da moi ngay. Vuot qua se gom vao daily digest. Vi du: 12",
+    ),
+    (
+        "DIGEST_THRESHOLD",
+        "3",
+        "So tin de gom digest (khi >= N tin thi gui dang digest). Vi du: 3",
+    ),
+    (
+        "INTER_EVENT_DELAY",
+        "30",
+        "Delay giua cac tin gui qua Telegram (giay). Vi du: 30",
+    ),
+    # Quality thresholds (QO.32)
+    (
+        "INSIGHT_DENSITY_THRESHOLD",
+        "0.30",
+        "Nguong mat do phan tich (0.0-1.0). Bai viet duoi nguong nay se retry. Vi du: 0.30",
+    ),
+    (
+        "MASTER_MAX_TOKENS",
+        "20480",
+        "Token toi da cho Master Analysis. Vi du: 20480",
+    ),
+    (
+        "QUALITY_GATE_MODE",
+        "BLOCK",
+        "Che do kiem tra chat luong: BLOCK (mac dinh, retry khi loi) / LOG / OFF",
+    ),
+    (
+        "CACHE_MAX_AGE",
+        "7200",
+        "Thoi gian cache CryptoPanic (giay). Vi du: 7200 = 2 gio",
+    ),
+    (
+        "DEFAULT_PANIC_THRESHOLD",
+        "70",
+        "Nguong panic score de xac dinh su kien breaking. Vi du: 70",
+    ),
+    ("NIGHT_START", "23", "Gio bat dau che do dem (VN, 24h). Vi du: 23 = 11pm"),
+    ("NIGHT_END", "7", "Gio ket thuc che do dem (VN, 24h). Vi du: 7 = 7am"),
+    (
+        "RESEARCH_MAX_TOKENS",
+        "6144",
+        "Token toi da cho Research article. Vi du: 6144",
+    ),
 ]
 
 # 9-tab schema (QĐ1)

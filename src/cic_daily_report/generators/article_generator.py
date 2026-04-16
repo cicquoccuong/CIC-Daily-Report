@@ -37,6 +37,16 @@ DISCLAIMER = (
     "Hãy tự nghiên cứu (DYOR) trước khi đưa ra quyết định đầu tư."
 )
 
+# QO.07 (VD-36): Short disclaimer for breaking news — full disclaimer takes 15-20%
+# of a 300-400 word breaking message. This 1-line version preserves NQ05 compliance
+# while reducing overhead to ~3-5% of content.
+# WHY "trách nhiệm": nq05_filter.py checks for "Tuyên bố miễn trừ trách nhiệm"
+# — short disclaimer must contain this substring to pass the check.
+# WHY "Rủi ro cao": NQ05 requires explicit risk warning in all user-facing content.
+DISCLAIMER_SHORT = (
+    "\n\n⚠️ *Tuyên bố miễn trừ trách nhiệm: Không phải lời khuyên đầu tư. Rủi ro cao. DYOR.*"
+)
+
 # NQ05 prompt-layer instructions (QĐ4 Layer 1) — v0.26.0: investor-focused + anti-filler
 NQ05_SYSTEM_PROMPT = (
     "VAI TRÒ: Bạn là nhà phân tích thị trường tài sản mã hóa cho cộng đồng CIC "
@@ -61,6 +71,22 @@ NQ05_SYSTEM_PROMPT = (
     "- CHỈ dùng data được cung cấp trong prompt. KHÔNG tự thêm nguồn, con số, vùng giá.\n"
     "- Nếu thiếu dữ liệu → bỏ qua phần đó, KHÔNG viết 'Chưa có dữ liệu'.\n"
     "- KHÔNG cite: Bloomberg, CryptoQuant, TradingView, Santiment, IntoTheBlock.\n\n"
+    # QO.25: Vietnamese glossary — ensures LLM uses Vietnamese financial terms
+    # consistently instead of mixing English. Terms commonly used as-is in VN
+    # crypto community (DeFi, Stablecoin, Halving, Altcoin) are kept in English.
+    "THUẬT NGỮ TIẾNG VIỆT (BẮT BUỘC dùng tiếng Việt thay vì tiếng Anh):\n"
+    "- Market Cap → Vốn hóa\n"
+    "- Resistance → Kháng cự\n"
+    "- Support → Hỗ trợ\n"
+    "- Volume → Khối lượng\n"
+    "- Whale → Cá voi\n"
+    "- Bull/Bullish → Tăng giá\n"
+    "- Bear/Bearish → Giảm giá\n"
+    "- Volatility → Biến động\n"
+    "- Liquidation → Thanh lý\n"
+    "- Leverage → Đòn bẩy\n"
+    "- Funding Rate → Phí tài trợ\n"
+    "- GIỮ NGUYÊN tiếng Anh: Altcoin, DeFi, Stablecoin, Halving\n\n"
 )
 
 TIERS = ["L1", "L2", "L3", "L4", "L5"]

@@ -16,7 +16,7 @@ from cic_daily_report.breaking.content_generator import (
     generate_digest_content,
 )
 from cic_daily_report.breaking.event_detector import BreakingEvent
-from cic_daily_report.generators.article_generator import DISCLAIMER
+from cic_daily_report.generators.article_generator import DISCLAIMER_SHORT
 
 
 @pytest.fixture()
@@ -136,7 +136,7 @@ class TestBreakingDisclaimerPreserved:
         long_text = "Tin quan trong. " * 400  # ~6400 chars
         llm = _mock_llm(long_text)
         result = await generate_breaking_content(_event(), llm)
-        assert DISCLAIMER in result.content
+        assert DISCLAIMER_SHORT in result.content
         assert len(result.content) <= BREAKING_MAX_CHARS
 
     async def test_breaking_content_still_within_limit(self):
@@ -160,7 +160,7 @@ class TestBreakingDisclaimerPreserved:
             for i in range(3)
         ]
         result = await generate_digest_content(events, llm)
-        assert DISCLAIMER in result.content
+        assert DISCLAIMER_SHORT in result.content
         assert len(result.content) <= BREAKING_MAX_CHARS
 
 
@@ -211,7 +211,7 @@ class TestNegativeBodyLimitFloor:
         result = await generate_digest_content(events, llm)
         # Content must NOT be empty and must contain disclaimer
         assert len(result.content) > 100
-        assert DISCLAIMER in result.content
+        assert DISCLAIMER_SHORT in result.content
 
     async def test_digest_links_truncated_when_too_many(self):
         """When links push suffix too long, some links are dropped to fit."""
@@ -229,4 +229,4 @@ class TestNegativeBodyLimitFloor:
         result = await generate_digest_content(events, llm)
         # Result fits within limit and has real body content
         assert "Important digest content." in result.content
-        assert DISCLAIMER in result.content
+        assert DISCLAIMER_SHORT in result.content

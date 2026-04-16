@@ -88,6 +88,18 @@ class ConfigLoader:
         except (ValueError, TypeError):
             return default
 
+    def get_setting_float(self, key: str, default: float = 0.0) -> float:
+        """Get a setting as float.
+
+        QO.28: Added for Wave 3 config externalization — most thresholds
+        are floats (e.g., BTC_DROP_THRESHOLD = -7.0).
+        """
+        value = self.get_setting(key, default)
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
     def get_email_recipients(self) -> list[str]:
         """Read email_recipients from CAU_HINH. Falls back to SMTP_RECIPIENTS env var.
 

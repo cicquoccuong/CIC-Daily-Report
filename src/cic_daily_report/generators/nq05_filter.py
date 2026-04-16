@@ -124,6 +124,21 @@ SEMANTIC_NQ05_PATTERNS = [
     r"cơ hội\s+(?:\w+\s+){0,6}(?:bình quân giá|DCA|mua giá thấp)",
     r"xem\s+đây\s+là\s+cơ hội",
     r"quyết định\s+(?:chiến lược\s+)?(?:tích lũy|chốt lời|mua|bán)",
+    # QO.24: Expanded VN-specific buy/sell recommendation patterns (VD-18)
+    # WHY: LLM output frequently uses these Vietnamese phrases that constitute
+    # implicit investment advice — NQ05 violation even without explicit "nên mua/bán".
+    r"(?:gia|tăng)\s+tăng\s+tỷ\s+trọng",  # "gia tang ty trong" = increase allocation
+    r"vùng\s+mua\s+lý\s+tưởng",  # "vung mua ly tuong" = ideal buy zone
+    r"(?:nên|hãy)\s+(?:mua\s+vào|bán\s+ra)",  # "nen mua vao / nen ban ra"
+    r"cơ\s+hội\s+tốt\s+để",  # "co hoi tot de" = good opportunity to (action)
+    r"thời\s+điểm\s+thích\s+hợp\s+(?:để\s+)?(?:mua|bán|tích lũy|vào lệnh)",
+    r"(?:nên|hãy)\s+tích\s+lũy",  # "nen tich luy" = should accumulate
+    r"(?:nên|hãy)\s+chốt\s+lời",  # "nen chot loi" = should take profit
+    # "vung gia tot de mua/tich luy" = good price zone (to buy)
+    r"vùng\s+giá\s+tốt\s+(?:để\s+)?(?:mua|tích lũy|vào)",
+    r"không\s+nên\s+bỏ\s+lỡ",  # "khong nen bo lo" = don't miss out (FOMO)
+    r"(?:mua|bán)\s+mạnh",  # "mua manh / ban manh" = strong buy/sell
+    r"khuyến\s+nghị\s+(?:mua|bán)",  # "khuyen nghi mua/ban" = recommend buy/sell
 ]
 
 

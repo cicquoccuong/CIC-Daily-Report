@@ -193,6 +193,7 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         format_fred_for_llm,
     )
     from cic_daily_report.collectors.market_data import (
+        PriceSnapshot,
         collect_market_data,
         collect_technical_indicators,
         format_technical_for_llm,
@@ -278,6 +279,17 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
 
     sentinel_future = asyncio.to_thread(SentinelReader().read_all)
 
+    # WHY lazy imports: avoid circular imports — each collector is imported
+    # only when needed, inside the function body.
+    from cic_daily_report.collectors.augmento_collector import collect_augmento_sentiment
+    from cic_daily_report.collectors.crypto_calendar import (
+        collect_crypto_calendar,
+    )
+    from cic_daily_report.collectors.deribit_collector import collect_deribit_options
+    from cic_daily_report.collectors.macro_news_collector import collect_macro_news
+    from cic_daily_report.collectors.token_unlock_collector import collect_token_unlocks
+    from cic_daily_report.collectors.tradingview_collector import collect_tradingview_ideas
+
     results = await asyncio.gather(
         collect_rss(),
         collect_cryptopanic(),
@@ -293,6 +305,13 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         collect_fred_macro(),  # P1.19: FRED macro economic data
         collect_mempool_data(),  # P1.20: Mempool.space BTC network data
         sentinel_future,  # P1.12: Sentinel cross-read
+        # QO.34-QO.47: 6 new collectors wired in review fix
+        collect_tradingview_ideas(),  # QO.34: TradingView ideas
+        collect_augmento_sentiment(),  # QO.35: Augmento social sentiment
+        collect_crypto_calendar(),  # QO.39: CoinMarketCal crypto events
+        collect_token_unlocks(),  # QO.46: token unlock schedule
+        collect_macro_news(),  # QO.47: GDELT + NewsAPI macro headlines
+        collect_deribit_options(),  # QO.43: Deribit options (IV, max pain, P/C ratio)
         return_exceptions=True,
     )
 
@@ -342,10 +361,78 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     if sentinel_data.stale_flags:
         logger.info(f"Sentinel data: stale_flags={sentinel_data.stale_flags}")
 
+    # QO.34: TradingView ideas (list[dict])
+    tradingview_ideas: list[dict] = results[14] if not isinstance(results[14], Exception) else []
+    # QO.35: Augmento social sentiment (dict)
+    augmento_sentiment: dict = results[15] if not isinstance(results[15], Exception) else {}
+    # QO.39: CoinMarketCal crypto events (list[dict])
+    crypto_events: list[dict] = results[16] if not isinstance(results[16], Exception) else []
+    # QO.46: Token unlock events (list[dict])
+    token_unlocks: list[dict] = results[17] if not isinstance(results[17], Exception) else []
+    # QO.47: Macro news headlines (list[dict])
+    macro_headlines: list[dict] = results[18] if not isinstance(results[18], Exception) else []
+    # QO.43: Deribit options data
+    from cic_daily_report.collectors.deribit_collector import DeribitOptionsData
+
+    deribit_data: DeribitOptionsData = (
+        results[19] if not isinstance(results[19], Exception) else DeribitOptionsData()
+    )
+
+    # WHY log: visibility into which new collectors succeeded
+    if tradingview_ideas:
+        logger.info(f"TradingView: {len(tradingview_ideas)} ideas collected")
+    if augmento_sentiment:
+        logger.info(f"Augmento: sentiment for {list(augmento_sentiment.keys())}")
+    if crypto_events:
+        logger.info(f"Crypto calendar: {len(crypto_events)} events collected")
+    if token_unlocks:
+        logger.info(f"Token unlocks: {len(token_unlocks)} events collected")
+    if macro_headlines:
+        logger.info(f"Macro news: {len(macro_headlines)} headlines collected")
+    if deribit_data.options:
+        logger.info(f"Deribit: options data for {[o.currency for o in deribit_data.options]}")
+
     for r in results:
         if isinstance(r, Exception):
             logger.warning(f"Collector error (non-fatal): {r}")
             errors.append(r)
+
+    # QO.27 + QO.41: Freeze prices into a snapshot. Sentinel consensus prices
+    # take priority over market_data collector prices for crypto assets.
+    # WHY: Unifies prices between Sentinel dashboard and Daily Report.
+    sentinel_prices = getattr(sentinel_data, "consensus_prices", []) or []
+    if sentinel_prices:
+        # QO.41: Merge Sentinel consensus prices with market_data
+        sentinel_symbols = {sp.symbol for sp in sentinel_prices}
+        from cic_daily_report.collectors.market_data import MarketDataPoint as _MDP
+
+        sentinel_points = [
+            _MDP(
+                symbol=sp.symbol,
+                price=sp.price,
+                change_24h=sp.change_24h,
+                volume_24h=0.0,
+                market_cap=0.0,
+                data_type="crypto",
+                source="sentinel_consensus",
+            )
+            for sp in sentinel_prices
+            if sp.price > 0
+        ]
+        non_sentinel = [dp for dp in market_data if dp.symbol not in sentinel_symbols]
+        merged_data = sentinel_points + non_sentinel
+        logger.info(
+            f"QO.41: {len(sentinel_points)} Sentinel consensus prices merged, "
+            f"{len(non_sentinel)} market_data filled gaps"
+        )
+        price_snapshot = PriceSnapshot(market_data=merged_data) if merged_data else None
+    else:
+        price_snapshot = PriceSnapshot(market_data=market_data) if market_data else None
+
+    if price_snapshot:
+        logger.info(
+            f"QO.27: PriceSnapshot created with {len(price_snapshot.market_data)} data points"
+        )
 
     # Clean & dedup news (FR11, FR12, FR55)
     all_news = []
@@ -815,6 +902,77 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     # P1.12: Format Sentinel data for LLM context
     sentinel_text = format_sentinel_for_llm(sentinel_data)
 
+    # QO.34-QO.47: Inject new collector data into LLM context.
+    # WHY append to existing text fields: keeps GenerationContext interface stable
+    # while making new data available to LLM prompts.
+
+    # QO.43: Deribit options data → append to onchain_text (derivatives context)
+    deribit_text = deribit_data.format_for_llm()
+    if deribit_text:
+        onchain_text = onchain_text + "\n\n" + deribit_text if onchain_text else deribit_text
+
+    # QO.35: Augmento social sentiment → append to market_text
+    if augmento_sentiment:
+        from cic_daily_report.collectors.augmento_collector import SentimentResult
+
+        _sr = SentimentResult(sentiments={})
+        # Reconstruct SentimentResult from dict for format_for_llm
+        from cic_daily_report.collectors.augmento_collector import AssetSentiment
+
+        for _ticker, _sdata in augmento_sentiment.items():
+            _sr.sentiments[_ticker] = AssetSentiment(
+                asset=_ticker,
+                bullish=_sdata.get("bullish", 0),
+                bearish=_sdata.get("bearish", 0),
+                neutral=_sdata.get("neutral", 0),
+                source_count=_sdata.get("source_count", 0),
+            )
+        _aug_text = _sr.format_for_llm()
+        if _aug_text:
+            market_text = market_text + "\n\n" + _aug_text if market_text else _aug_text
+
+    # QO.34: TradingView ideas → append to news_text
+    if tradingview_ideas:
+        tv_lines = ["=== TRADINGVIEW IDEAS ==="]
+        for idea in tradingview_ideas[:10]:
+            tv_lines.append(f"- {idea.get('title', '')} (by {idea.get('author', 'N/A')})")
+        tv_text = "\n".join(tv_lines)
+        news_text = news_text + "\n\n" + tv_text if news_text else tv_text
+
+    # QO.39: Crypto calendar events → append to economic_events_text
+    if crypto_events:
+        cal_lines = ["=== CRYPTO EVENTS CALENDAR (CoinMarketCal) ==="]
+        for evt in crypto_events[:10]:
+            title = evt.get("title", "") or evt.get("event_title", "")
+            date = evt.get("date", "") or evt.get("event_date", "")
+            cal_lines.append(f"- {title} ({date})")
+        cal_text = "\n".join(cal_lines)
+        economic_events_text = (
+            economic_events_text + "\n\n" + cal_text if economic_events_text else cal_text
+        )
+
+    # QO.46: Token unlocks → append to economic_events_text
+    if token_unlocks:
+        unlock_lines = ["=== TOKEN UNLOCKS (7 NGAY TOI) ==="]
+        for u in token_unlocks[:10]:
+            name = u.get("token_name", "")
+            date = u.get("unlock_date", "")
+            val = u.get("value_usd", 0)
+            pct = u.get("percentage_of_supply", 0)
+            unlock_lines.append(f"- {name}: ${val:,.0f} ({pct:.1f}% supply) on {date}")
+        unlock_text = "\n".join(unlock_lines)
+        economic_events_text = (
+            economic_events_text + "\n\n" + unlock_text if economic_events_text else unlock_text
+        )
+
+    # QO.47: Macro news headlines → append to news_text
+    if macro_headlines:
+        macro_lines = ["=== MACRO NEWS (GDELT/NewsAPI) ==="]
+        for h in macro_headlines[:10]:
+            macro_lines.append(f"- {h.get('title', '')} ({h.get('source', '')})")
+        macro_text = "\n".join(macro_lines)
+        news_text = news_text + "\n\n" + macro_text if news_text else macro_text
+
     context = GenerationContext(
         coin_lists=coin_lists,
         market_data=market_text,
@@ -870,29 +1028,45 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         fallback_to_per_tier = True
         errors.append(e)
 
-    # --- Stage 3: Quality Gate on Master ---
+    # --- Stage 3: Quality Gate on Master (QO.20: BLOCK mode) ---
     if master and not fallback_to_per_tier:
-        from cic_daily_report.generators.quality_gate import run_quality_gate
+        from cic_daily_report.generators.quality_gate import (
+            run_quality_gate_with_retry,
+        )
 
         qg_input_data = {
             "economic_events": economic_events_text,
             "market_data": market_text,
             "key_metrics": key_metrics,
         }
-        qg_result = run_quality_gate(master.content, "Master", qg_input_data)
+        # WHY LOG mode for Master: re-generating a 16K token Master Analysis
+        # just for density improvement is wasteful. Quality gate on individual
+        # tier articles (below) uses the full BLOCK mode with retry.
+        master.content, qg_result = await run_quality_gate_with_retry(
+            master.content, "Master", qg_input_data, regenerate_fn=None, mode="LOG"
+        )
         if not qg_result.passed:
             logger.warning(f"Quality gate on Master: density={qg_result.insight_density:.0%}")
-            # WHY: Don't retry Master for QG failure — proceed with extraction.
-            # QG is LOG-ONLY in Phase 1a, and re-generating a 16K token response
-            # just for density improvement is wasteful.
 
     # --- Stage 4: Tier Extraction ---
     if master and not fallback_to_per_tier:
         logger.info("Stage 4: Tier Extraction from Master")
-        from cic_daily_report.generators.tier_extractor import extract_all
+        from cic_daily_report.generators.tier_extractor import (
+            EXTRACTION_CONFIGS,
+            extract_all,
+            extract_tier,
+        )
 
         try:
-            extracted = await extract_all(llm, master, tier_context)
+            # QO.27: Pass price_snapshot for consistent prices across all tiers
+            # QO.38: Pass config for CROSS_TIER_CHECK_ENABLED toggle
+            extracted = await extract_all(
+                llm,
+                master,
+                tier_context,
+                price_snapshot=price_snapshot,
+                config_loader=locals().get("config"),
+            )
 
             # Separate tier articles from summary
             generated = [a for a in extracted if a.tier.startswith("L")]
@@ -971,12 +1145,18 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
     if len(generated) >= 3:
         _check_cross_tier_repetition(generated)
 
-    # P1.22: Quality Gate — factual consistency + insight density (Phase 1a: LOG-ONLY)
-    # WHY: Detect LLM hallucinations (e.g. "no events" when calendar has data)
-    # and filler articles (low data-backed sentence ratio) BEFORE delivery.
-    # Phase 1a measures and logs only — does NOT block or retry.
+    # QO.20: Quality Gate BLOCK mode — factual consistency + insight density.
+    # WHY: Detect LLM hallucinations and filler articles BEFORE delivery.
+    # BLOCK mode retries generation once on failure, appends warning if still bad.
     if generated:
-        from cic_daily_report.generators.quality_gate import run_quality_gate
+        from cic_daily_report.generators.quality_gate import get_quality_gate_mode as _get_qg_mode
+        from cic_daily_report.generators.quality_gate import (
+            run_quality_gate_with_retry as _run_qg_retry,
+        )
+
+        # WHY: Read mode from config so operator can rollback to LOG via Sheets.
+        # config (ConfigLoader) may not exist if config loading failed earlier.
+        _qg_mode = _get_qg_mode(locals().get("config"))
 
         qg_input_data = {
             "economic_events": economic_events_text,
@@ -984,12 +1164,52 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
             "key_metrics": key_metrics,
         }
         for article in generated:
-            qg_result = run_quality_gate(article.content, article.tier, qg_input_data)
+            # QO.20: Build regenerate closure for BLOCK mode retry.
+            # WHY: Master path uses extract_tier for targeted re-extraction;
+            # fallback path passes None (sends with warning on failure).
+            regen_fn = None
+            if master and not fallback_to_per_tier:
+                _tier_cfg = EXTRACTION_CONFIGS.get(article.tier)
+                if _tier_cfg:
+                    _tier_ctx = tier_context.get(article.tier, "")
+
+                    async def _regen(_cfg=_tier_cfg, _ctx=_tier_ctx):
+                        a = await extract_tier(
+                            llm,
+                            master,
+                            _cfg,
+                            _ctx,
+                            price_snapshot=price_snapshot,
+                        )
+                        return a.content
+
+                    regen_fn = _regen
+
+            article.content, qg_result = await _run_qg_retry(
+                article.content,
+                article.tier,
+                qg_input_data,
+                regenerate_fn=regen_fn,
+                mode=_qg_mode,
+            )
             if not qg_result.passed:
                 logger.warning(
                     f"Quality gate [{article.tier}]: "
                     f"density={qg_result.insight_density:.0%}, "
                     f"issues={qg_result.factual_issues}"
+                )
+
+    # QO.48: Headline price validation — check LLM-generated prices against PriceSnapshot.
+    # WHY: LLM may hallucinate or use stale prices. Advisory warnings help operators spot issues.
+    if generated and price_snapshot:
+        from cic_daily_report.generators.quality_gate import validate_headline_prices
+
+        for article in generated:
+            pv_result = validate_headline_prices(article.content, price_snapshot)
+            if not pv_result.passed:
+                logger.warning(
+                    f"QO.48: Price validation [{article.tier}]: "
+                    f"{pv_result.deviation_count} deviations in {pv_result.checked_count} checks"
                 )
 
     # Generate CIC Market Insight research article (P2-A: BIC Group L1)
@@ -1140,6 +1360,54 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         logger.warning(f"Historical snapshot save timed out after {SHEETS_OP_TIMEOUT}s")
     except Exception as e:
         logger.warning(f"Historical snapshot save failed (non-critical): {e}")
+
+    # QO.40: Export daily summary to DR_EXPORT tab for Sentinel cross-read.
+    # WHY here (after all generation): all data points are finalized.
+    try:
+        from cic_daily_report.storage.dr_exporter import export_daily_summary
+
+        # Extract key data for export
+        _btc_price = 0.0
+        _eth_price = 0.0
+        _fg = 0
+        _sentiment = ""
+        for p in market_data:
+            if p.symbol == "BTC" and p.data_type == "crypto":
+                _btc_price = p.price
+            elif p.symbol == "ETH" and p.data_type == "crypto":
+                _eth_price = p.price
+            elif p.symbol == "Fear&Greed":
+                _fg = int(p.price)
+
+        # Build consensus labels string (e.g., "BTC:BULLISH|ETH:NEUTRAL")
+        _consensus_str = "|".join(f"{c.asset}:{c.label}" for c in consensus_list)
+
+        # Build sentiment from metrics interpretation if available
+        if metrics_interp:
+            _sentiment = metrics_interp.regime.regime
+
+        # Top news summary (first cleaned headline)
+        _top_news = cleaned_news[0].get("title", "")[:200] if cleaned_news else ""
+
+        export_sheets = SheetsClient()
+        await asyncio.wait_for(
+            asyncio.to_thread(
+                export_daily_summary,
+                export_sheets,
+                btc_price=_btc_price,
+                eth_price=_eth_price,
+                fg_index=_fg,
+                market_sentiment=_sentiment,
+                consensus_labels=_consensus_str,
+                top_news_summary=_top_news,
+                articles_generated=len(articles_out),
+            ),
+            timeout=SHEETS_OP_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"DR_EXPORT write timed out after {SHEETS_OP_TIMEOUT}s")
+    except Exception as e:
+        logger.warning(f"DR_EXPORT write failed (non-critical): {e}")
 
     research_wc = research_article.word_count if research_article else 0
 

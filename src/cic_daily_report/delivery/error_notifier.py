@@ -47,7 +47,8 @@ def _sanitize_error(message: str) -> str:
 ERROR_ACTION_MAP: dict[str, str] = {
     "COLLECTOR_ERROR": "Kiểm tra kết nối internet và trạng thái API nguồn dữ liệu.",
     "LLM_ERROR": (
-        "Kiểm tra API key (GROQ_API_KEY / GEMINI_API_KEY) trong GitHub → Settings → Secrets."
+        "Kiểm tra API key (GROQ_API_KEY / GEMINI_API_KEY_DR / GEMINI_API_KEY) "
+        "trong GitHub → Settings → Secrets."
     ),
     "DELIVERY_ERROR": "Kiểm tra TELEGRAM_BOT_TOKEN và TELEGRAM_CHAT_ID trong GitHub Secrets.",
     "STORAGE_ERROR": "Kiểm tra Google Service Account credentials và quyền truy cập Sheets.",

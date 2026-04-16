@@ -22,7 +22,10 @@ from cic_daily_report.generators.template_engine import render_key_metrics_table
 
 logger = get_logger("master_analysis")
 
-MASTER_MAX_TOKENS = 16384
+# QO.32: Kept as DEFAULT FALLBACK — runtime value read from config_loader.
+# QO.08 (VD-19): Increased from 16384 to prevent master analysis truncation.
+# Gemini 2.5 Flash supports 65K output tokens — 20480 provides sufficient headroom.
+MASTER_MAX_TOKENS = 20480
 MASTER_TEMPERATURE = 0.4
 MASTER_MIN_WORDS = 2000
 MASTER_SECTIONS_EXPECTED = 8
@@ -212,16 +215,34 @@ def build_master_context(context: GenerationContext, sentinel_text: str = "") ->
     return "\n\n".join(parts)
 
 
+def _get_master_max_tokens(config_loader: object | None = None) -> int:
+    """QO.32: Read MASTER_MAX_TOKENS from CAU_HINH config at runtime.
+
+    Falls back to module-level constant if config unavailable.
+    """
+    if config_loader is None:
+        return MASTER_MAX_TOKENS
+    try:
+        return config_loader.get_setting_int("MASTER_MAX_TOKENS", MASTER_MAX_TOKENS)
+    except Exception:
+        return MASTER_MAX_TOKENS
+
+
 async def generate_master_analysis(
     llm: LLMAdapter,
     context: GenerationContext,
     sentinel_text: str = "",
+    config_loader: object | None = None,
 ) -> MasterAnalysis:
     """Generate a single comprehensive Master Analysis.
 
+    QO.32: MASTER_MAX_TOKENS read from CAU_HINH via config_loader.
     Raises MasterAnalysisError if response is too short (<MASTER_MIN_WORDS).
     """
     start = time.monotonic()
+
+    # QO.32: Read max_tokens from config at runtime
+    max_tokens = _get_master_max_tokens(config_loader)
 
     master_context = build_master_context(context, sentinel_text=sentinel_text)
     prompt = (
@@ -233,7 +254,7 @@ async def generate_master_analysis(
     response: LLMResponse = await llm.generate(
         prompt=prompt,
         system_prompt=MASTER_SYSTEM_PROMPT,
-        max_tokens=MASTER_MAX_TOKENS,
+        max_tokens=max_tokens,
         temperature=MASTER_TEMPERATURE,
     )
 

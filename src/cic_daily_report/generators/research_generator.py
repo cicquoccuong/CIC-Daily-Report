@@ -27,6 +27,7 @@ from cic_daily_report.generators.text_utils import truncate_to_limit
 
 logger = get_logger("research_generator")
 
+# QO.32: Kept as DEFAULT FALLBACK — runtime value read from config_loader.
 # Research article needs higher token limit for >2500 words
 RESEARCH_MAX_TOKENS = 6144  # VD-13: reduced from 8192 to fit 1-2 TG messages
 RESEARCH_TEMPERATURE = 0.4
@@ -53,6 +54,15 @@ RESEARCH_SYSTEM_PROMPT = (
     "- CHỈ dùng data được cung cấp. KHÔNG tự thêm nguồn, con số, vùng giá.\n"
     "- Nếu thiếu dữ liệu cho một phần → bỏ qua, KHÔNG viết 'Chưa có dữ liệu'.\n"
     "- KHÔNG cite: Bloomberg, CryptoQuant, TradingView, Santiment, IntoTheBlock, Glassnode.\n\n"
+    # QO.23: Explicit scope boundary — Research focuses on deep analysis,
+    # NOT market overview (which belongs to L5).
+    "PHẠM VI BÀI RESEARCH (QUAN TRỌNG):\n"
+    "- Research PHẢI tập trung: on-chain metrics chuyên sâu (MVRV, NUPL, SOPR, Puell), "
+    "institutional flow (ETF), macro analysis, stablecoin dynamics\n"
+    "- Research KHÔNG lặp: tổng quan giá cả, biến động 24h, sentiment cơ bản "
+    "(nội dung này thuộc về bài L5)\n"
+    "- Bài L5 sẽ phân tích price action, sentiment, predictions — "
+    "KHÔNG lặp nội dung đó ở đây\n\n"
 )
 
 
@@ -68,12 +78,26 @@ class GeneratedResearchArticle:
     nq05_status: str = "pending"
 
 
+def _get_research_max_tokens(config_loader: object | None = None) -> int:
+    """QO.32: Read RESEARCH_MAX_TOKENS from CAU_HINH config at runtime.
+
+    Falls back to module-level constant if config unavailable.
+    """
+    if config_loader is None:
+        return RESEARCH_MAX_TOKENS
+    try:
+        return config_loader.get_setting_int("RESEARCH_MAX_TOKENS", RESEARCH_MAX_TOKENS)
+    except Exception:
+        return RESEARCH_MAX_TOKENS
+
+
 async def generate_research_article(
     llm: LLMAdapter,
     context: GenerationContext,
     research_data: ResearchData,
     consensus_text: str = "",  # v2.0 P1.6: Expert Consensus formatted text
     master_analysis_text: str = "",  # P1.7: Master Analysis as additional context
+    config_loader: object | None = None,
 ) -> GeneratedResearchArticle | None:
     """Generate a >2500 word CIC Market Insight research article.
 
@@ -98,10 +122,13 @@ async def generate_research_article(
     )
     prompt = _build_research_prompt(today, data_context)
 
+    # QO.32: Read max_tokens from config at runtime
+    max_tokens = _get_research_max_tokens(config_loader)
+
     response: LLMResponse = await llm.generate(
         prompt=prompt,
         system_prompt=RESEARCH_SYSTEM_PROMPT,
-        max_tokens=RESEARCH_MAX_TOKENS,
+        max_tokens=max_tokens,
         temperature=RESEARCH_TEMPERATURE,
     )
 

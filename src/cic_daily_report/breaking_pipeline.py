@@ -22,10 +22,14 @@ from cic_daily_report.breaking.dedup_manager import DedupEntry, DedupManager, co
 from cic_daily_report.breaking.event_detector import (
     BreakingEvent,
     detect_breaking_events,
+    is_geo_event,
 )
 from cic_daily_report.breaking.severity_classifier import (
+    SEVERITY_LEGEND,
     ClassifiedEvent,
     classify_batch,
+    mark_legend_sent,
+    should_send_legend,
 )
 from cic_daily_report.core.logger import get_logger
 
@@ -33,11 +37,54 @@ logger = get_logger("breaking_pipeline")
 
 BREAKING_TIMEOUT_SECONDS = 20 * 60  # 20 minutes
 
-# v0.29.0: Pipeline limits to prevent spam and quota exhaustion
+# QO.31: Constants kept as DEFAULT FALLBACK — actual values read from CAU_HINH
+# at runtime via _get_pipeline_limits(). DO NOT call config_loader at module level.
 MAX_EVENTS_PER_RUN = 3  # B1: max events to generate+send per run (reduced from 5 to limit spam)
 MAX_DEFERRED_PER_RUN = 5  # A8: max deferred events to reprocess per run
 DIGEST_THRESHOLD = 3  # B5: when >=N send_now events, switch to digest mode (reduced from 5)
 INTER_EVENT_DELAY = 30  # B2: seconds between events sent to TG
+
+# QO.16: Daily event cap — after 12 events/day, remaining events deferred to daily digest.
+# WHY at pipeline level: feedback.py caps the FEEDBACK file, but the pipeline must
+# also stop SENDING events after the cap is reached.
+MAX_EVENTS_PER_DAY = 12
+
+
+def _get_pipeline_limits(config_loader: object | None = None) -> dict[str, int]:
+    """QO.31: Read pipeline limits from CAU_HINH config at runtime.
+
+    Returns dict of limit_name -> value, using defaults on failure.
+    WHY function (not module-level): config_loader needs sheets_client
+    which is not ready at import time.
+    """
+    defaults = {
+        "MAX_EVENTS_PER_RUN": MAX_EVENTS_PER_RUN,
+        "MAX_EVENTS_PER_DAY": MAX_EVENTS_PER_DAY,
+        "DIGEST_THRESHOLD": DIGEST_THRESHOLD,
+        "INTER_EVENT_DELAY": INTER_EVENT_DELAY,
+    }
+    if config_loader is None:
+        return defaults
+
+    try:
+        result = {}
+        for key, default in defaults.items():
+            result[key] = config_loader.get_setting_int(key, default)
+        return result
+    except Exception as e:
+        # WHY: Never break pipeline if config read fails — use defaults silently
+        logger.warning(f"Config read failed for pipeline limits, using defaults: {e}")
+        return defaults
+
+
+# QO.14: Geo event daily cap — max 3 geo digest messages per day.
+# WHY separate cap: geopolitical events (war, sanctions, Fed, inflation) are
+# relevant but noisy. Grouping into digest + capping at 3/day reduces spam
+# while still covering major macro events.
+MAX_GEO_DIGESTS_PER_DAY = 3
+# QO.14: Geo events with panic_score >= this threshold are CRITICAL and bypass
+# the geo digest — sent individually like crypto events.
+GEO_CRITICAL_PANIC_THRESHOLD = 90
 
 # A6: severity sort order (lower = higher priority)
 _SEVERITY_ORDER = {"critical": 0, "important": 1, "notable": 2, "": 3}
@@ -174,6 +221,27 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     """
     result = BreakingPipelineResult(run_log=run_log)
 
+    # QO.31: Load config from CAU_HINH ONCE for entire pipeline run.
+    # WHY here: config_loader needs SheetsClient which is expensive —
+    # create once and pass to all downstream consumers.
+    config_loader = None
+    try:
+        from cic_daily_report.storage.config_loader import ConfigLoader
+        from cic_daily_report.storage.sheets_client import SheetsClient
+
+        sheets = SheetsClient()
+        config_loader = ConfigLoader(sheets)
+    except Exception as e:
+        logger.warning(f"QO.31: Config load failed, using defaults: {e}")
+
+    # QO.31: Read pipeline limits from config (or use module-level defaults)
+    limits = _get_pipeline_limits(config_loader)
+    max_per_run = limits["MAX_EVENTS_PER_RUN"]
+    max_per_day = limits["MAX_EVENTS_PER_DAY"]
+    # WHY prefixed: extracted for future digest grouping logic
+    _digest_threshold = limits["DIGEST_THRESHOLD"]
+    inter_event_delay = limits["INTER_EVENT_DELAY"]
+
     # Load dedup state ONCE for the entire pipeline run
     dedup_mgr = await _load_dedup_from_sheets()
 
@@ -224,6 +292,29 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     market_events = await _market_trigger_detection(run_log)
     events.extend(market_events)
 
+    # QO.42: Stage 1d-watcher — detect cic_action changes from Sentinel registry.
+    # WHY here (additive to events): action changes are internal CIC signals that
+    # should be treated as breaking events for member notification.
+    try:
+        from cic_daily_report.breaking.cic_action_watcher import (
+            detect_action_changes,
+            load_previous_snapshot,
+        )
+        from cic_daily_report.storage.sentinel_reader import SentinelReader
+
+        sentinel_reader = SentinelReader()
+        sentinel_data = await asyncio.to_thread(sentinel_reader.read_all)
+        if sentinel_data.registry:
+            prev_snapshot = load_previous_snapshot(dedup_mgr.entries)
+            action_events, _new_snapshot = detect_action_changes(
+                sentinel_data.registry, prev_snapshot
+            )
+            if action_events:
+                events.extend(action_events)
+                logger.info(f"QO.42: {len(action_events)} cic_action changes detected")
+    except Exception as e:
+        logger.warning(f"QO.42: cic_action watcher failed (non-critical): {e}")
+
     run_log.events_detected = len(events)
 
     if not events:
@@ -244,6 +335,13 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
                 logger.info(f"Coin filter: {before - len(events)} non-CIC events removed")
     except Exception as e:
         logger.debug(f"Coin filter skipped: {e}")
+
+    # QO.18: Stage 1e — LLM Impact Scoring via SambaNova.
+    # Score each event 1-10 for VN crypto investor relevance.
+    # Runs BEFORE dedup so we don't waste dedup entries on skipped events.
+    # WHY separate from main LLM: SambaNova has its own free quota (20 RPD),
+    # doesn't compete with Gemini/Groq used for content generation.
+    events = await _score_events_impact(events)
 
     # Stage 2: Dedup — using pre-loaded dedup_mgr from BREAKING_LOG (A5)
     dedup_result = dedup_mgr.check_and_filter(events)
@@ -276,10 +374,10 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             h, classified_event.delivery_action, severity=classified_event.severity
         )
 
-    # B1: Cap events per run to prevent spam
-    if len(send_now) > MAX_EVENTS_PER_RUN:
-        overflow = send_now[MAX_EVENTS_PER_RUN:]
-        send_now = send_now[:MAX_EVENTS_PER_RUN]
+    # B1: Cap events per run to prevent spam (QO.31: uses config value)
+    if len(send_now) > max_per_run:
+        overflow = send_now[max_per_run:]
+        send_now = send_now[:max_per_run]
         for classified_event in overflow:
             run_log.events_deferred += 1
             result.deferred_events.append(classified_event)
@@ -287,7 +385,67 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             dedup_mgr.update_entry_status(
                 h, "deferred_overflow", severity=classified_event.severity
             )
-        logger.info(f"B1: Capped at {MAX_EVENTS_PER_RUN}, deferred {len(overflow)} overflow events")
+        logger.info(f"B1: Capped at {max_per_run}, deferred {len(overflow)} overflow events")
+
+    # QO.14: Separate geo events from crypto events.
+    # Geo events go to digest (grouped), crypto events go individually.
+    # Exception: CRITICAL geo events (panic >= 90) bypass → sent individually.
+    geo_events: list[ClassifiedEvent] = []
+    crypto_events: list[ClassifiedEvent] = []
+    for c in send_now:
+        if is_geo_event(c.event.title) and c.event.panic_score < GEO_CRITICAL_PANIC_THRESHOLD:
+            geo_events.append(c)
+        else:
+            crypto_events.append(c)
+
+    # QO.14: Cap geo digests at MAX_GEO_DIGESTS_PER_DAY
+    geo_sent_today = _count_today_geo_digests(dedup_mgr)
+    geo_remaining = max(0, MAX_GEO_DIGESTS_PER_DAY - geo_sent_today)
+    if geo_events and geo_remaining == 0:
+        logger.info(
+            f"QO.14: Geo digest cap reached ({geo_sent_today}/{MAX_GEO_DIGESTS_PER_DAY}), "
+            f"deferring {len(geo_events)} geo events"
+        )
+        for c in geo_events:
+            run_log.events_deferred += 1
+            result.deferred_events.append(c)
+            h = compute_hash(c.event.title, c.event.source)
+            dedup_mgr.update_entry_status(h, "deferred_geo_cap", severity=c.severity)
+        geo_events = []
+
+    # Replace send_now with crypto-only events (geo handled separately below)
+    send_now = crypto_events
+
+    # QO.16: Daily cap — defer remaining events after max_per_day reached (QO.31: config)
+    daily_sent = _count_today_sent_events(dedup_mgr)
+    remaining_quota = max(0, max_per_day - daily_sent)
+    if remaining_quota == 0:
+        logger.info(
+            f"QO.16: Daily cap reached ({daily_sent}/{max_per_day}), "
+            f"deferring all {len(send_now)} events to daily digest"
+        )
+        for classified_event in send_now:
+            run_log.events_deferred += 1
+            result.deferred_events.append(classified_event)
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
+            dedup_mgr.update_entry_status(
+                h, "deferred_to_daily", severity=classified_event.severity
+            )
+        send_now = []
+    elif len(send_now) > remaining_quota:
+        overflow = send_now[remaining_quota:]
+        send_now = send_now[:remaining_quota]
+        for classified_event in overflow:
+            run_log.events_deferred += 1
+            result.deferred_events.append(classified_event)
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
+            dedup_mgr.update_entry_status(
+                h, "deferred_to_daily", severity=classified_event.severity
+            )
+        logger.info(
+            f"QO.16: Daily cap {daily_sent + len(send_now)}/{max_per_day}, "
+            f"deferred {len(overflow)} events to daily digest"
+        )
 
     if not send_now:
         dedup_mgr.cleanup_old_entries()
@@ -297,13 +455,76 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
 
     # Stage 3b: Build enrichment context for content generation
     market_snapshot = ""
+    market_data = None  # WHY init: used by QO.19 consensus snapshot below
     try:
         from cic_daily_report.collectors.market_data import collect_market_data
 
         market_data = await asyncio.wait_for(collect_market_data(), timeout=30)
-        market_snapshot = _format_market_snapshot(market_data)
+        # QO.09: Detect if any event in this run is macro-type (geopolitical/economic)
+        # so _format_market_snapshot knows whether to include DXY.
+        # WHY "market_data" only: market_trigger.py sets source="market_data" for all
+        # generated events. "market_trigger" was a bug — no events use that source.
+        _macro_sources = {"market_data"}
+        # QO.09 fix: Expanded keywords to cover employment data, central banks,
+        # economic indicators, and government fiscal events. Aligned with
+        # cryptopanic_client._MACRO_KEYWORDS and event_detector.GEOPOLITICAL_KEYWORDS.
+        _macro_keywords = {
+            # Original
+            "war",
+            "sanctions",
+            "fed",
+            "interest rate",
+            "inflation",
+            "tariff",
+            "oil",
+            "gold",
+            "dxy",
+            "treasury",
+            "gdp",
+            "cpi",
+            "fomc",
+            # Employment data — high-impact macro indicators
+            "employment",
+            "jobs",
+            "payroll",
+            "nonfarm",
+            "unemployment",
+            "jobless",
+            # Central banks — rate decisions move all risk assets
+            "ecb",
+            "boj",
+            "pboc",
+            "rba",
+            "boe",
+            "rate cut",
+            "rate hike",
+            # Economic indicators — PMI/ISM/PPI drive sentiment
+            "ppi",
+            "ism",
+            "pmi",
+            "retail sales",
+            "housing",
+            # Government fiscal events
+            "debt ceiling",
+            "shutdown",
+        }
+        has_macro = any(
+            c.event.source in _macro_sources
+            or any(kw in c.event.title.lower() for kw in _macro_keywords)
+            for c in send_now
+        )
+        market_snapshot = _format_market_snapshot(market_data, has_macro_event=has_macro)
     except Exception as e:
         logger.debug(f"Market context for breaking skipped: {e}")
+
+    # QO.19: Collect consensus snapshot for breaking enrichment.
+    # WHY here: consensus data gives LLM context for writing more relevant
+    # "TẠI SAO QUAN TRỌNG" sections. Non-critical — skip if unavailable.
+    consensus_text = ""
+    try:
+        consensus_text = await _collect_consensus_snapshot(market_data)
+    except Exception as e:
+        logger.debug(f"Consensus snapshot for breaking skipped: {e}")
 
     recent_events_text = _format_recent_events(dedup_mgr.entries)
 
@@ -331,12 +552,13 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
                     severity=classified_event.severity,
                     market_context=market_snapshot,
                     recent_events=recent_events_text,
+                    consensus_snapshot=consensus_text,
                 ),
                 timeout=60,
             )
 
             # Deliver immediately (not batched)
-            await _deliver_single_breaking(content, classified_event)
+            await _deliver_single_breaking(content, classified_event, dedup_mgr=dedup_mgr)
 
             # v0.29.1 (BUG 4): Count AFTER successful delivery, not before.
             result.contents.append(content)
@@ -353,10 +575,10 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             )
             await _persist_dedup_to_sheets(dedup_mgr, new_entries=dedup_result.entries_written)
 
-            # B2: Delay between events (skip after last)
+            # B2: Delay between events (skip after last) (QO.31: config)
             if i < len(all_individual) - 1 or important_now:
-                logger.info(f"B2: Waiting {INTER_EVENT_DELAY}s before next event")
-                await asyncio.sleep(INTER_EVENT_DELAY)
+                logger.info(f"B2: Waiting {inter_event_delay}s before next event")
+                await asyncio.sleep(inter_event_delay)
 
         except Exception as e:
             logger.error(f"Event failed for '{classified_event.event.title}': {e}")
@@ -386,6 +608,28 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             )
             run_log.errors.append(f"LLM unavailable for digest: {classified_event.event.title}")
 
+    # QO.14: Stage 4c — Geo events → digest (grouped message)
+    # WHY separate stage: geo events are noisy individually but valuable as a digest.
+    # Capping at MAX_GEO_DIGESTS_PER_DAY prevents geo spam while keeping coverage.
+    if geo_events and llm is not None and not llm.circuit_open:
+        await _generate_and_deliver_digest(
+            geo_events,
+            llm,
+            dedup_mgr,
+            result,
+            run_log,
+            market_snapshot,
+            dedup_result.entries_written,
+            digest_status="sent_geo_digest",
+        )
+    elif geo_events:
+        for classified_event in geo_events:
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
+            dedup_mgr.update_entry_status(
+                h, "generation_failed", severity=classified_event.severity
+            )
+            run_log.errors.append(f"LLM unavailable for geo digest: {classified_event.event.title}")
+
     # Cleanup old entries
     dedup_mgr.cleanup_old_entries()
 
@@ -410,7 +654,7 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
                         "summary": classified_event.event.raw_data.get("summary", "")[:200],
                     }
                 )
-            save_breaking_summary(feedback_events)
+            save_breaking_summary(feedback_events, config_loader=config_loader)
         except Exception as e:
             logger.warning(f"Breaking feedback save failed (non-critical): {e}")
 
@@ -579,6 +823,90 @@ async def _rss_fallback_detection(run_log: BreakingRunLog, llm=None) -> list:
         return []
 
 
+async def _collect_consensus_snapshot(market_data: list | None = None) -> str:
+    """QO.19: Build consensus snapshot text for breaking prompt enrichment.
+
+    Collects BTC/ETH consensus from consensus_engine if available.
+    Returns formatted text or empty string if consensus unavailable.
+
+    WHY not fail: consensus is enrichment, not required. Breaking news
+    should still be generated even without consensus data.
+    """
+    try:
+        from cic_daily_report.generators.consensus_engine import (
+            MarketConsensus,
+            build_consensus,
+        )
+
+        # Build consensus from market data + other available sources
+        # WHY async: build_consensus is async (fetches prediction markets etc.)
+        consensus_results: list[MarketConsensus] = await asyncio.wait_for(
+            build_consensus(market_data=market_data),
+            timeout=10,
+        )
+
+        if not consensus_results:
+            return ""
+
+        lines = []
+        for mc in consensus_results:
+            if mc.asset in ("BTC", "ETH"):
+                lines.append(
+                    f"{mc.asset}: {mc.label} (score {mc.score:+.2f}, "
+                    f"{mc.source_count} nguồn, bullish {mc.bullish_pct:.0f}%)"
+                )
+        return " | ".join(lines) if lines else ""
+    except Exception as e:
+        logger.debug(f"Consensus snapshot collection failed: {e}")
+        return ""
+
+
+async def _score_events_impact(events: list[BreakingEvent]) -> list[BreakingEvent]:
+    """QO.18: Score events via SambaNova and filter by impact.
+
+    Score < 4 → removed (not important enough).
+    Score 4-6 → kept (will be routed to digest by pipeline).
+    Score >= 7 → kept (will be sent individually).
+
+    Graceful: if SambaNova unavailable, all events pass through unchanged.
+    """
+    if not events:
+        return events
+
+    try:
+        from cic_daily_report.breaking.llm_scorer import classify_by_impact, score_event_impact
+
+        filtered: list[BreakingEvent] = []
+        for event in events:
+            try:
+                score = await score_event_impact(event)
+                action = classify_by_impact(score)
+                if action == "skip":
+                    logger.info(
+                        f"QO.18: Skipping low-impact event (score={score}): '{event.title[:50]}'"
+                    )
+                    continue
+                # Store impact score in raw_data for downstream use
+                # WHY raw_data: BreakingEvent doesn't have an impact_score field,
+                # and adding one would require changing the dataclass + all tests.
+                if event.raw_data is None:
+                    event.raw_data = {}
+                event.raw_data["impact_score"] = score
+                event.raw_data["impact_action"] = action
+                filtered.append(event)
+            except Exception as e:
+                logger.debug(f"Impact scoring failed for '{event.title[:50]}': {e}")
+                filtered.append(event)  # WHY: failure = pass through
+
+        skipped = len(events) - len(filtered)
+        if skipped > 0:
+            logger.info(f"QO.18: Removed {skipped}/{len(events)} low-impact events")
+        return filtered
+    except ImportError:
+        logger.debug("llm_scorer not available — skipping impact scoring")
+        return events
+
+
 async def _market_trigger_detection(run_log: BreakingRunLog) -> list:
     """Always-on: check market data for extreme conditions."""
     try:
@@ -680,6 +1008,14 @@ async def _reprocess_deferred_events(
 
                 fallback = _raw_data_fallback(event)
                 message = f"{emoji} BREAKING NEWS\n\n{fallback.formatted}"
+
+            # QO.11 fix: Deferred reprocessing also needs legend check.
+            # WHY: Users seeing deferred events may not have seen the legend
+            # from the original run (they were deferred precisely because
+            # delivery didn't happen earlier).
+            if should_send_legend(dedup_mgr=dedup_mgr):
+                message += SEVERITY_LEGEND
+                mark_legend_sent(dedup_mgr)
 
             # Split for TG safety
             parts = split_message("BREAKING", message)
@@ -829,8 +1165,14 @@ def _filter_non_cic_coins(events: list, tracked_coins: set[str]) -> list:
     return filtered
 
 
-def _format_market_snapshot(market_data: list | None) -> str:
-    """Format brief market context for breaking news prompt."""
+def _format_market_snapshot(market_data: list | None, has_macro_event: bool = False) -> str:
+    """Format brief market context for breaking news prompt.
+
+    QO.09 (VD-31): DXY is only injected when relevant — either the current
+    run contains a macro-type event, or DXY itself moved significantly
+    (abs(change_24h) >= 0.5%). This prevents DXY from appearing in every
+    breaking message regardless of context.
+    """
     if not market_data:
         return ""
     lines = []
@@ -841,7 +1183,9 @@ def _format_market_snapshot(market_data: list | None) -> str:
         if dp.symbol == "Fear&Greed":  # WHY: match symbol created in market_data.py:509 (VD-07 fix)
             lines.append(f"Fear & Greed: {int(dp.price)}")
         elif dp.symbol == "DXY":
-            lines.append(f"DXY: {dp.price:.1f}")
+            # QO.09: Only include DXY when macro event present or DXY moved >= 0.5%
+            if has_macro_event or abs(dp.change_24h) >= 0.5:
+                lines.append(f"DXY: {dp.price:.1f}")
     return "Bối cảnh thị trường hiện tại: " + " | ".join(lines) if lines else ""
 
 
@@ -857,7 +1201,9 @@ def _format_recent_events(dedup_entries: list[DedupEntry], max_events: int = 5) 
 
 
 async def _deliver_single_breaking(
-    content: BreakingContent, classified_event: ClassifiedEvent
+    content: BreakingContent,
+    classified_event: ClassifiedEvent,
+    dedup_mgr: DedupManager | None = None,
 ) -> None:
     """Deliver a single breaking news content via Telegram.
 
@@ -880,6 +1226,13 @@ async def _deliver_single_breaking(
             logger.warning(f"FR25 image failed (text-only fallback): {img_err}")
 
     message = f"{emoji} BREAKING NEWS\n\n{content.formatted}"
+    # QO.11 (VD-37): Append severity legend to the first breaking message of the day.
+    # WHY dedup_mgr: Persistent tracking across process restarts (GitHub Actions
+    # runs pipeline ~4x/day as separate processes, module state resets each time).
+    if should_send_legend(dedup_mgr=dedup_mgr):
+        message += SEVERITY_LEGEND
+        if dedup_mgr is not None:
+            mark_legend_sent(dedup_mgr)
     parts = split_message("BREAKING", message)
     for part in parts:
         await bot.send_message(part.formatted)
@@ -896,11 +1249,16 @@ async def _generate_and_deliver_digest(
     run_log: BreakingRunLog,
     market_snapshot: str,
     new_entries: list,
+    digest_status: str = "sent_digest",
 ) -> None:
-    """B5: Generate and deliver a single digest for multiple events.
+    """B5/QO.14: Generate and deliver a single digest for multiple events.
 
     When >=DIGEST_THRESHOLD events need sending, combine into one summary
     to avoid spamming the Telegram channel.
+
+    Args:
+        digest_status: Dedup status to record. Default "sent_digest" for crypto,
+            "sent_geo_digest" for geo events (QO.14).
     """
     from cic_daily_report.delivery.telegram_bot import TelegramBot, split_message
 
@@ -920,6 +1278,11 @@ async def _generate_and_deliver_digest(
         digest_label = "BREAKING NEWS DIGEST" if has_critical else "TỔNG HỢP TIN QUAN TRỌNG"
         bot = TelegramBot()
         message = f"{digest_emoji} {digest_label}\n\n{digest_content.formatted}"
+        # QO.11 (VD-37): Append severity legend to the first breaking message of the day.
+        # WHY dedup_mgr: Persistent tracking across process restarts.
+        if should_send_legend(dedup_mgr=dedup_mgr):
+            message += SEVERITY_LEGEND
+            mark_legend_sent(dedup_mgr)
         parts = split_message("BREAKING", message)
         for part in parts:
             await bot.send_message(part.formatted)
@@ -929,13 +1292,13 @@ async def _generate_and_deliver_digest(
         result.contents.append(digest_content)
         run_log.events_sent += len(send_now)
 
-        # Mark all events as sent
+        # Mark all events as sent (QO.14: uses digest_status param for geo vs crypto)
         for classified_event in send_now:
             result.sent_events.append(classified_event)
             h = compute_hash(classified_event.event.title, classified_event.event.source)
             dedup_mgr.update_entry_status(
                 h,
-                "sent_digest",
+                digest_status,
                 delivered_at=datetime.now(timezone.utc).isoformat(),
                 severity=classified_event.severity,
             )
@@ -952,6 +1315,56 @@ async def _generate_and_deliver_digest(
         for classified_event in send_now:
             h = compute_hash(classified_event.event.title, classified_event.event.source)
             dedup_mgr.update_entry_status(h, status, severity=classified_event.severity)
+
+
+def _count_today_sent_events(dedup_mgr: DedupManager) -> int:
+    """QO.16: Count events sent/sent_digest/sent_geo_digest today (UTC calendar day).
+
+    Used to enforce MAX_EVENTS_PER_DAY cap. Counts all delivery statuses
+    (sent, sent_digest, sent_geo_digest) from today's date.
+    """
+    # WHY include sent_geo_digest: geo digests also consume the daily event cap
+    _sent_statuses = {"sent", "sent_digest", "sent_geo_digest"}
+    today = datetime.now(timezone.utc).date()
+    count = 0
+    for entry in dedup_mgr.entries:
+        if entry.status not in _sent_statuses:
+            continue
+        if not entry.detected_at:
+            continue
+        try:
+            detected = datetime.fromisoformat(entry.detected_at)
+            if detected.tzinfo is None:
+                detected = detected.replace(tzinfo=timezone.utc)
+            if detected.date() == today:
+                count += 1
+        except (ValueError, TypeError):
+            continue
+    return count
+
+
+def _count_today_geo_digests(dedup_mgr: DedupManager) -> int:
+    """QO.14: Count geo digest messages sent today (UTC calendar day).
+
+    Each geo event in a digest counts as 1 toward the geo cap.
+    Used to enforce MAX_GEO_DIGESTS_PER_DAY.
+    """
+    today = datetime.now(timezone.utc).date()
+    count = 0
+    for entry in dedup_mgr.entries:
+        if entry.status != "sent_geo_digest":
+            continue
+        if not entry.detected_at:
+            continue
+        try:
+            detected = datetime.fromisoformat(entry.detected_at)
+            if detected.tzinfo is None:
+                detected = detected.replace(tzinfo=timezone.utc)
+            if detected.date() == today:
+                count += 1
+        except (ValueError, TypeError):
+            continue
+    return count
 
 
 def _calc_duration(start_iso: str, end_iso: str) -> float:

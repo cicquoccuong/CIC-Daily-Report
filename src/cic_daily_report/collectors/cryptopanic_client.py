@@ -19,6 +19,12 @@ API_BASE = "https://cryptopanic.com/api/developer/v2"
 MAX_URLS_PER_RUN = 50
 TRAFILATURA_TIMEOUT = 10  # seconds per URL
 
+# QO.37: Content length and article count limits.
+# WHY 2000: Matches rss_collector.MAX_SUMMARY_CHARS for consistency.
+MAX_CONTENT_CHARS = 2000
+# WHY 50: Increased from 30 to capture more hot news during high-volume periods.
+MAX_ARTICLES_PER_FETCH = 50
+
 
 @dataclass
 class CryptoPanicArticle:
@@ -111,7 +117,8 @@ async def _fetch_posts(api_key: str) -> list[CryptoPanicArticle]:
     data = response.json()
     articles = []
 
-    for post in data.get("results", [])[:30]:
+    # QO.37: Increased from 30 to MAX_ARTICLES_PER_FETCH for broader coverage
+    for post in data.get("results", [])[:MAX_ARTICLES_PER_FETCH]:
         votes = post.get("votes", {})
         # Extract currency codes from API response
         coin_codes = [c.get("code", "") for c in post.get("currencies", []) if c.get("code")]
@@ -209,9 +216,10 @@ async def _extract_fulltext(articles: list[CryptoPanicArticle]) -> None:
                 resp = await client.get(article.url, follow_redirects=True)
             text = await asyncio.to_thread(trafilatura.extract, resp.text, include_comments=False)
             if text:
-                article.full_text = text[:2000]
+                # QO.37: Use MAX_CONTENT_CHARS consistently
+                article.full_text = text[:MAX_CONTENT_CHARS]
                 if not article.summary:
-                    article.summary = text[:500]
+                    article.summary = text[:MAX_CONTENT_CHARS]
             # Extract og:image metadata
             metadata = await asyncio.to_thread(trafilatura.extract_metadata, resp.text)
             if metadata and metadata.image:

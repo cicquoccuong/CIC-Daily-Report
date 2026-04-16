@@ -28,11 +28,28 @@ _FEEDBACK_FILE = _FEEDBACK_DIR / "breaking_today.json"
 # SEC-02: Reject feedback files larger than 1MB to prevent memory issues.
 MAX_FEEDBACK_FILE_SIZE = 1_000_000
 
-# SEC-06: Cap events per day to prevent unbounded list growth.
-MAX_EVENTS_PER_DAY = 100
+# QO.16/QO.31: Daily event cap — max 12 breaking messages/day to prevent spam (VD-21).
+# WHY 12: Anh Cuong approved (spec section 9, question #1). Previous value 100
+# was effectively uncapped. 12 keeps signal-to-noise ratio manageable.
+# Also serves SEC-06: prevents unbounded list growth.
+# QO.31: This is the DEFAULT FALLBACK — runtime value read from config_loader.
+MAX_EVENTS_PER_DAY = 12
 
 
-def save_breaking_summary(events: list[dict]) -> None:
+def _get_max_events_per_day(config_loader: object | None = None) -> int:
+    """QO.31: Read MAX_EVENTS_PER_DAY from CAU_HINH config at runtime.
+
+    Falls back to module-level constant if config unavailable.
+    """
+    if config_loader is None:
+        return MAX_EVENTS_PER_DAY
+    try:
+        return config_loader.get_setting_int("MAX_EVENTS_PER_DAY", MAX_EVENTS_PER_DAY)
+    except Exception:
+        return MAX_EVENTS_PER_DAY
+
+
+def save_breaking_summary(events: list[dict], config_loader: object | None = None) -> None:
     """Save today's breaking events summary to JSON file.
 
     Each event dict should have: title, source, severity, timestamp, summary.
@@ -54,9 +71,11 @@ def save_breaking_summary(events: list[dict]) -> None:
 
     existing.extend(events)
 
-    # SEC-06: Cap events per day to prevent unbounded list growth.
-    if len(existing) > MAX_EVENTS_PER_DAY:
-        existing = existing[-MAX_EVENTS_PER_DAY:]
+    # SEC-06/QO.31: Cap events per day to prevent unbounded list growth.
+    # WHY runtime read: allows operator to adjust daily cap from Google Sheet.
+    max_per_day = _get_max_events_per_day(config_loader)
+    if len(existing) > max_per_day:
+        existing = existing[-max_per_day:]
 
     payload = {
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),

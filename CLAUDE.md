@@ -1,7 +1,7 @@
 # CIC Daily Report
 
 ## System
-- **Version**: 2.0.0-alpha.10 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
+- **Version**: 2.0.0-alpha.15 | **Platform**: Python 3.12 + GitHub Actions + Google Sheets
 - **Purpose**: Automated crypto daily report pipeline for CIC community (BIC Group/BIC Chat)
 - **Output**: 5 tier articles (L1→L5 cumulative) + 1 BIC Chat summary + 1 Research article (BIC Group L1) + Breaking news alerts
 - **Operator**: Anh Cường (no-code user, receives on Telegram, copy-pastes to BIC)
@@ -26,12 +26,12 @@
 ```
 src/cic_daily_report/
 ├── core/           # error_handler, logger, config, quota_manager, retry_utils, coin_mapping
-├── collectors/     # rss, cryptopanic, market_data, onchain_data, coinalyze_data, coinmetrics_data, research_data, whale_alert, telegram_scraper, economic_calendar, data_cleaner, prediction_markets
+├── collectors/     # rss, cryptopanic, market_data, onchain_data, coinalyze_data, coinmetrics_data, research_data, whale_alert, telegram_scraper, economic_calendar, data_cleaner, prediction_markets, tradingview_collector, augmento_collector, coinmarketcal_collector, deribit_collector, token_unlock_collector, macro_news_collector, cic_action_watcher
 ├── generators/     # article_generator, summary_generator, research_generator, template_engine, nq05_filter, quality_gate, text_utils, consensus_engine
 ├── adapters/       # llm_adapter (multi-provider)
 ├── delivery/       # telegram_bot, email_backup, delivery_manager
 ├── breaking/       # event_detector, content_generator, dedup_manager, severity_classifier, llm_scorer, market_trigger, feedback
-├── storage/        # sheets_client, config_loader, historical_metrics
+├── storage/        # sheets_client, config_loader, historical_metrics, dr_exporter
 ├── dashboard/      # data_generator
 ├── daily_pipeline.py
 └── breaking_pipeline.py
@@ -44,7 +44,7 @@ docs/               # planning docs, guides
 .github/workflows/  # daily-pipeline.yml, breaking-news.yml, test.yml
 ```
 
-## Google Sheets Schema (10 tabs - Vietnamese no-diacritics UPPER_SNAKE_CASE)
+## Google Sheets Schema (11 tabs - Vietnamese no-diacritics UPPER_SNAKE_CASE)
 | Tab | Purpose |
 |-----|---------|
 | TIN_TUC_THO | Raw news data |
@@ -57,6 +57,7 @@ docs/               # planning docs, guides
 | CAU_HINH | System configuration |
 | BREAKING_LOG | Breaking news dedup & history |
 | LICH_SU_METRICS | Historical daily snapshots (23 cols, 7d/30d trend comparison) |
+| DR_EXPORT | Daily Report exports for Sentinel cross-read (QO.40) |
 
 ## Pipelines
 | Pipeline | Schedule | Duration Target |

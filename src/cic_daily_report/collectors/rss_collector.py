@@ -24,6 +24,14 @@ logger = get_logger("rss_collector")
 FEED_TIMEOUT = 30  # seconds per feed
 _CONCURRENCY_LIMIT = asyncio.Semaphore(25)  # max concurrent HTTP requests
 
+# QO.37: Content length and article count limits.
+# WHY 2000: 800 chars was too short for meaningful context — many articles
+# were truncated mid-sentence. 2000 gives full paragraph context.
+MAX_SUMMARY_CHARS = 2000
+# WHY 50: 20 per feed was limiting coverage — 50 captures more articles
+# from high-volume feeds while still being bounded.
+MAX_ARTICLES_PER_FEED = 50
+
 
 def _sanitize_text(text: str) -> str:
     """Remove HTML tags, non-printable chars, decode HTML entities, normalize whitespace."""
@@ -226,10 +234,12 @@ async def _fetch_feed(feed: FeedConfig) -> list[NewsArticle]:
         parsed = await asyncio.to_thread(feedparser.parse, response.text)
         articles = []
 
-        for entry in parsed.entries[:20]:  # max 20 per feed
+        # QO.37: Increased from 20 to MAX_ARTICLES_PER_FEED for broader coverage
+        for entry in parsed.entries[:MAX_ARTICLES_PER_FEED]:
             title = _sanitize_text(entry.get("title", ""))
             url = entry.get("link", "").strip()
-            summary = _sanitize_text(entry.get("summary", ""))[:500]
+            # QO.37: Increased from 500 to MAX_SUMMARY_CHARS for richer content
+            summary = _sanitize_text(entry.get("summary", ""))[:MAX_SUMMARY_CHARS]
             published = entry.get("published", "")
 
             # Extract RSS media image as fallback for og:image
@@ -295,9 +305,10 @@ async def _enrich_research_articles(articles: list[NewsArticle]) -> None:
             # Extract full text
             text = await asyncio.to_thread(trafilatura.extract, resp.text, include_comments=False)
             if text:
-                article.full_text = text[:2000]
+                article.full_text = text[:MAX_SUMMARY_CHARS]
                 if not article.summary or len(article.summary) < 50:
-                    article.summary = text[:500]
+                    # QO.37: Use MAX_SUMMARY_CHARS consistently
+                    article.summary = text[:MAX_SUMMARY_CHARS]
 
             # Extract og:image metadata (overwrites RSS media fallback)
             metadata = await asyncio.to_thread(trafilatura.extract_metadata, resp.text)

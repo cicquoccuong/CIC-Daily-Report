@@ -11,7 +11,6 @@ from cic_daily_report.breaking.content_generator import (
     generate_breaking_content,
 )
 from cic_daily_report.breaking.event_detector import BreakingEvent
-from cic_daily_report.generators.article_generator import DISCLAIMER
 
 
 def _event(image_url: str | None = None) -> BreakingEvent:
@@ -53,9 +52,11 @@ class TestGenerateBreakingContent:
         assert result.model_used == "groq"
 
     async def test_content_has_disclaimer(self):
+        """QO.07: Breaking now uses short disclaimer (DYOR) instead of full."""
         llm = _mock_llm()
         result = await generate_breaking_content(_event(), llm)
-        assert "Tuyên bố miễn trừ trách nhiệm" in result.content
+        assert "Tuyên bố miễn trừ" in result.content
+        assert "DYOR" in result.content
 
     async def test_uses_nq05_system_prompt(self):
         llm = _mock_llm()
@@ -87,11 +88,15 @@ class TestGenerateBreakingContent:
             await generate_breaking_content(_event(), llm)
 
     async def test_raw_data_fallback_still_works_directly(self):
-        """_raw_data_fallback() still available for explicit use by pipeline."""
+        """_raw_data_fallback() still available for explicit use by pipeline.
+        QO.07: Now uses DISCLAIMER_SHORT instead of full DISCLAIMER.
+        """
+        from cic_daily_report.generators.article_generator import DISCLAIMER_SHORT
+
         result = _raw_data_fallback(_event())
         assert not result.ai_generated
         assert result.model_used == "raw_data"
-        assert DISCLAIMER in result.content
+        assert DISCLAIMER_SHORT in result.content
         assert "CoinDesk" in result.content
 
 

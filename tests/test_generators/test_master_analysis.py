@@ -304,7 +304,7 @@ class TestGenerateMasterAnalysis:
 
         call_kwargs = mock_llm.generate.call_args
         assert call_kwargs.kwargs["system_prompt"] == MASTER_SYSTEM_PROMPT
-        assert call_kwargs.kwargs["max_tokens"] == 16384
+        assert call_kwargs.kwargs["max_tokens"] == 20480  # QO.08: increased from 16384
         assert call_kwargs.kwargs["temperature"] == 0.4
 
 

@@ -1,15 +1,24 @@
-"""RSS-based breaking event scoring via LLM (CryptoPanic fallback).
+"""RSS-based breaking event scoring + SambaNova LLM Impact Scoring.
 
-When CryptoPanic API is unavailable (quota exhausted, API error, or no key),
-this module scores RSS articles using LLM to identify breaking-worthy news.
-Single batch LLM call for efficiency.
+Module responsibilities:
+1. RSS scoring: When CryptoPanic API is unavailable, scores RSS articles
+   using the main LLM chain to identify breaking-worthy news.
+2. SambaNova Impact Scoring (QO.18): Separate LLM scoring via SambaNova
+   (Meta-Llama-3.3-70B-Instruct) to rate event importance 1-10 for
+   Vietnamese crypto investors. Runs BETWEEN detection and delivery.
+
+SambaNova is isolated from the main LLM chain (Gemini/Groq/Cerebras)
+to avoid quota competition.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timedelta, timezone
+
+import httpx
 
 from cic_daily_report.breaking.event_detector import (
     DEFAULT_KEYWORD_TRIGGERS,
@@ -21,6 +30,31 @@ from cic_daily_report.collectors.rss_collector import NewsArticle
 from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("llm_scorer")
+
+# ---------------------------------------------------------------------------
+# QO.18: SambaNova Impact Scoring constants
+# ---------------------------------------------------------------------------
+
+# WHY SambaNova: Free tier (20 RPD), OpenAI-compatible API, separate from
+# main LLM chain so scoring doesn't consume generation quota.
+SAMBANOVA_API_BASE = "https://api.sambanova.ai/v1"
+SAMBANOVA_MODEL = "Meta-Llama-3.3-70B-Instruct"
+SAMBANOVA_TIMEOUT = 15  # seconds — fast timeout for scoring (not generation)
+SAMBANOVA_MAX_RPD = 20  # Free tier rate limit: 20 requests per day
+
+# QO.18: Impact score thresholds
+# WHY these cutoffs: <4 = noise (sports, irrelevant), 4-6 = worth grouping
+# but not urgent enough alone, >=7 = high-impact for VN crypto investors.
+IMPACT_SKIP_THRESHOLD = 4  # Score < 4 → skip entirely
+IMPACT_DIGEST_THRESHOLD = 7  # Score 4-6 → digest, Score >= 7 → send individually
+
+IMPACT_SCORING_PROMPT = (
+    "Tin này quan trọng cỡ nào cho nhà đầu tư crypto Việt Nam? "
+    "Chấm điểm 1-10.\n\n"
+    "Tiêu đề: {title}\n"
+    "Tóm tắt: {summary}\n\n"
+    "Trả lời CHỈ một số nguyên từ 1 đến 10, KHÔNG giải thích."
+)
 
 MAX_BATCH_SIZE = 20
 MAX_AGE_HOURS = 6
@@ -200,3 +234,185 @@ def _article_to_event(
             "language": article.language,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# QO.18: SambaNova Impact Scoring
+# ---------------------------------------------------------------------------
+
+# WHY file-based persistence: Module-level counter resets each process.
+# With 4 pipeline runs/day (daily + 3h breaking), that allows 80 attempts
+# against a 20 RPD quota. A JSON sidecar file persists the count across runs.
+_sambanova_calls_today = 0
+
+# WHY: GITHUB_WORKSPACE gives the repo root in CI; tempdir for local dev.
+_USAGE_FILE_NAME = "sambanova_usage.json"
+
+
+def _get_usage_file_path() -> str:
+    """Return path to SambaNova daily usage JSON file.
+
+    WHY GITHUB_WORKSPACE first: In GitHub Actions, this is the repo root
+    and survives across job steps. Falls back to system temp dir for local dev.
+    """
+    import tempfile
+
+    base = os.getenv("GITHUB_WORKSPACE", tempfile.gettempdir())
+    return os.path.join(base, _USAGE_FILE_NAME)
+
+
+def _load_daily_count() -> int:
+    """Load today's SambaNova call count from the usage file.
+
+    Returns 0 if file doesn't exist, is unreadable, or date is stale.
+    WHY: Ensures count persists across process restarts within the same day.
+    """
+    path = _get_usage_file_path()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("date") == today:
+            return int(data.get("calls", 0))
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError):
+        pass
+    return 0
+
+
+def _save_daily_count(count: int) -> None:
+    """Persist current day's SambaNova call count to the usage file.
+
+    WHY: Write after each successful API call so the count survives
+    process restarts (GitHub Actions breaking pipeline runs every 3h).
+    """
+    path = _get_usage_file_path()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"date": today, "calls": count}, f)
+    except OSError as e:
+        logger.warning(f"Failed to persist SambaNova usage: {e}")
+
+
+async def score_event_impact(
+    event: BreakingEvent,
+) -> int:
+    """Score a single event's importance for VN crypto investors (1-10).
+
+    Uses SambaNova API (Meta-Llama-3.3-70B-Instruct) with OpenAI-compatible
+    endpoint. Completely separate from the main LLM chain.
+
+    Returns:
+        Integer score 1-10. Returns 10 on failure (graceful fallback —
+        let event pass through if scoring is unavailable).
+    """
+    global _sambanova_calls_today  # noqa: PLW0603 — WHY: simple counter, not shared state
+
+    # WHY: Load persisted count on first call so we track across process restarts
+    if _sambanova_calls_today == 0:
+        _sambanova_calls_today = _load_daily_count()
+
+    api_key = os.getenv("SAMBANOVA_API_KEY", "")
+    if not api_key:
+        logger.debug("SAMBANOVA_API_KEY not set — skipping impact scoring (pass-through)")
+        return 10  # WHY 10: no key = let all events through (graceful degradation)
+
+    if _sambanova_calls_today >= SAMBANOVA_MAX_RPD:
+        logger.warning(
+            f"SambaNova daily limit reached ({_sambanova_calls_today}/{SAMBANOVA_MAX_RPD}) "
+            "— skipping impact scoring (pass-through)"
+        )
+        return 10
+
+    summary = ""
+    if event.raw_data:
+        summary = event.raw_data.get("summary", "")[:300]
+
+    prompt = IMPACT_SCORING_PROMPT.format(title=event.title, summary=summary or "N/A")
+
+    try:
+        score = await _call_sambanova(api_key, prompt)
+        _sambanova_calls_today += 1
+        # WHY: Persist after each call so count survives process restart
+        _save_daily_count(_sambanova_calls_today)
+        logger.info(
+            f"QO.18: Impact score={score} for '{event.title[:60]}' "
+            f"(calls: {_sambanova_calls_today}/{SAMBANOVA_MAX_RPD})"
+        )
+        return score
+    except Exception as e:
+        logger.warning(f"SambaNova scoring failed for '{event.title[:50]}': {e}")
+        return 10  # WHY 10: scoring failure = let event pass through
+
+
+async def _call_sambanova(api_key: str, prompt: str) -> int:
+    """Call SambaNova OpenAI-compatible API and extract integer score.
+
+    Returns integer 1-10. Raises on HTTP/network errors.
+    """
+    url = f"{SAMBANOVA_API_BASE}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": SAMBANOVA_MODEL,
+        "messages": [
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 10,
+        "temperature": 0.1,
+    }
+
+    async with httpx.AsyncClient(timeout=SAMBANOVA_TIMEOUT) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+
+    data = resp.json()
+    text = data["choices"][0]["message"]["content"].strip()
+    return _parse_impact_score(text)
+
+
+def _parse_impact_score(text: str) -> int:
+    """Extract integer score 1-10 from LLM response text.
+
+    Handles various response formats: "7", "Score: 7", "7/10", etc.
+    Returns 10 if parsing fails (graceful fallback — let event through).
+    """
+    # Try to find a standalone integer 1-10
+    match = re.search(r"\b(\d{1,2})\b", text)
+    if match:
+        score = int(match.group(1))
+        return max(1, min(10, score))  # Clamp to 1-10
+    logger.warning(f"Could not parse impact score from: '{text}' — defaulting to 10")
+    return 10
+
+
+def classify_by_impact(score: int) -> str:
+    """Classify event action based on impact score (QO.18).
+
+    Returns:
+        "skip" — Score < 4, not important enough
+        "digest" — Score 4-6, group with others
+        "send" — Score >= 7, send individually
+    """
+    if score < IMPACT_SKIP_THRESHOLD:
+        return "skip"
+    if score < IMPACT_DIGEST_THRESHOLD:
+        return "digest"
+    return "send"
+
+
+def reset_sambanova_counter() -> None:
+    """Reset the daily SambaNova call counter (both in-memory and on disk).
+
+    Called at the start of each pipeline day or for testing.
+    """
+    global _sambanova_calls_today  # noqa: PLW0603
+    _sambanova_calls_today = 0
+    _save_daily_count(0)
+
+
+def get_sambanova_calls_today() -> int:
+    """Get current SambaNova call count (for logging/testing)."""
+    return _sambanova_calls_today
