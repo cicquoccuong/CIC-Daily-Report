@@ -7,6 +7,7 @@ Automatic fallback when primary fails. Provider preference per pipeline.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import time
@@ -19,6 +20,39 @@ from cic_daily_report.core.logger import get_logger
 from cic_daily_report.core.quota_manager import QuotaManager
 
 logger = get_logger("llm_adapter")
+
+# PR#1 Emergency Fix: Hard wall-clock timeout per provider call.
+# WHY 90s: Master Analysis took 84s in the last successful Gemini Flash-Lite run (#58).
+# 90s gives a small headroom over that baseline while staying well below the
+# 116-minute hang we observed on 5/8 recent runs (Google Gemini socket stall
+# bug — googleapis/python-genai#1893 — httpx timeout=60 does NOT catch it because
+# the socket stays open with no data). Per-tier dynamic timeouts will come in PR#3.
+_PROVIDER_CALL_TIMEOUT_SEC = 90
+
+
+class LLMTimeoutError(LLMError):
+    """Raised when a provider call exceeds the hard wall-clock timeout.
+
+    WHY separate subclass: downstream logic (generate()) must know this was a
+    timeout (not a 4xx/5xx/auth error) so it can FALL BACK to the next provider
+    rather than retry the same provider — retrying a hung Gemini socket just
+    wastes another 90s per attempt. Subclassing LLMError keeps existing
+    `except LLMError` catch-alls working unchanged.
+    """
+
+    def __init__(self, provider_name: str, timeout_sec: int) -> None:
+        # retry=False: timed-out provider is probably stalled; fallback to next
+        # chain entry, do not retry this one. LLMError defaults retry=True which
+        # would cause callers checking `e.retry` to hammer the hung provider —
+        # exactly the opposite of the fallback semantics this subclass exists for.
+        super().__init__(
+            f"{provider_name} timed out after {timeout_sec}s (hard wall-clock limit)",
+            source="llm_adapter",
+            retry=False,
+        )
+        self.provider_name = provider_name
+        self.timeout_sec = timeout_sec
+
 
 # v2.0 Đợt 2: Gemini API base URL — single source of truth for endpoint construction.
 # WHY: Avoid repeating full URL in each provider. When Google changes API version,
@@ -392,8 +426,15 @@ class LLMAdapter:
             except Exception as e:
                 self._provider_failed[provider.name] = time.monotonic()
                 self._quota.track_failure(rate_key)
-                errors.append(f"{provider.name}: {e}")
-                logger.warning(f"LLM {provider.name} failed: {e}")
+                # PR#1 Emergency Fix (F2): logger.exception() emits full traceback.
+                # WHY: the old logger.warning(f"...: {e}") logged an EMPTY string
+                # when `e` was httpx.RemoteProtocolError("") (Gemini socket stall
+                # bug), hiding the real failure for 5 days. `{type(e).__name__}`
+                # + `{e!r}` (repr) ensures the exception class name is always
+                # visible even when str(e) is empty. logger.exception() also
+                # writes the traceback so we can pinpoint where the stall happened.
+                errors.append(f"{provider.name}: {type(e).__name__}: {e!r}")
+                logger.exception(f"LLM {provider.name} failed ({type(e).__name__}): {e!r}")
                 continue
 
         fallback_chain = " → ".join(p.name for p in available)
@@ -439,16 +480,32 @@ async def _call_groq(
         payload["disable_reasoning"] = True
         payload["reasoning_format"] = "hidden"
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            provider.endpoint,
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {provider.api_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        resp.raise_for_status()
+    # PR#1 Emergency Fix (F1): wrap the full HTTP call in asyncio.wait_for.
+    # WHY asyncio.wait_for on top of httpx timeout=60: httpx's timeout only fires
+    # when the socket is IDLE waiting for bytes; the Gemini stall bug keeps the
+    # socket technically "active" (TLS keepalive) but never returns data. Only a
+    # wall-clock asyncio.wait_for can forcibly cancel that task. Even though
+    # _call_groq doesn't hit Gemini, we apply the same guard uniformly so ANY
+    # provider that hangs is bounded. See googleapis/python-genai#1893.
+    async def _do_request() -> httpx.Response:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(
+                provider.endpoint,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {provider.api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            r.raise_for_status()
+            return r
+
+    try:
+        resp = await asyncio.wait_for(_do_request(), timeout=_PROVIDER_CALL_TIMEOUT_SEC)
+    except asyncio.TimeoutError as exc:
+        # Convert to LLMTimeoutError so generate()'s except block and downstream
+        # callers can distinguish timeout-vs-other-error and skip to next provider.
+        raise LLMTimeoutError(provider.name, _PROVIDER_CALL_TIMEOUT_SEC) from exc
 
     data = resp.json()
     choice = data.get("choices", [{}])[0]
@@ -485,14 +542,27 @@ async def _call_gemini(
     if system_prompt:
         payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            provider.endpoint,
-            json=payload,
-            params={"key": provider.api_key},
-            headers={"Content-Type": "application/json"},
-        )
-        resp.raise_for_status()
+    # PR#1 Emergency Fix (F1): wrap the full HTTP call in asyncio.wait_for.
+    # WHY: this is the exact call that stalls per googleapis/python-genai#1893
+    # (Gemini 2.5 Flash socket stall — httpx timeout=60 does not fire because
+    # the socket stays open with no data). The wall-clock asyncio.wait_for
+    # is the only layer guaranteed to cancel the hung task.
+    async def _do_request() -> httpx.Response:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(
+                provider.endpoint,
+                json=payload,
+                params={"key": provider.api_key},
+                headers={"Content-Type": "application/json"},
+            )
+            r.raise_for_status()
+            return r
+
+    try:
+        resp = await asyncio.wait_for(_do_request(), timeout=_PROVIDER_CALL_TIMEOUT_SEC)
+    except asyncio.TimeoutError as exc:
+        # Convert to LLMTimeoutError so outer fallback chain skips to next provider.
+        raise LLMTimeoutError(provider.name, _PROVIDER_CALL_TIMEOUT_SEC) from exc
 
     data = resp.json()
     candidates = data.get("candidates", [])
