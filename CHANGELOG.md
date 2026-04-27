@@ -1,6 +1,24 @@
 # Changelog
 
-## [Unreleased] - 2026-04-17
+## [Unreleased] - 2026-04-26
+
+### [FIX] QuotaManager race condition — async lock per service
+
+`wait_for_rate_limit()` doc `last_call_time` roi `await asyncio.sleep()` truoc khi caller goi `track()` bump timing. Trong `asyncio.gather()` voi N coroutines tren cung 1 service (vd `gemini`, `groq`), tat ca cung doc stale `last_call_time` → cung bypass check `elapsed < min_interval` → fire concurrent API requests → 429.
+
+- **Fix** (`src/cic_daily_report/core/quota_manager.py`):
+  - Them `self._locks: dict[str, asyncio.Lock]` trong `__init__` + helper `_get_lock(service)` lazy-create per-service lock (per-service tranh head-of-line blocking giua gemini vs groq).
+  - `wait_for_rate_limit()` wrap toan bo check-sleep trong `async with self._get_lock(service)`. Sau sleep, `quota.last_call_time = time.monotonic()` reserve slot ngay duoi lock → cac waiter ke tiep tinh wait dua tren reservation moi nhat.
+  - KHONG doi signature, KHONG doi caller pattern (3 callers giu nguyen: `event_detector.py:455`, `llm_adapter.py:372`, `cryptopanic_client.py:86`).
+- **Tests** (`tests/test_core/test_quota_manager.py`): +4 tests trong `TestQuotaManagerRaceCondition`:
+  - `test_concurrent_calls_serialized`: 4 concurrent waits @ rate=60/min → tong >=3.9s (each ~1s).
+  - `test_different_services_parallel`: svc_a + svc_b parallel → tong ~1s (per-service lock, khong global).
+  - `test_no_lock_for_unrate_limited`: rate=0 → 10 concurrent calls hoan thanh <0.1s (early return, khong vao lock).
+  - `test_failure_still_reserves`: sau `track_failure`, wait tiep theo van phai doi ~1s.
+- Tests: 2144 → 2148 (+4) | Coverage `quota_manager.py`: 100% | Version: 2.0.0-alpha.17
+- Phat hien boi Winston (architect review) flag P0 CRITICAL.
+
+
 
 ### PR#1 Emergency — Daily Pipeline hang fix (LLM timeout + observability)
 

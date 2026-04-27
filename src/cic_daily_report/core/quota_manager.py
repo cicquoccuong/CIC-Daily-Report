@@ -49,8 +49,22 @@ class QuotaManager:
 
     def __init__(self) -> None:
         self._quotas: dict[str, ServiceQuota] = {}
+        # WHY: per-service asyncio.Lock prevents race in wait_for_rate_limit() when
+        # asyncio.gather() launches >=2 coroutines on same service — each would otherwise
+        # read stale last_call_time before any caller's track() bumps it, all bypassing
+        # the rate limit and triggering 429s. Per-service (not global) avoids head-of-line
+        # blocking across independent providers (e.g. gemini vs groq).
+        self._locks: dict[str, asyncio.Lock] = {}
         for name, config in DEFAULT_QUOTAS.items():
             self._quotas[name] = ServiceQuota(name=name, **config)
+
+    def _get_lock(self, service: str) -> asyncio.Lock:
+        """Lazy-create per-service lock. Safe: single-threaded asyncio event loop."""
+        lock = self._locks.get(service)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[service] = lock
+        return lock
 
     def register_service(self, name: str, daily_limit: int, rate_limit_per_min: int) -> None:
         """Register or update a service quota."""
@@ -106,17 +120,27 @@ class QuotaManager:
         quota.last_call_time = time.monotonic()
 
     async def wait_for_rate_limit(self, service: str) -> None:
-        """Wait until rate limit allows the next call."""
+        """Wait until rate limit allows the next call.
+
+        Race-safe: serializes per-service via asyncio.Lock and reserves the slot
+        by bumping last_call_time BEFORE returning. Subsequent gather()-ed callers
+        on the same service see the reservation and sleep correctly. The real
+        track() call later overwrites with a fresher timestamp (monotonic, OK).
+        """
         quota = self._quotas.get(service)
         if quota is None or quota.rate_limit_per_min <= 0:
             return
 
-        min_interval = 60.0 / quota.rate_limit_per_min
-        elapsed = time.monotonic() - quota.last_call_time
-        if elapsed < min_interval:
-            wait_time = min_interval - elapsed
-            logger.debug(f"Rate limit: waiting {wait_time:.1f}s for {service}")
-            await asyncio.sleep(wait_time)
+        async with self._get_lock(service):
+            min_interval = 60.0 / quota.rate_limit_per_min
+            elapsed = time.monotonic() - quota.last_call_time
+            if elapsed < min_interval:
+                wait_time = min_interval - elapsed
+                logger.debug(f"Rate limit: waiting {wait_time:.1f}s for {service}")
+                await asyncio.sleep(wait_time)
+            # WHY: reserve slot under lock so concurrent waiters compute their wait
+            # against THIS reservation, not the stale pre-sleep value.
+            quota.last_call_time = time.monotonic()
 
     def remaining(self, service: str) -> int:
         """Return remaining daily quota for a service.
