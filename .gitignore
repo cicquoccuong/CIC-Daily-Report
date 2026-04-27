@@ -46,3 +46,8 @@ token.json
 *.key
 *.pem
 gen-lang-client-*.json
+.gitnexus
+
+# Google Apps Script (per-deployment)
+gas/.clasp.json
+
