@@ -80,6 +80,79 @@ class TestQuotaManagerAsync:
         await qm.wait_for_rate_limit("nonexistent")
 
 
+class TestQuotaManagerRaceCondition:
+    """v2.0.0-alpha.17: race condition fix for wait_for_rate_limit() in asyncio.gather().
+
+    Bug: callers in asyncio.gather() all read stale last_call_time before any track(),
+    bypass min_interval check, fire concurrent API requests → 429.
+    Fix: per-service asyncio.Lock + slot reservation by bumping last_call_time post-sleep.
+    """
+
+    @pytest.fixture
+    def qm(self):
+        from cic_daily_report.core.quota_manager import QuotaManager
+
+        return QuotaManager()
+
+    async def test_concurrent_calls_serialized(self, qm):
+        """5 concurrent waits on same service must space out by min_interval each.
+
+        rate_limit_per_min=60 → min_interval=1.0s. 5 calls → first instant,
+        4 subsequent must each wait ~1s → total >=4.0s.
+        """
+        import asyncio
+
+        qm.register_service("groq_race", daily_limit=1000, rate_limit_per_min=60)
+        # Prime last_call_time so the first call doesn't get a free pass either.
+        await qm.wait_for_rate_limit("groq_race")
+
+        start = time.monotonic()
+        await asyncio.gather(*[qm.wait_for_rate_limit("groq_race") for _ in range(4)])
+        elapsed = time.monotonic() - start
+        # 4 serialized waits at 1s each = ~4s. Allow small overhead jitter.
+        assert elapsed >= 3.9, f"Expected >=3.9s for 4 serialized waits, got {elapsed:.2f}s"
+
+    async def test_different_services_parallel(self, qm):
+        """Different services must NOT block each other (per-service lock, not global)."""
+        import asyncio
+
+        qm.register_service("svc_a", daily_limit=1000, rate_limit_per_min=60)
+        qm.register_service("svc_b", daily_limit=1000, rate_limit_per_min=60)
+        # Prime both
+        await qm.wait_for_rate_limit("svc_a")
+        await qm.wait_for_rate_limit("svc_b")
+
+        start = time.monotonic()
+        await asyncio.gather(
+            qm.wait_for_rate_limit("svc_a"),
+            qm.wait_for_rate_limit("svc_b"),
+        )
+        elapsed = time.monotonic() - start
+        # Both wait ~1s in parallel → total ~1s, NOT 2s.
+        assert elapsed < 1.5, f"Services blocked each other: {elapsed:.2f}s (expected ~1s)"
+        assert elapsed >= 0.9, f"Expected ~1s for one wait cycle, got {elapsed:.2f}s"
+
+    async def test_no_lock_for_unrate_limited(self, qm):
+        """Service with rate_limit_per_min=0 must not acquire lock or wait."""
+        import asyncio
+
+        qm.register_service("unlimited", daily_limit=1000, rate_limit_per_min=0)
+        start = time.monotonic()
+        await asyncio.gather(*[qm.wait_for_rate_limit("unlimited") for _ in range(10)])
+        elapsed = time.monotonic() - start
+        assert elapsed < 0.1, f"Unrate-limited service should be instant: {elapsed:.2f}s"
+
+    async def test_failure_still_reserves(self, qm):
+        """After track_failure(), wait_for_rate_limit must still respect the bumped timing."""
+        qm.register_service("fail_svc", daily_limit=10, rate_limit_per_min=60)
+        qm.track_failure("fail_svc")  # bumps last_call_time
+        start = time.monotonic()
+        await qm.wait_for_rate_limit("fail_svc")
+        elapsed = time.monotonic() - start
+        # Must wait ~1s (min_interval = 60/60 = 1s) since failure just set timing.
+        assert elapsed >= 0.9, f"Expected ~1s wait after failure, got {elapsed:.2f}s"
+
+
 class TestQuotaBudget:
     """v0.28.0: Tests for remaining() and has_budget()."""
 

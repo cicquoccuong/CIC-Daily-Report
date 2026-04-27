@@ -9,6 +9,14 @@ concurrency:
   group: daily-pipeline
   cancel-in-progress: false
 
+# PR#1 Emergency Fix (F3): grant issues:write so the auto-incident step below
+# can create a GitHub Issue when the pipeline hangs / is cancelled / fails.
+# WHY: default GITHUB_TOKEN is read-only for issues; without this the
+# github-script step would 403 on every incident and we'd stay silent.
+permissions:
+  contents: write     # needed by gh-pages dashboard commit step
+  issues: write       # needed by auto-incident step
+
 jobs:
   daily-report:
     runs-on: ubuntu-latest
@@ -49,7 +57,11 @@ jobs:
 
       - name: Run daily pipeline
         id: pipeline
-        continue-on-error: true
+        # PR#1 Emergency Fix (F3): removed `continue-on-error: true`.
+        # WHY: that flag was masking pipeline crashes as "success", so failure()
+        # never fired and Telegram alerts were silenced. We still get retry
+        # semantics via the explicit "Retry pipeline on failure" step below,
+        # which keys off steps.pipeline.outcome == 'failure'.
         env:
           GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
           GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
@@ -134,7 +146,13 @@ jobs:
           done
 
       - name: Notify failure via Telegram
-        if: steps.pipeline.outcome == 'failure' && (steps.retry.outcome == 'failure' || steps.retry.outcome == 'skipped')
+        # Fires on any cancel (includes 2h GH timeout hang) or failure — matches auto-issue step
+        # WHY simplified from review blocker: in cancelled() context,
+        # steps.pipeline.outcome can be unavailable or 'cancelled' rather than
+        # 'failure' — the old nested condition risked NOT firing exactly in the
+        # hang scenario this PR exists to fix. cancelled() || failure() is the
+        # same robust pattern used by the auto-issue step below.
+        if: cancelled() || failure()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -153,3 +171,23 @@ jobs:
           except Exception as e:
               print(f'TG notification failed (non-critical): {e}')
           "
+
+      # PR#1 Emergency Fix (F3): open a tracked GitHub Issue on every incident
+      # so we have a permanent, searchable record (Telegram alerts scroll away).
+      # Fires on BOTH cancelled() (job timeout / hang) and failure() (explicit
+      # crash). Labels with 'pipeline-incident' for easy filtering.
+      - name: Auto-create GitHub Issue on pipeline incident
+        if: cancelled() || failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const title = `Pipeline Incident — ${context.workflow} #${context.runNumber}`;
+            const body = `## Incident\n- Run: ${runUrl}\n- Status: ${context.job} ${context.jobStatus}\n- Commit: ${context.sha.substring(0,7)}\n\nPlease investigate logs.`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['pipeline-incident'],
+            });
