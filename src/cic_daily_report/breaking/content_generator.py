@@ -18,14 +18,14 @@ except ImportError:
     trafilatura = None  # type: ignore[assignment]
 
 from cic_daily_report.breaking.event_detector import BreakingEvent
-from cic_daily_report.core.config import _wave_0_6_enabled
+from cic_daily_report.core.config import _wave_0_6_date_block_enabled, _wave_0_6_enabled
 from cic_daily_report.core.logger import get_logger
 from cic_daily_report.generators.article_generator import (
     DISCLAIMER_SHORT,
     NQ05_SYSTEM_PROMPT,
 )
 from cic_daily_report.generators.nq05_filter import check_and_fix
-from cic_daily_report.generators.numeric_sanity import check_and_cap_percentages
+from cic_daily_report.generators.numeric_sanity import apply_all_numeric_guards
 from cic_daily_report.generators.text_utils import truncate_to_limit
 
 logger = get_logger("breaking_content")
@@ -187,13 +187,66 @@ _DATE_PATTERN = re.compile(r"\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b")
 # Future-tense indicators in Vietnamese that suggest LLM thinks date is upcoming.
 _FUTURE_TENSE_MARKERS = ("dự kiến", "sắp tới", "sắp diễn ra")
 
+# Wave 0.6 Story 0.6.3 (alpha.21): if more than this many sentences get
+# stripped for stale-date violation, the whole article is too compromised
+# to ship — caller marks delivery_failed.
+_DATE_STRIP_THRESHOLD = 2
+
+
+def _split_sentences(content: str) -> list[str]:
+    """Cheap sentence splitter on `.`/`!`/`?`/newline boundaries.
+
+    WHY not nltk: avoid heavy dependency for one-shot use. We accept some
+    over-splits (e.g., "Mr.") because the strip path only removes sentences
+    that contain BOTH a past date AND a future marker — rare overlap with
+    Mr./Dr. abbreviations.
+    """
+    # Keep delimiters by splitting via regex with capture group, then re-pair.
+    parts = re.split(r"([.!?\n]+)", content)
+    out: list[str] = []
+    buf = ""
+    for part in parts:
+        if re.fullmatch(r"[.!?\n]+", part):
+            buf += part
+            if buf.strip():
+                out.append(buf)
+            buf = ""
+        else:
+            buf += part
+    if buf.strip():
+        out.append(buf)
+    return out
+
+
+def _sentence_has_stale_future_date(sentence: str, today: datetime.date | None = None) -> bool:
+    """True if sentence contains a past date AND a future-tense marker."""
+    if today is None:
+        today = datetime.now(timezone.utc).date()
+    sentence_lc = sentence.lower()
+    has_marker = any(marker in sentence_lc for marker in _FUTURE_TENSE_MARKERS)
+    if not has_marker:
+        return False
+    for m in _DATE_PATTERN.finditer(sentence):
+        try:
+            day, month = int(m.group(1)), int(m.group(2))
+            year_str = m.group(3)
+            year = int(year_str) if year_str else today.year
+            if year < 100:
+                year += 2000
+            ref_date = datetime(year, month, day).date()
+        except (ValueError, IndexError):
+            continue
+        if ref_date < today:
+            return True
+    return False
+
 
 def _check_stale_dates(content: str) -> int:
     """Wave 0.5 (alpha.18): LOG-ONLY warning when LLM presents past dates as future.
 
-    WHY LOG-ONLY: First we observe how frequent this is in production before
-    deciding to BLOCK in Wave 0.6. Blocking immediately could drop legitimate
-    content if our parser has false positives (e.g., "Q1/Q2" matching as 1/2).
+    WHY LOG-ONLY mode kept: tests + back-compat. Wave 0.6 Story 0.6.3 adds
+    the HARD-BLOCK path via `_check_and_handle_stale_dates()` gated behind
+    flag `WAVE_0_6_DATE_BLOCK`.
 
     Returns count of stale-date warnings emitted (for tests).
     """
@@ -223,6 +276,92 @@ def _check_stale_dates(content: str) -> int:
             )
             warn_count += 1
     return warn_count
+
+
+def _check_and_handle_stale_dates(
+    content: str,
+    today: datetime.date | None = None,
+    block_enabled: bool | None = None,
+) -> tuple[str, list[str], bool]:
+    """Wave 0.6 Story 0.6.3 (alpha.21): conditional stale-date enforcement.
+
+    Args:
+        content: Generated article text.
+        today: Date to compare against. None → use UTC today (production).
+            Tests inject explicit today for determinism.
+        block_enabled: Override flag. None → read from env via
+            `_wave_0_6_date_block_enabled()`. Tests inject explicit value.
+
+    Returns:
+        (cleaned_content, issues_list, delivery_failed):
+        - LOG-ONLY mode (flag OFF): cleaned == content unchanged, issues
+          contain warnings, delivery_failed always False (Wave 0.5.2
+          behavior preserved).
+        - BLOCK mode (flag ON): sentences with past-date + future-marker
+          stripped from content. If >_DATE_STRIP_THRESHOLD sentences get
+          stripped, delivery_failed=True (article too damaged to ship).
+
+    WHY return tuple (not raise): caller (content_generator) wants to log
+    + decide. Pipeline test path may want to inspect issues count without
+    crashing the pipeline.
+    """
+    if today is None:
+        today = datetime.now(timezone.utc).date()
+    if block_enabled is None:
+        block_enabled = _wave_0_6_date_block_enabled()
+
+    issues: list[str] = []
+
+    # LOG-ONLY path (Wave 0.5.2 behavior, unchanged).
+    if not block_enabled:
+        warn_count = 0
+        for m in _DATE_PATTERN.finditer(content):
+            try:
+                day, month = int(m.group(1)), int(m.group(2))
+                year_str = m.group(3)
+                year = int(year_str) if year_str else today.year
+                if year < 100:
+                    year += 2000
+                ref_date = datetime(year, month, day).date()
+            except (ValueError, IndexError):
+                continue
+            if ref_date >= today:
+                continue
+            prefix = content[max(0, m.start() - 50) : m.start()].lower()
+            suffix = content[m.end() : m.end() + 50].lower()
+            combined = prefix + " " + suffix
+            if any(marker in combined for marker in _FUTURE_TENSE_MARKERS):
+                msg = (
+                    f"Stale date in breaking content (LOG-ONLY): {m.group(0)} "
+                    f"(parsed={ref_date}, today={today})"
+                )
+                logger.warning(msg)
+                issues.append(msg)
+                warn_count += 1
+        return content, issues, False
+
+    # BLOCK path: strip offending sentences.
+    sentences = _split_sentences(content)
+    kept: list[str] = []
+    stripped_count = 0
+    for sent in sentences:
+        if _sentence_has_stale_future_date(sent, today):
+            stripped_count += 1
+            issues.append(
+                f"Stripped stale-date sentence: '{sent.strip()[:120]}...' (today={today})"
+            )
+            logger.warning(issues[-1])
+        else:
+            kept.append(sent)
+
+    cleaned = "".join(kept)
+    delivery_failed = stripped_count > _DATE_STRIP_THRESHOLD
+    if delivery_failed:
+        logger.error(
+            f"Stale-date BLOCK: stripped {stripped_count} sentences (>{_DATE_STRIP_THRESHOLD}) "
+            "— marking delivery_failed."
+        )
+    return cleaned, issues, delivery_failed
 
 
 _TRAFILATURA_TIMEOUT = 12  # seconds — balance speed vs content depth
@@ -549,24 +688,39 @@ async def generate_breaking_content(
 
     logger.info(f"Breaking content generated: {word_count} words via {model_used}")
 
-    # Wave 0.5.2 (alpha.19) Fix 4: numeric sanity guard — cap absurd % values.
+    # Wave 0.6 Story 0.6.3 (alpha.21): full numeric guard suite (% + BTC + ETH + year).
     # WHY here: after NQ05 filter so we don't sanitize content that gets
     # rewritten by re-filter; before truncation so cap doesn't push past limit.
-    sanity = check_and_cap_percentages(clean_content)
-    if not sanity.passed:
+    # WHY no btc/eth snapshot pass yet: Story 0.6.4 will wire PriceSnapshot
+    # from market_context. For now use global ranges (BTC $10k-$200k, ETH
+    # $1k-$10k) — wide enough to avoid false positives but tight enough to
+    # catch obvious LLM hallucinations ($5k BTC, $20k ETH).
+    clean_content, guard_issues = apply_all_numeric_guards(clean_content)
+    if guard_issues:
         logger.warning(
-            f"Fix 4: capped {sanity.capped_count} absurd percentages in breaking content "
-            f"(checked={sanity.checked_count}). Examples: {sanity.warnings[:2]}"
+            f"Story 0.6.3 numeric guards: {len(guard_issues)} issue(s). "
+            f"Examples: {guard_issues[:2]}"
         )
-        clean_content = sanity.sanitized_content
         word_count = len(clean_content.split())
 
-    # Wave 0.5 (alpha.18): Date freshness post-check — LOG-ONLY (Wave 0.6 will block).
+    # Wave 0.6 Story 0.6.3 (alpha.21): Date freshness — LOG or BLOCK based on flag.
     # WHY: Audit found LLM frequently writes "dự kiến diễn ra vào ngày X/Y" using
     # past dates (e.g., today=27/04 but content says "diễn ra vào 06/03 sắp tới").
-    # Detect by: any date mention in content where preceding 50 chars contain
-    # "dự kiến" or "sắp tới" but the parsed date < today.
-    _check_stale_dates(clean_content)
+    # Flag default OFF → LOG-ONLY (Wave 0.5.2 behavior). Flag ON → strip stale
+    # sentences; if too many stripped, mark delivery_failed for caller to skip.
+    clean_content, _date_issues, _date_failed = _check_and_handle_stale_dates(clean_content)
+    if _date_failed:
+        # WHY raise instead of return: pipeline must mark event delivery_failed.
+        # Mirror pattern from fact-check rejection (LLMError raise path).
+        from cic_daily_report.core.error_handler import LLMError
+
+        raise LLMError(
+            "Stale-date BLOCK: too many stripped sentences (Story 0.6.3)",
+            source="breaking_content_date_block",
+            retry=False,
+        )
+    if clean_content != "":
+        word_count = len(clean_content.split())
 
     # P1.25 + NQ05: Truncate body BEFORE appending suffix to guarantee the
     # mandatory DISCLAIMER is never cut off by the character limit.
@@ -882,14 +1036,13 @@ async def generate_digest_content(
         )
         clean_content = _DISCLAIMER_RE.sub("", response.text).rstrip()
 
-    # Wave 0.5.2 (alpha.19) Fix 4: numeric sanity guard for digest path too.
-    sanity = check_and_cap_percentages(clean_content)
-    if not sanity.passed:
+    # Wave 0.6 Story 0.6.3 (alpha.21): full numeric guard suite for digest path too.
+    clean_content, digest_guard_issues = apply_all_numeric_guards(clean_content)
+    if digest_guard_issues:
         logger.warning(
-            f"Fix 4 (digest): capped {sanity.capped_count} absurd percentages "
-            f"(checked={sanity.checked_count})"
+            f"Story 0.6.3 (digest) numeric guards: {len(digest_guard_issues)} issue(s). "
+            f"Examples: {digest_guard_issues[:2]}"
         )
-        clean_content = sanity.sanitized_content
 
     # P1.25 + NQ05: Truncate body BEFORE appending suffix to guarantee the
     # mandatory DISCLAIMER is never cut off by the character limit.
