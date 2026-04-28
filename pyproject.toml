@@ -11,6 +11,7 @@ dependencies = [
     "trafilatura>=1.12",
     "yfinance>=0.2",
     "telethon>=1.42.0",
+    "rank-bm25>=0.2.2",
 ]
 
 [dependency-groups]
