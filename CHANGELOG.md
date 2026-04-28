@@ -2,6 +2,20 @@
 
 ## [Unreleased] - 2026-04-28
 
+### Wave 0.6 Story 0.6.1 — RAG mini BM25 indexer (scaffolding)
+
+Build BM25 indexer cho `BREAKING_LOG` Sheets để Story 0.6.2 có thể inject ground-truth historical events vào prompt thay vì để LLM bịa (87.5% claims sai trong audit 27-28/04 — Powell sai năm, Wormhole sai hướng, Poly Network sai 10x số liệu).
+
+- `breaking/rag_index.py` (NEW): `RAGIndex` class với `build_from_sheets`, `load_from_cache`, `query` (top-K BM25 + score + timestamp filter chống self-reference Wave 0.5.2 Fix 3)
+- **Hybrid storage**: Google Sheets BREAKING_LOG = source of truth; SQLite cache local = fast subsequent reads (ephemeral on GitHub Actions runner, persistent on local dev)
+- **BM25 over vector embeddings**: pure Python, no native compile (works on GH Actions Linux), đủ cho ~1000 events scale, <100ms query, <30s build. Vector DB defer Wave 1.0.
+- `pyproject.toml`: +`rank-bm25 ^0.2.2`
+- Tests: +22 in `tests/test_breaking/test_rag_index.py` (edge cases: corrupt SQLite recreate, unicode VN query, concurrent query, stopwords-only, severity filter skip malformed, force rebuild)
+
+Story 0.6.1 **KHÔNG wire vào pipeline** — chỉ scaffolding RAG infra. Story 0.6.2 (Cerebras Qwen3 235B fact-checker) sẽ inject historical context vào breaking prompt + thay thế hardcoded historical instruction.
+
+Tests: 2199 → **2221 PASS** (+22), zero regression.
+
 ### Wave 0.5.2 CRITICAL — 7 P0 fixes (alpha.19)
 
 Audit Round 2 (28/04 batch Daily 11:43 + 8 Breaking 15:01-15:05) phát hiện 9 bug mới + 5 P0 critical còn từ Round 1 (Mary fact-check 6/6 historical recycle, Winston 2 spec gap, Devil 4 BLOCKER, Codex bot Finding 2). Sprint patch 7 fixes critical:
