@@ -114,8 +114,35 @@ def _extract_percentage(title: str) -> float | None:
 
 
 # QO.30: Module-level defaults — runtime values read from CAU_HINH in DedupManager.
-SIMILARITY_THRESHOLD = 0.70
+# Wave 0.5 (alpha.18): SIMILARITY_THRESHOLD lowered 0.70 → 0.55 after audit found
+# regulatory-bill near-duplicates passing through (e.g., "Canada Bill C-25 crypto"
+# vs "Canada cấm crypto donate" both about same bill but worded differently).
+SIMILARITY_THRESHOLD = 0.55
 ENTITY_OVERLAP_THRESHOLD = 0.60  # v0.28.0: entity-based dedup
+
+# Wave 0.5 (alpha.18): Regulatory bill ID detector — when two titles reference the
+# same bill ID (e.g., "Bill C-25", "MiCA", "FIT21", "GENIUS Act"), they describe
+# the same regulatory event and should be auto-flagged as duplicates regardless
+# of wording similarity. Bypasses the SequenceMatcher threshold entirely.
+_REG_BILL_PATTERNS = [
+    re.compile(r"\bBill\s+[A-Z]-\d+\b", re.IGNORECASE),
+    re.compile(r"\b(?:MiCA|FIT21|GENIUS\s+Act|CLARITY\s+Act)\b", re.IGNORECASE),
+]
+
+
+def _extract_reg_bill_ids(title: str) -> set[str]:
+    """Wave 0.5: Extract regulatory bill identifiers from a title.
+
+    WHY: Two articles about the same bill (different wording, different angles)
+    must be flagged as duplicates. Returns lowercased canonical IDs for set
+    intersection with another title's IDs.
+    """
+    ids: set[str] = set()
+    for pat in _REG_BILL_PATTERNS:
+        for m in pat.findall(title):
+            ids.add(m.lower().strip())
+    return ids
+
 
 # Named entities: crypto projects, companies, regulatory bodies, key figures
 _ENTITY_PATTERN = re.compile(
@@ -221,10 +248,27 @@ def _is_similar_to_recent(
     recent_entries: list[DedupEntry],
     threshold: float = SIMILARITY_THRESHOLD,
 ) -> bool:
-    """Check if title is similar to any recent entry (beyond hash match)."""
+    """Check if title is similar to any recent entry (beyond hash match).
+
+    Wave 0.5 (alpha.18): Bill ID auto-dedup added — same regulatory bill ID
+    (Bill C-XX, MiCA, FIT21, GENIUS Act) in both titles → flagged as duplicate
+    regardless of similarity ratio.
+    """
     title_lower = title.strip().lower()
+    new_bill_ids = _extract_reg_bill_ids(title)
     for entry in recent_entries:
         existing_lower = entry.title.strip().lower()
+
+        # Wave 0.5: Regulatory bill ID match → instant duplicate (bypass ratio).
+        if new_bill_ids:
+            existing_bill_ids = _extract_reg_bill_ids(entry.title)
+            shared = new_bill_ids & existing_bill_ids
+            if shared:
+                logger.info(
+                    f"Bill ID dedup: '{title[:50]}' shares bill {shared} with '{entry.title[:50]}'"
+                )
+                return True
+
         ratio = SequenceMatcher(None, title_lower, existing_lower).ratio()
         if ratio >= threshold:
             logger.info(f"Similarity dedup: '{title[:50]}' ~ '{entry.title[:50]}' ({ratio:.2f})")

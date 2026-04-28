@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import httpx
 
@@ -139,18 +140,83 @@ class BreakingContent:
 _SOURCE_DISPLAY_MAP: dict[str, str] = {
     "market_data": "Dữ liệu thị trường",
     "market_trigger": "Cảnh báo thị trường",
+    # Wave 0.5 (alpha.18): Expanded map — audit found internal source IDs leaking
+    # into Telegram (e.g., "Reuters_Business" instead of "Reuters Business").
+    "Reuters_Business": "Reuters Business",
+    "CoinTelegraph": "CoinTelegraph",
+    "CoinDesk": "CoinDesk",
+    "CryptoSlate": "CryptoSlate",
+    "Decrypt": "Decrypt",
+    "NewsBTC": "NewsBTC",
+    "UToday": "U.Today",
+    "Bitcoinist": "Bitcoinist",
+    "TheBlock": "The Block",
+    "Blockworks": "Blockworks",
+    "CryptoNews": "Crypto News",
+    "AMBCrypto": "AMBCrypto",
 }
+
+
+def _format_source(source: str) -> str:
+    """Wave 0.5 (alpha.18): Resolve source identifier to user-friendly display.
+
+    Order: explicit map → underscore-to-space fallback. The fallback is only
+    cosmetic (e.g., "Some_New_Source" → "Some New Source") so unknown
+    sources still render readably without needing a code change.
+    """
+    if source in _SOURCE_DISPLAY_MAP:
+        return _SOURCE_DISPLAY_MAP[source]
+    return source.replace("_", " ").strip()
 
 
 def _format_source_link(source: str, url: str) -> str:
     """Format source as Telegram HTML hyperlink (PA E)."""
     import html as _html
 
-    display_name = _SOURCE_DISPLAY_MAP.get(source, source)
+    display_name = _format_source(source)
     safe_source = _html.escape(display_name)
     if url:
         return f'<a href="{url}">Nguồn: {safe_source} ↗</a>'
     return f"Nguồn: {safe_source}"
+
+
+# Wave 0.5 (alpha.18): Date freshness check — match dd/mm or dd-mm[-yyyy].
+_DATE_PATTERN = re.compile(r"\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b")
+# Future-tense indicators in Vietnamese that suggest LLM thinks date is upcoming.
+_FUTURE_TENSE_MARKERS = ("dự kiến", "sắp tới", "sắp diễn ra", "vào ngày")
+
+
+def _check_stale_dates(content: str) -> int:
+    """Wave 0.5 (alpha.18): LOG-ONLY warning when LLM presents past dates as future.
+
+    WHY LOG-ONLY: First we observe how frequent this is in production before
+    deciding to BLOCK in Wave 0.6. Blocking immediately could drop legitimate
+    content if our parser has false positives (e.g., "Q1/Q2" matching as 1/2).
+
+    Returns count of stale-date warnings emitted (for tests).
+    """
+    today = datetime.now(timezone.utc).date()
+    warn_count = 0
+    for m in _DATE_PATTERN.finditer(content):
+        try:
+            day, month = int(m.group(1)), int(m.group(2))
+            year_str = m.group(3)
+            year = int(year_str) if year_str else today.year
+            if year < 100:
+                year += 2000
+            ref_date = datetime(year, month, day).date()
+        except (ValueError, IndexError):
+            continue
+        if ref_date >= today:
+            continue
+        # Check the 50 chars BEFORE the date for future-tense markers.
+        prefix = content[max(0, m.start() - 50) : m.start()].lower()
+        if any(marker in prefix for marker in _FUTURE_TENSE_MARKERS):
+            logger.warning(
+                f"Stale date in breaking content: {m.group(0)} (parsed={ref_date}, today={today})"
+            )
+            warn_count += 1
+    return warn_count
 
 
 _TRAFILATURA_TIMEOUT = 12  # seconds — balance speed vs content depth
@@ -274,17 +340,15 @@ async def generate_breaking_content(
     # Combine QO.36 enrichment into a single block
     enrichment_text = cross_asset_section + polymarket_section + history_section
 
-    # QO.19: Historical parallel instruction — ask LLM to reference similar past events.
-    # WHY conditional: only include when the event is significant enough (critical/important)
-    # to warrant historical comparison. Notable events are too minor for parallels.
+    # Wave 0.5 (alpha.18): REMOVED historical_instruction until RAG is available.
+    # WHY: Audit 27-28/04/2026 found 87.5% of LLM-generated historical claims were
+    # fabricated (e.g., Poly Network "$6B" vs real $0.6B; "BTC tăng 2022" vs real
+    # bear -75%). Smoking gun: prompt example "Fed 06/2022 → BTC -15% 48h" caused
+    # LLMs to clone the template structure and fill in fabricated numbers/dates.
+    # Without a RAG/historical-database backing, the LLM has no choice but to
+    # rely on training-set knowledge → hallucinated parallels.
+    # Re-enable in Wave 0.6+ once historical DB is wired (see roadmap).
     historical_instruction_text = ""
-    if severity in ("critical", "important"):
-        historical_instruction_text = (
-            "\n- (Nếu có thể) 1 câu THAM CHIẾU LỊCH SỬ: "
-            "sự kiện tương tự trong quá khứ và BTC/thị trường đã phản ứng thế nào. "
-            "Ví dụ: 'Lần cuối Fed tăng lãi suất 75 bps (06/2022), BTC giảm 15% trong 48h.' "
-            "CHỈ viết khi có sự kiện tương đồng RÕ RÀNG, KHÔNG ép.\n"
-        )
 
     prompt = BREAKING_PROMPT_TEMPLATE.format(
         title=event.title,
@@ -329,6 +393,13 @@ async def generate_breaking_content(
         word_count = len(clean_content.split())
 
     logger.info(f"Breaking content generated: {word_count} words via {model_used}")
+
+    # Wave 0.5 (alpha.18): Date freshness post-check — LOG-ONLY (Wave 0.6 will block).
+    # WHY: Audit found LLM frequently writes "dự kiến diễn ra vào ngày X/Y" using
+    # past dates (e.g., today=27/04 but content says "diễn ra vào 06/03 sắp tới").
+    # Detect by: any date mention in content where preceding 50 chars contain
+    # "dự kiến" or "sắp tới" but the parsed date < today.
+    _check_stale_dates(clean_content)
 
     # P1.25 + NQ05: Truncate body BEFORE appending suffix to guarantee the
     # mandatory DISCLAIMER is never cut off by the character limit.

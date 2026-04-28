@@ -1,6 +1,22 @@
 # Changelog
 
-## [Unreleased] - 2026-04-26
+## [Unreleased] - 2026-04-28
+
+### Wave 0.5 EMERGENCY HOTFIX — 6 P0 fixes (alpha.18)
+
+Audit 27-28/04/2026 (party-mode 6 agents) phat hien 18 bug breaking pipeline (87.5% historical claims SAI). Patch ngay 6 critical:
+
+- **Fix 1 (SMOKING GUN)** `breaking/content_generator.py:280-287`: XOA `historical_instruction_text` (ca block + vi du "Fed 06/2022 → BTC -15% 48h"). Nguyen nhan: prompt template co example cu the → LLM clone template + fill so bia (vd Poly Network "$6B" vs that $0.6B). Tai bat trong Wave 0.6+ khi co RAG/historical DB.
+- **Fix 2 (NQ05)** `generators/nq05_filter.py`: Them 3 advisory pattern moi vao `SEMANTIC_NQ05_PATTERNS` — `tích lũy dài hạn`, `nhà đầu tư cần theo dõi`, `nhà đầu tư chiến lược` — chan implicit accumulation/strategy advice.
+- **Fix 3 (Dedup)** `breaking/dedup_manager.py`: `SIMILARITY_THRESHOLD` 0.70 → 0.55 + them `_REG_BILL_PATTERNS` regex (Bill C-XX, MiCA, FIT21, GENIUS Act) auto-mark duplicate trong `_is_similar_to_recent` (bypass SequenceMatcher).
+- **Fix 4 (Pipeline alert)** `daily_pipeline.py:113-138`: Enrich `send_admin_alert` failure path voi `GITHUB_RUN_ID` + ISO timestamp + first error type. WHY: 26-27/04/2026 silent-fail 2 ngay khong nhan duoc alert; gio operator co the mo GH Actions run truc tiep tu Telegram.
+- **Fix 5 (Date freshness)** `breaking/content_generator.py`: Them `_check_stale_dates()` LOG-ONLY (chua block) — phat hien khi LLM viet "du kien dien ra vao ngay X/Y" ma ngay do < hom nay. Wave 0.6 se BLOCK; gio chi observe.
+- **Fix 6 (Source labels)** `breaking/content_generator.py:139+`: Mo rong `_SOURCE_DISPLAY_MAP` voi 12 source moi (Reuters_Business, CoinTelegraph, ...) + helper `_format_source()` co fallback `_` → space + title-case cho source la.
+
+- **Tests**: +19 trong `tests/test_breaking/test_wave05_hotfix.py` (19/19 PASS); update 4 test cu trong `test_qo19_breaking_enrichment.py` cho phu hop hanh vi moi (historical removed).
+- **Total**: 2148 → 2167 PASS (+19, 0 regression).
+- **Lint**: ruff clean tren 4 file modified.
+- **Version**: 2.0.0-alpha.17 → **2.0.0-alpha.18** (3 noi dong bo).
 
 ### [FIX] QuotaManager race condition — async lock per service
 
