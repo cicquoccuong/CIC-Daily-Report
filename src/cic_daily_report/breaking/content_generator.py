@@ -18,6 +18,7 @@ except ImportError:
     trafilatura = None  # type: ignore[assignment]
 
 from cic_daily_report.breaking.event_detector import BreakingEvent
+from cic_daily_report.core.config import _wave_0_6_enabled
 from cic_daily_report.core.logger import get_logger
 from cic_daily_report.generators.article_generator import (
     DISCLAIMER_SHORT,
@@ -227,6 +228,70 @@ def _check_stale_dates(content: str) -> int:
 _TRAFILATURA_TIMEOUT = 12  # seconds — balance speed vs content depth
 
 
+def _get_historical_context(
+    event: BreakingEvent,
+    top_k: int = 3,
+    sheets_client: object | None = None,
+) -> tuple[str, list[dict]]:
+    """Wave 0.6 Story 0.6.2: Query RAG, format historical events as prompt context.
+
+    Returns:
+        (context_text, raw_results). context_text is empty string when no
+        match (caller decides whether to instruct LLM "no historical").
+        raw_results is the unformatted RAG dicts — passed to the judge so
+        it can verify historical analogies match documented events.
+
+    WHY return both: prompt needs human-readable text; judge needs structured
+    JSON. Building once here avoids re-querying.
+
+    WHY exclude_recent_hours=1.0: anti self-reference (Wave 0.5.2 fix) —
+    don't let the LLM cite the very event it's currently writing about.
+    """
+    if not _wave_0_6_enabled():
+        return ("", [])
+
+    try:
+        from cic_daily_report.breaking.rag_index import get_or_build_index
+
+        idx = get_or_build_index(sheets_client=sheets_client)
+        query = (
+            (event.title or "")
+            + " "
+            + ((event.raw_data or {}).get("summary", "") if event.raw_data else "")
+        )
+        results = idx.query(
+            query=query,
+            top_k=top_k,
+            min_score=0.5,
+            exclude_recent_hours=1.0,
+        )
+    except Exception as e:
+        # WHY catch broad: RAG failure (sheets down, sqlite corrupt, BM25
+        # error) MUST NOT block content generation. Fail-open with empty
+        # context — LLM will get the "no historical" instruction.
+        logger.warning(
+            f"RAG query failed ({type(e).__name__}: {e!r}) — skipping historical context"
+        )
+        return ("", [])
+
+    if not results:
+        return ("", [])
+
+    # Format as bullet list inside <historical_events> XML-ish block —
+    # matches the prompt's other <source>/<historical_context> conventions.
+    lines = ["<historical_events>"]
+    for r in results:
+        ts = r.get("timestamp", "?")
+        title = r.get("title", "?")
+        btc = r.get("btc_price")
+        btc_str = f"${btc:,.0f}" if isinstance(btc, (int, float)) and btc > 0 else "N/A"
+        score = r.get("score", 0.0)
+        src = r.get("source", "?")
+        lines.append(f"- [{ts}] {title} (BTC: {btc_str}, score: {score:.2f}) — Nguồn: {src}")
+    lines.append("</historical_events>")
+    return ("\n".join(lines), results)
+
+
 async def _fetch_article_text(url: str, max_chars: int = 3000) -> str:
     """Fetch and extract article body text via trafilatura.
 
@@ -261,6 +326,7 @@ async def generate_breaking_content(
     cross_asset_context: str = "",
     polymarket_shift: str = "",
     breaking_history: str = "",
+    sheets_client: object | None = None,
 ) -> BreakingContent:
     """Generate breaking news content for a detected event.
 
@@ -345,15 +411,27 @@ async def generate_breaking_content(
     # Combine QO.36 enrichment into a single block
     enrichment_text = cross_asset_section + polymarket_section + history_section
 
-    # Wave 0.5 (alpha.18): REMOVED historical_instruction until RAG is available.
-    # WHY: Audit 27-28/04/2026 found 87.5% of LLM-generated historical claims were
-    # fabricated (e.g., Poly Network "$6B" vs real $0.6B; "BTC tăng 2022" vs real
-    # bear -75%). Smoking gun: prompt example "Fed 06/2022 → BTC -15% 48h" caused
-    # LLMs to clone the template structure and fill in fabricated numbers/dates.
-    # Without a RAG/historical-database backing, the LLM has no choice but to
-    # rely on training-set knowledge → hallucinated parallels.
-    # Re-enable in Wave 0.6+ once historical DB is wired (see roadmap).
-    historical_instruction_text = ""
+    # Wave 0.6 Story 0.6.2: RAG-grounded historical context.
+    # WHY: Wave 0.5 audit found 87.5% LLM "historical references" fabricated
+    # (Poly Network "$6B" vs real $0.6B; "BTC tăng 2022" vs real bear -75%).
+    # Story 0.6.1 built BM25 index over BREAKING_LOG; this wires it in.
+    # Two paths:
+    #   - RAG hit → inject <historical_events> block + ALLOW historical sentence
+    #     constrained to those events.
+    #   - No hit (or flag off) → INSTRUCT no historical reference to prevent
+    #     fabrication. Mirrors Wave 0.5 safe behavior.
+    rag_context_text, rag_results = _get_historical_context(event, sheets_client=sheets_client)
+    if rag_context_text:
+        historical_instruction_text = (
+            "\n- (Optional) 1 câu THAM CHIẾU LỊCH SỬ — CHỈ dùng events có "
+            "trong <historical_events> dưới đây. KHÔNG TỰ BỊA số/ngày/sự "
+            "kiện khác.\n"
+            f"\n{rag_context_text}\n"
+        )
+    else:
+        historical_instruction_text = (
+            "\n- KHÔNG viết tham chiếu lịch sử (chưa có data verify được).\n"
+        )
 
     prompt = BREAKING_PROMPT_TEMPLATE.format(
         title=event.title,
@@ -376,6 +454,62 @@ async def generate_breaking_content(
         temperature=0.3,
         system_prompt=NQ05_SYSTEM_PROMPT,
     )
+
+    # Wave 0.6 Story 0.6.2: Fact-check pass — Cerebras Qwen3 235B verifies
+    # numerical/historical/quote claims. Only for high-impact severities to
+    # save quota (notable severity has weaker hallucination risk + higher
+    # volume).
+    # WHY retry inside this function (not pipeline): retry needs the same
+    # prompt + context. Surfacing retry to pipeline would leak prompt details.
+    judge_skipped = not _wave_0_6_enabled() or severity not in ("critical", "important")
+    if not judge_skipped:
+        judge1 = await llm.judge_factual_claims(
+            content=response.text,
+            source_text=summary_text or event.title,
+            historical_context=rag_results,
+        )
+        if judge1.verdict == "rejected":
+            logger.warning(
+                f"Fact-check rejected (1st pass): {judge1.issues[:3]} (model={judge1.model_used})"
+            )
+            # WHY 1 retry only: more retries waste quota; the issues list
+            # already tells the LLM what to avoid.
+            retry_prompt = (
+                prompt
+                + "\n\nLẦN TRƯỚC bị reject vì: "
+                + "; ".join(judge1.issues[:5])
+                + "\nViết lại CHỈ với fact verify được trong <source>. "
+                "KHÔNG bịa số/ngày/sự kiện."
+            )
+            response = await llm.generate(
+                prompt=retry_prompt,
+                max_tokens=2048,
+                temperature=0.3,
+                system_prompt=NQ05_SYSTEM_PROMPT,
+            )
+            judge2 = await llm.judge_factual_claims(
+                content=response.text,
+                source_text=summary_text or event.title,
+                historical_context=rag_results,
+            )
+            if judge2.verdict == "rejected":
+                # WHY raise instead of return broken content: pipeline must
+                # be told this event failed so it logs + skips delivery.
+                # Mirroring v0.29.0 (A4) — propagate rather than swallow.
+                from cic_daily_report.core.error_handler import LLMError
+
+                logger.error(f"Fact-check rejected (2nd pass): {judge2.issues[:3]}")
+                raise LLMError(
+                    f"Fact-check rejected after retry: {judge2.issues[:3]}",
+                    source="breaking_content_factcheck",
+                    retry=False,
+                )
+        elif judge1.verdict == "needs_revision":
+            # Log + ship — minor issues acceptable for non-critical content.
+            logger.warning(
+                f"Fact-check needs revision: {judge1.issues[:3]} "
+                f"(model={judge1.model_used}) — shipping anyway"
+            )
 
     # Apply NQ05 post-filter
     filtered = check_and_fix(response.text, extra_banned_keywords)

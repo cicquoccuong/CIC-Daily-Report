@@ -8,6 +8,7 @@ Automatic fallback when primary fails. Provider preference per pipeline.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import time
@@ -133,6 +134,32 @@ class LLMResponse:
     model: str
     # P1.24: finish reason from provider ("stop", "length", etc.)
     finish_reason: str = field(default="")
+
+
+@dataclass
+class JudgeResult:
+    """Wave 0.6 Story 0.6.2: Fact-checker verdict for generated content.
+
+    WHY separate from LLMResponse: judge output is a structured verdict
+    (approved/needs_revision/rejected + issues list) — distinct from raw
+    text generation. Downstream pipeline branches on `verdict` to decide
+    retry/ship/abort.
+
+    Fields:
+        verdict: "approved" (0 issues) | "needs_revision" (1-2 minor) |
+                 "rejected" (3+ issues OR clear hallucination).
+        issues: List of human-readable issue descriptions for logging/retry.
+        confidence: Judge's self-reported confidence 0.0-1.0.
+        model_used: Name of the provider that produced the verdict (for
+                    metrics/debugging).
+        raw_text: Original judge response (for debugging when JSON parse fails).
+    """
+
+    verdict: str
+    issues: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+    model_used: str = ""
+    raw_text: str = ""
 
 
 @dataclass
@@ -441,6 +468,166 @@ class LLMAdapter:
         raise LLMError(
             f"All LLM providers failed ({fallback_chain}): {'; '.join(errors)}",
             source="llm_adapter",
+        )
+
+    # ------------------------------------------------------------------
+    # Wave 0.6 Story 0.6.2: Fact-checker (2nd LLM judge pass)
+    # ------------------------------------------------------------------
+
+    async def judge_factual_claims(
+        self,
+        content: str,
+        source_text: str,
+        historical_context: list[dict] | None = None,
+    ) -> JudgeResult:
+        """Verify factual claims in generated content using Cerebras Qwen3 235B.
+
+        WHY separate model: judging requires DIFFERENT capabilities than
+        generation (long-context comparison, structured JSON output, less
+        creative). Cerebras Qwen3 235B is the documented Wave 0.6 choice
+        (free 1M tokens/day quota — separate from generation chain).
+
+        WHY graceful degradation: fact-checker MUST NOT block the pipeline
+        — Cerebras 5xx/quota/timeout returns "approved" so message still
+        ships. The judge is a SAFETY NET, not a gate. Caller decides what
+        to do with the verdict.
+
+        Args:
+            content: LLM-generated text to verify (the bản tin).
+            source_text: Raw article text the generator was given (ground truth).
+            historical_context: RAG results [{"timestamp", "title", "btc_price",
+                "source", ...}] used by generator. Empty list = no historical
+                claims should appear in `content`.
+
+        Returns:
+            JudgeResult. On infrastructure failure → verdict="approved",
+            confidence=0.0, issues=["judge_unavailable: ..."] so pipeline
+            can proceed without surfacing it as a hallucination.
+        """
+        cerebras_key = os.getenv("CEREBRAS_API_KEY", "")
+        if not cerebras_key:
+            return JudgeResult(
+                verdict="approved",
+                issues=["judge_unavailable: CEREBRAS_API_KEY missing"],
+                confidence=0.0,
+                model_used="",
+            )
+
+        # WHY dedicated provider (not chain): the generation chain prefers
+        # Gemini for cost; the judge MUST use Qwen3 235B for quality. Build
+        # a one-shot provider rather than reordering the global chain.
+        # Fallback model: gpt-oss-120b (already battle-tested in chain) if
+        # Qwen3 235B 404s on Cerebras quota tier.
+        judge_model = os.getenv("WAVE_0_6_JUDGE_MODEL", "qwen-3-235b-a22b-instruct-2507")
+        judge_provider = LLMProvider(
+            name="cerebras_judge",
+            api_key=cerebras_key,
+            model=judge_model,
+            endpoint="https://api.cerebras.ai/v1/chat/completions",
+            rate_limit_per_min=30,
+        )
+
+        rag_json = json.dumps(historical_context or [], ensure_ascii=False)
+
+        # WHY strict JSON instruction: parser-friendly output. Qwen3 235B
+        # follows JSON schema reliably when explicitly instructed.
+        prompt = (
+            "Bạn là fact-checker đọc bản tin crypto vừa được sinh ra. "
+            "Verify mọi claim numerical/historical/quote.\n\n"
+            "INPUT:\n"
+            "<source_article>\n"
+            f"{source_text}\n"
+            "</source_article>\n\n"
+            "<historical_context>\n"
+            f"{rag_json}\n"
+            "</historical_context>\n\n"
+            "<generated_content>\n"
+            f"{content}\n"
+            "</generated_content>\n\n"
+            "Soi GENERATED_CONTENT, list TẤT CẢ:\n"
+            "1. Numerical claims (% change, $ amount, count, date) — "
+            "verify có trong source/historical?\n"
+            '2. Historical analogies ("Lần cuối X...") — match '
+            "historical_context không?\n"
+            "3. Quote attribution — có trong source không?\n\n"
+            "Trả về JSON THUẦN (không markdown, không text khác):\n"
+            '{"verdict": "approved" | "needs_revision" | "rejected", '
+            '"issues": ["mô tả ngắn issue 1", ...], '
+            '"confidence": 0.0-1.0}\n\n'
+            "verdict rules:\n"
+            "- approved: 0 issues\n"
+            "- needs_revision: 1-2 issues minor\n"
+            "- rejected: 3+ issues HOẶC có hallucination "
+            "historical/numerical rõ ràng"
+        )
+
+        try:
+            response = await _call_groq(
+                judge_provider,
+                prompt,
+                max_tokens=1024,
+                # WHY temperature=0.0: judge must be deterministic — same
+                # input → same verdict. No creative interpretation.
+                temperature=0.0,
+                system_prompt="",
+            )
+        except Exception as e:
+            # WHY approved on failure: judge is non-blocking safety net.
+            # Pipeline should not be held hostage by Cerebras outage.
+            logger.warning(f"Judge call failed ({type(e).__name__}: {e!r}) — defaulting approved")
+            return JudgeResult(
+                verdict="approved",
+                issues=[f"judge_unavailable: {type(e).__name__}"],
+                confidence=0.0,
+                model_used=judge_provider.name,
+            )
+
+        raw = (response.text or "").strip()
+        # Strip optional markdown json fences (some models add them despite
+        # instructions)
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE).strip()
+
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            # WHY approved on parse failure: same logic — non-blocking.
+            # But surface the issue for ops dashboards.
+            logger.warning(f"Judge returned non-JSON: {raw[:200]!r}")
+            return JudgeResult(
+                verdict="approved",
+                issues=["judge_unavailable: malformed JSON response"],
+                confidence=0.0,
+                model_used=judge_provider.name,
+                raw_text=raw,
+            )
+
+        verdict = data.get("verdict", "approved")
+        if verdict not in ("approved", "needs_revision", "rejected"):
+            # WHY normalize to approved: unknown verdict = unsafe to block
+            logger.warning(f"Judge returned unknown verdict: {verdict!r}")
+            verdict = "approved"
+
+        issues_raw = data.get("issues", [])
+        # WHY str-coerce: defensive — model may return non-string entries
+        if isinstance(issues_raw, list):
+            issues = [str(x) for x in issues_raw if x is not None]
+        else:
+            issues = []
+
+        confidence_raw = data.get("confidence", 0.0)
+        try:
+            confidence = float(confidence_raw)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        # Clamp 0-1
+        confidence = max(0.0, min(1.0, confidence))
+
+        return JudgeResult(
+            verdict=verdict,
+            issues=issues,
+            confidence=confidence,
+            model_used=judge_provider.name,
+            raw_text=raw,
         )
 
 
