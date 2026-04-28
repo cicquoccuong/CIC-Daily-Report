@@ -111,13 +111,25 @@ async def _run_pipeline() -> str:
     )
 
     # v0.30.0: Admin alert on pipeline failure
+    # Wave 0.5 (alpha.18): Enriched with GITHUB_RUN_ID + ISO timestamp + first error type.
+    # WHY: 26-27/04/2026 silent-fail incident — pipeline crashed 2 days w/o notification.
+    # Run ID lets operator open the failing GH Actions run directly from Telegram.
     if run_log["status"] in ("error", "timeout"):
         try:
+            import os
+            from datetime import datetime, timezone
+
             from cic_daily_report.delivery.telegram_bot import send_admin_alert
 
             errors_text = "\n".join(f"- {e}" for e in run_log.get("errors", [])[:5])
+            run_id = os.getenv("GITHUB_RUN_ID", "local")
+            ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            first_err_type = type(errors[0]).__name__ if errors else "Unknown"
             await send_admin_alert(
-                f"\u26a0\ufe0f Daily pipeline THẤT BẠI ({run_log['status']})\n"
+                f"\U0001f6a8 Daily pipeline THẤT BẠI ({run_log['status']})\n"
+                f"Thời điểm: {ts}\n"
+                f"Run: {run_id}\n"
+                f"Lỗi đầu: {first_err_type}\n"
                 f"Thời gian: {elapsed:.0f}s\n"
                 f"Bài viết: {len(articles)}\n"
                 f"Lỗi:\n{errors_text}"

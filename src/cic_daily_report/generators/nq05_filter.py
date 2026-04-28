@@ -139,6 +139,14 @@ SEMANTIC_NQ05_PATTERNS = [
     r"không\s+nên\s+bỏ\s+lỡ",  # "khong nen bo lo" = don't miss out (FOMO)
     r"(?:mua|bán)\s+mạnh",  # "mua manh / ban manh" = strong buy/sell
     r"khuyến\s+nghị\s+(?:mua|bán)",  # "khuyen nghi mua/ban" = recommend buy/sell
+    # Wave 0.5 (alpha.18): Audit 27-28/04/2026 caught these advisory phrases slipping through.
+    # WHY: implicit accumulation/strategy advice = NQ05 violation (no buy/sell rec).
+    r"tích\s+lũy\s+(?:dài\s+hạn|dài\s+hơi|chiến\s+lược)",
+    r"nhà\s+đầu\s+tư\s+(?:chiến\s+lược\s+)?cần\s+(?:theo\s+dõi|lưu\s+ý|cân\s+nhắc)",
+    # WHY refine (Quinn Wave 0.5 finding): bare phrase = false positive 100% — LLM
+    # echoes "nhà đầu tư chiến lược" as audience descriptor (from prompts). Require
+    # action verb (nên/cần/hãy/phải) so we only block actual advisory, not noun use.
+    r"nhà\s+đầu\s+tư\s+chiến\s+lược\s+(?:nên|cần|hãy|phải)\s+",
 ]
 
 

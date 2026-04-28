@@ -20,7 +20,6 @@ from cic_daily_report.generators.master_analysis import MasterAnalysis
 from cic_daily_report.generators.quality_gate import (
     DEFAULT_MODE,
     OVERLAP_THRESHOLD,
-    QUALITY_WARNING,
     VALID_MODES,
     QualityGateResult,
     _calculate_pair_overlap,
@@ -216,7 +215,9 @@ class TestRunQualityGateWithRetry:
         )
         assert result.passed is True
         assert result.was_retried is False
-        assert QUALITY_WARNING not in content
+        # Wave 0.5.2 Fix 7: warning is now log-only (QUALITY_WARNING="" empty string).
+        # Use the result flag instead of substring check.
+        assert result.quality_warning_appended is False
 
     async def test_log_mode_no_retry(self):
         """QO.20: LOG mode never retries."""
@@ -245,7 +246,8 @@ class TestRunQualityGateWithRetry:
         )
         assert result.passed is True
         assert result.was_retried is True
-        assert QUALITY_WARNING not in content
+        # Wave 0.5.2 Fix 7: passing retry never appends warning.
+        assert result.quality_warning_appended is False
 
     async def test_block_retry_fails_appends_warning(self):
         """QO.20: BLOCK mode retries, still fails → appends quality warning."""
@@ -262,8 +264,10 @@ class TestRunQualityGateWithRetry:
         )
         assert result.passed is False
         assert result.was_retried is True
+        # Wave 0.5.2 Fix 7: flag still set for ops dashboards, but content is
+        # NOT mutated with a user-visible warning string anymore.
         assert result.quality_warning_appended is True
-        assert QUALITY_WARNING in content
+        assert "Lưu ý: Bài viết này có thể chưa đạt tiêu chuẩn" not in content
 
     async def test_block_no_regenerate_fn(self):
         """QO.20: BLOCK mode without regenerate_fn sends original."""
@@ -292,7 +296,8 @@ class TestRunQualityGateWithRetry:
         )
         assert result.was_retried is True
         assert result.quality_warning_appended is True
-        assert QUALITY_WARNING in content
+        # Wave 0.5.2 Fix 7: warning text NOT inserted into content.
+        assert "Lưu ý: Bài viết này có thể chưa đạt tiêu chuẩn" not in content
 
     async def test_regenerate_returns_string(self):
         """QO.20: regenerate_fn can return a plain string."""

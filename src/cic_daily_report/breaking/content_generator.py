@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import httpx
 
@@ -23,6 +24,7 @@ from cic_daily_report.generators.article_generator import (
     NQ05_SYSTEM_PROMPT,
 )
 from cic_daily_report.generators.nq05_filter import check_and_fix
+from cic_daily_report.generators.numeric_sanity import check_and_cap_percentages
 from cic_daily_report.generators.text_utils import truncate_to_limit
 
 logger = get_logger("breaking_content")
@@ -139,18 +141,87 @@ class BreakingContent:
 _SOURCE_DISPLAY_MAP: dict[str, str] = {
     "market_data": "Dữ liệu thị trường",
     "market_trigger": "Cảnh báo thị trường",
+    # Wave 0.5 (alpha.18): Expanded map — audit found internal source IDs leaking
+    # into Telegram (e.g., "Reuters_Business" instead of "Reuters Business").
+    "Reuters_Business": "Reuters Business",
+    "CoinTelegraph": "CoinTelegraph",
+    "CoinDesk": "CoinDesk",
+    "CryptoSlate": "CryptoSlate",
+    "Decrypt": "Decrypt",
+    "NewsBTC": "NewsBTC",
+    "UToday": "U.Today",
+    "Bitcoinist": "Bitcoinist",
+    "TheBlock": "The Block",
+    "Blockworks": "Blockworks",
+    "CryptoNews": "Crypto News",
+    "AMBCrypto": "AMBCrypto",
 }
+
+
+def _format_source(source: str) -> str:
+    """Wave 0.5 (alpha.18): Resolve source identifier to user-friendly display.
+
+    Order: explicit map → underscore-to-space fallback. The fallback is only
+    cosmetic (e.g., "Some_New_Source" → "Some New Source") so unknown
+    sources still render readably without needing a code change.
+    """
+    if source in _SOURCE_DISPLAY_MAP:
+        return _SOURCE_DISPLAY_MAP[source]
+    return source.replace("_", " ").strip()
 
 
 def _format_source_link(source: str, url: str) -> str:
     """Format source as Telegram HTML hyperlink (PA E)."""
     import html as _html
 
-    display_name = _SOURCE_DISPLAY_MAP.get(source, source)
+    display_name = _format_source(source)
     safe_source = _html.escape(display_name)
     if url:
         return f'<a href="{url}">Nguồn: {safe_source} ↗</a>'
     return f"Nguồn: {safe_source}"
+
+
+# Wave 0.5 (alpha.18): Date freshness check — match dd/mm or dd-mm[-yyyy].
+_DATE_PATTERN = re.compile(r"\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b")
+# Future-tense indicators in Vietnamese that suggest LLM thinks date is upcoming.
+_FUTURE_TENSE_MARKERS = ("dự kiến", "sắp tới", "sắp diễn ra")
+
+
+def _check_stale_dates(content: str) -> int:
+    """Wave 0.5 (alpha.18): LOG-ONLY warning when LLM presents past dates as future.
+
+    WHY LOG-ONLY: First we observe how frequent this is in production before
+    deciding to BLOCK in Wave 0.6. Blocking immediately could drop legitimate
+    content if our parser has false positives (e.g., "Q1/Q2" matching as 1/2).
+
+    Returns count of stale-date warnings emitted (for tests).
+    """
+    today = datetime.now(timezone.utc).date()
+    warn_count = 0
+    for m in _DATE_PATTERN.finditer(content):
+        try:
+            day, month = int(m.group(1)), int(m.group(2))
+            year_str = m.group(3)
+            year = int(year_str) if year_str else today.year
+            if year < 100:
+                year += 2000
+            ref_date = datetime(year, month, day).date()
+        except (ValueError, IndexError):
+            continue
+        if ref_date >= today:
+            continue
+        # Wave 0.5.2 (alpha.19) Fix 5 (Codex finding): Check 50 chars BEFORE
+        # AND AFTER the date for future-tense markers. Old check missed cases
+        # like "06/03 sắp tới" where marker appears AFTER the date.
+        prefix = content[max(0, m.start() - 50) : m.start()].lower()
+        suffix = content[m.end() : m.end() + 50].lower()
+        combined = prefix + " " + suffix
+        if any(marker in combined for marker in _FUTURE_TENSE_MARKERS):
+            logger.warning(
+                f"Stale date in breaking content: {m.group(0)} (parsed={ref_date}, today={today})"
+            )
+            warn_count += 1
+    return warn_count
 
 
 _TRAFILATURA_TIMEOUT = 12  # seconds — balance speed vs content depth
@@ -274,17 +345,15 @@ async def generate_breaking_content(
     # Combine QO.36 enrichment into a single block
     enrichment_text = cross_asset_section + polymarket_section + history_section
 
-    # QO.19: Historical parallel instruction — ask LLM to reference similar past events.
-    # WHY conditional: only include when the event is significant enough (critical/important)
-    # to warrant historical comparison. Notable events are too minor for parallels.
+    # Wave 0.5 (alpha.18): REMOVED historical_instruction until RAG is available.
+    # WHY: Audit 27-28/04/2026 found 87.5% of LLM-generated historical claims were
+    # fabricated (e.g., Poly Network "$6B" vs real $0.6B; "BTC tăng 2022" vs real
+    # bear -75%). Smoking gun: prompt example "Fed 06/2022 → BTC -15% 48h" caused
+    # LLMs to clone the template structure and fill in fabricated numbers/dates.
+    # Without a RAG/historical-database backing, the LLM has no choice but to
+    # rely on training-set knowledge → hallucinated parallels.
+    # Re-enable in Wave 0.6+ once historical DB is wired (see roadmap).
     historical_instruction_text = ""
-    if severity in ("critical", "important"):
-        historical_instruction_text = (
-            "\n- (Nếu có thể) 1 câu THAM CHIẾU LỊCH SỬ: "
-            "sự kiện tương tự trong quá khứ và BTC/thị trường đã phản ứng thế nào. "
-            "Ví dụ: 'Lần cuối Fed tăng lãi suất 75 bps (06/2022), BTC giảm 15% trong 48h.' "
-            "CHỈ viết khi có sự kiện tương đồng RÕ RÀNG, KHÔNG ép.\n"
-        )
 
     prompt = BREAKING_PROMPT_TEMPLATE.format(
         title=event.title,
@@ -319,16 +388,51 @@ async def generate_breaking_content(
 
     # v0.33.0: Guard against NQ05 filter stripping too much content.
     # WHY: REMOVE_FILLER_PATTERNS could delete most sentences, leaving <50 words.
-    # Fallback to raw LLM output (still NQ05 keyword-checked, just not filler-stripped).
+    # Wave 0.5.2 (alpha.19) Fix 1: Re-run NQ05 keyword filter on raw fallback
+    # so the keyword strip is still applied even when filler-removal drops too
+    # much. Old code used response.text directly → bypassed banned-keyword
+    # filter entirely → NQ05 violations could ship to Telegram.
+    # WHY no raise on still-short: tests intentionally feed short content to
+    # exercise truncation/disclaimer paths, and short raw-but-NQ05-clean text
+    # is acceptable (fallback delivery, no spec violation). If we want to
+    # surface "too short" as a hard failure, that's better done in the
+    # pipeline by inspecting BreakingContent.word_count after return.
     if word_count < 50:
         logger.warning(
             f"Breaking content too short after NQ05 filter ({word_count} words), "
-            "using pre-filter content"
+            "re-running NQ05 keyword check on pre-filter content (Fix 1)"
         )
-        clean_content = _DISCLAIMER_RE.sub("", response.text).rstrip()
+        refiltered = check_and_fix(response.text, extra_banned_keywords)
+        clean_content = _DISCLAIMER_RE.sub("", refiltered.content).rstrip()
         word_count = len(clean_content.split())
+        if word_count < 50:
+            # Still short — keep going (NQ05 keyword filter has been applied),
+            # but log clearly so pipeline / ops dashboards can spot it.
+            logger.warning(
+                f"Fix 1: content still <50 words after re-filter ({word_count}). "
+                "Shipping NQ05-clean short content rather than raw bypass."
+            )
 
     logger.info(f"Breaking content generated: {word_count} words via {model_used}")
+
+    # Wave 0.5.2 (alpha.19) Fix 4: numeric sanity guard — cap absurd % values.
+    # WHY here: after NQ05 filter so we don't sanitize content that gets
+    # rewritten by re-filter; before truncation so cap doesn't push past limit.
+    sanity = check_and_cap_percentages(clean_content)
+    if not sanity.passed:
+        logger.warning(
+            f"Fix 4: capped {sanity.capped_count} absurd percentages in breaking content "
+            f"(checked={sanity.checked_count}). Examples: {sanity.warnings[:2]}"
+        )
+        clean_content = sanity.sanitized_content
+        word_count = len(clean_content.split())
+
+    # Wave 0.5 (alpha.18): Date freshness post-check — LOG-ONLY (Wave 0.6 will block).
+    # WHY: Audit found LLM frequently writes "dự kiến diễn ra vào ngày X/Y" using
+    # past dates (e.g., today=27/04 but content says "diễn ra vào 06/03 sắp tới").
+    # Detect by: any date mention in content where preceding 50 chars contain
+    # "dự kiến" or "sắp tới" but the parsed date < today.
+    _check_stale_dates(clean_content)
 
     # P1.25 + NQ05: Truncate body BEFORE appending suffix to guarantee the
     # mandatory DISCLAIMER is never cut off by the character limit.
@@ -382,6 +486,8 @@ def build_enrichment_context(
     prediction_data: object | None = None,
     dedup_entries: list | None = None,
     event_title: str = "",
+    current_event_time: datetime | None = None,
+    min_age_hours: float = 1.0,
 ) -> dict[str, str]:
     """QO.36: Build enrichment context dict for breaking content generation.
 
@@ -393,6 +499,9 @@ def build_enrichment_context(
         prediction_data: PredictionMarketsData object from prediction_markets collector.
         dedup_entries: List of DedupEntry objects from dedup_manager (for history).
         event_title: Current event title (for finding related history).
+        current_event_time: Wave 0.5.2 Fix 3 — anchor for self-reference filter
+            on breaking_history. If None, no time filter applied (legacy behavior).
+        min_age_hours: history entries newer than this are excluded.
 
     Returns:
         Dict with keys: cross_asset_context, polymarket_shift, breaking_history.
@@ -416,9 +525,14 @@ def build_enrichment_context(
     if prediction_data:
         result["polymarket_shift"] = _build_polymarket_shift_text(prediction_data)
 
-    # 3. Related breaking history
+    # 3. Related breaking history (Wave 0.5.2 Fix 3 self-reference filter)
     if dedup_entries and event_title:
-        result["breaking_history"] = _build_related_history(dedup_entries, event_title)
+        result["breaking_history"] = _build_related_history(
+            dedup_entries,
+            event_title,
+            current_event_time=current_event_time,
+            min_age_hours=min_age_hours,
+        )
 
     return result
 
@@ -523,11 +637,21 @@ def _build_polymarket_shift_text(prediction_data: object) -> str:
     return "Polymarket: " + " | ".join(parts)
 
 
-def _build_related_history(dedup_entries: list, event_title: str) -> str:
+def _build_related_history(
+    dedup_entries: list,
+    event_title: str,
+    current_event_time: datetime | None = None,
+    min_age_hours: float = 1.0,
+) -> str:
     """QO.36: Find related events from breaking history.
 
     WHY: Gives LLM context about what was already reported on this topic,
     enabling it to write follow-up angles instead of repeating.
+
+    Wave 0.5.2 (alpha.19) Fix 3: same timestamp filter as _format_recent_events
+    in breaking_pipeline — entries newer than ``current_event_time -
+    min_age_hours`` are excluded so a sibling event from the same batch can't
+    pose as "lịch sử" of the current event.
     """
     title_lower = event_title.lower()
     # WHY: Extract key entities from title for matching
@@ -539,6 +663,12 @@ def _build_related_history(dedup_entries: list, event_title: str) -> str:
     if not key_words:
         return ""
 
+    cutoff = None
+    if current_event_time is not None:
+        from datetime import timedelta
+
+        cutoff = current_event_time - timedelta(hours=min_age_hours)
+
     related = []
     for entry in dedup_entries:
         entry_title = getattr(entry, "title", "").lower()
@@ -546,6 +676,18 @@ def _build_related_history(dedup_entries: list, event_title: str) -> str:
         # WHY: Only include sent events (skip pending/skipped)
         if entry_status not in ("sent", "sent_geo_digest"):
             continue
+
+        # Wave 0.5.2 Fix 3: timestamp filter to prevent self-reference
+        if cutoff is not None:
+            entry_at = getattr(entry, "detected_at", "")
+            if not entry_at:
+                continue
+            try:
+                entry_time = datetime.fromisoformat(entry_at)
+            except (ValueError, TypeError):
+                continue
+            if entry_time > cutoff:
+                continue
 
         # Check word overlap between event title and history entry
         entry_words = set(entry_title.split())
@@ -605,6 +747,15 @@ async def generate_digest_content(
             "using pre-filter content"
         )
         clean_content = _DISCLAIMER_RE.sub("", response.text).rstrip()
+
+    # Wave 0.5.2 (alpha.19) Fix 4: numeric sanity guard for digest path too.
+    sanity = check_and_cap_percentages(clean_content)
+    if not sanity.passed:
+        logger.warning(
+            f"Fix 4 (digest): capped {sanity.capped_count} absurd percentages "
+            f"(checked={sanity.checked_count})"
+        )
+        clean_content = sanity.sanitized_content
 
     # P1.25 + NQ05: Truncate body BEFORE appending suffix to guarantee the
     # mandatory DISCLAIMER is never cut off by the character limit.

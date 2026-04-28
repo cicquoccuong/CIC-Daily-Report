@@ -530,6 +530,19 @@ async def _generate_single_article(
     for w in warnings:
         logger.warning(f"[{tier}] Post-gen validation: {w}")
 
+    # Wave 0.5.2 (alpha.19) Fix 4: numeric sanity guard — cap absurd % (e.g. "1700%").
+    # WHY here (after fabricated-metric scrub): operates on the final cleaned content
+    # before disclaimer is appended.
+    from cic_daily_report.generators.numeric_sanity import check_and_cap_percentages
+
+    sanity = check_and_cap_percentages(content)
+    if not sanity.passed:
+        logger.warning(
+            f"[{tier}] Fix 4: capped {sanity.capped_count} absurd percentages "
+            f"(checked={sanity.checked_count})"
+        )
+        content = sanity.sanitized_content
+
     content_with_disclaimer = content + DISCLAIMER
     word_count = len(content_with_disclaimer.split())
     elapsed = time.monotonic() - start

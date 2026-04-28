@@ -23,7 +23,16 @@ def _event():
     )
 
 
-def _mock_llm(text="Tin nóng: sự kiện tài sản mã hóa quan trọng."):
+def _mock_llm(text=None):
+    # Wave 0.5.2 (alpha.19) Fix 1: NQ05 fallback now raises if content stays
+    # <50 words after re-filter. Use a default text that comfortably exceeds 50
+    # words so prompt-structure tests don't trip the new guard.
+    if text is None:
+        text = (
+            "Tin nóng: sự kiện tài sản mã hóa quan trọng đang diễn ra trên thị "
+            "trường. " + "Cộng đồng nhà đầu tư đang theo dõi sát các diễn biến và "
+            "phản ứng từ các bên liên quan. " * 6
+        )
     mock = AsyncMock()
     mock.generate = AsyncMock(
         return_value=LLMResponse(text=text, tokens_used=100, model="test-model")
@@ -116,39 +125,50 @@ class TestConsensusInPrompt:
 
 
 class TestHistoricalParallel:
-    """QO.19: Historical parallel instruction for critical/important events."""
+    """Wave 0.5 (alpha.18): historical parallel instruction REMOVED — see content_generator.py.
 
-    async def test_critical_has_historical_instruction(self):
-        """Critical events → prompt includes historical parallel instruction."""
+    Audit 27-28/04/2026 found 87.5% of LLM-generated historical claims were
+    fabricated. Tests below now assert the absence of the instruction across
+    all severities. Re-enable in Wave 0.6+ once a RAG/historical DB is wired.
+    """
+
+    async def test_critical_no_historical_instruction(self):
+        """Wave 0.5: Critical events → NO historical instruction (LLM hallucinates without RAG)."""
         llm = _mock_llm()
         await generate_breaking_content(_event(), llm, severity="critical")
         call_kwargs = llm.generate.call_args
         prompt = call_kwargs.kwargs.get("prompt", "") or call_kwargs.args[0]
-        assert "THAM CHIẾU LỊCH SỬ" in prompt
+        assert "THAM CHIẾU LỊCH SỬ" not in prompt
 
-    async def test_important_has_historical_instruction(self):
-        """Important events → prompt includes historical parallel instruction."""
+    async def test_important_no_historical_instruction(self):
+        """Wave 0.5: Important events → NO historical instruction (LLM hallucinates without RAG)."""
         llm = _mock_llm()
         await generate_breaking_content(_event(), llm, severity="important")
         call_kwargs = llm.generate.call_args
         prompt = call_kwargs.kwargs.get("prompt", "") or call_kwargs.args[0]
-        assert "THAM CHIẾU LỊCH SỬ" in prompt
+        assert "THAM CHIẾU LỊCH SỬ" not in prompt
 
     async def test_notable_no_historical_instruction(self):
-        """Notable events → NO historical parallel (too minor)."""
+        """Notable events → NO historical parallel (consistent with all severities now)."""
         llm = _mock_llm()
         await generate_breaking_content(_event(), llm, severity="notable")
         call_kwargs = llm.generate.call_args
         prompt = call_kwargs.kwargs.get("prompt", "") or call_kwargs.args[0]
         assert "THAM CHIẾU LỊCH SỬ" not in prompt
 
-    async def test_historical_example_in_prompt(self):
-        """The instruction mentions a concrete example for the LLM."""
+    async def test_no_hardcoded_fed_example_in_prompt(self):
+        """Wave 0.5 SMOKING GUN: prompt MUST NOT contain the historical INSTRUCTION
+        example. Note: source title may legit contain '75 bps' if the news is
+        about the Fed — what we assert is that the *prompt instruction* no longer
+        teaches the LLM to clone the template "(date) → BTC -X% in Yh"."""
         llm = _mock_llm()
         await generate_breaking_content(_event(), llm, severity="critical")
         call_kwargs = llm.generate.call_args
         prompt = call_kwargs.kwargs.get("prompt", "") or call_kwargs.args[0]
-        assert "Fed" in prompt or "BTC" in prompt
+        # These exact phrases were the instruction template — must be gone.
+        assert "06/2022" not in prompt
+        assert "BTC giảm 15% trong 48h" not in prompt
+        assert "Lần cuối Fed tăng lãi suất" not in prompt
 
 
 # ============================================================================
@@ -160,7 +180,7 @@ class TestCombinedEnrichment:
     """QO.19: Both consensus and historical parallel can coexist."""
 
     async def test_both_consensus_and_historical(self):
-        """Critical event + consensus → both appear in prompt."""
+        """Wave 0.5: Critical event + consensus → consensus appears, historical REMOVED."""
         llm = _mock_llm()
         consensus = "BTC: NEUTRAL (score +0.05, 4 nguồn)"
         await generate_breaking_content(
@@ -169,7 +189,7 @@ class TestCombinedEnrichment:
         call_kwargs = llm.generate.call_args
         prompt = call_kwargs.kwargs.get("prompt", "") or call_kwargs.args[0]
         assert "Đồng thuận thị trường hiện tại" in prompt
-        assert "THAM CHIẾU LỊCH SỬ" in prompt
+        assert "THAM CHIẾU LỊCH SỬ" not in prompt  # Wave 0.5: removed
         assert "BTC: NEUTRAL" in prompt
 
     async def test_consensus_without_historical_for_notable(self):

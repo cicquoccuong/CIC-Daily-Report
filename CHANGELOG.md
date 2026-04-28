@@ -1,6 +1,40 @@
 # Changelog
 
-## [Unreleased] - 2026-04-26
+## [Unreleased] - 2026-04-28
+
+### Wave 0.5.2 CRITICAL — 7 P0 fixes (alpha.19)
+
+Audit Round 2 (28/04 batch Daily 11:43 + 8 Breaking 15:01-15:05) phát hiện 9 bug mới + 5 P0 critical còn từ Round 1 (Mary fact-check 6/6 historical recycle, Winston 2 spec gap, Devil 4 BLOCKER, Codex bot Finding 2). Sprint patch 7 fixes critical:
+
+- **Fix 1 (NQ05 fallback bypass)** `breaking/content_generator.py:387`: khi NQ05 strip → word_count <50 → trước đây fallback `response.text` raw bypass keyword filter. Giờ re-run `check_and_fix()` lần 2 trên raw text. Vẫn <50 → log warning rõ ràng nhưng vẫn ship NQ05-clean content (không ship raw vi phạm). Pipeline catch RuntimeError tự nhiên qua try/except ở Stage 4a nếu cần.
+- **Fix 2 (Quality Gate per-tier threshold)** `generators/quality_gate.py:25-44`: `INSIGHT_DENSITY_THRESHOLD = 0.30` cứng cho mọi tier → 100% L3-L5 narrative fail → quality warning attach mọi bài → mất tác dụng. Thêm dict `INSIGHT_DENSITY_THRESHOLDS` per-tier (L1-L2=0.30, L3-L4=0.15, L5=0.10, summary=0.20, breaking=0.25). `_get_insight_density_threshold()` lookup theo tier với CAU_HINH override `INSIGHT_DENSITY_THRESHOLD_<TIER>`.
+- **Fix 3 (Self-reference filter — Devil CRITICAL)** `breaking_pipeline.py:1192` + `breaking/content_generator.py:_build_related_history`: tin Scallop ref ZetaChain trong cùng batch (1 phút trước) như "lịch sử" → false history. Thêm `current_event_time` + `min_age_hours=1.0` parameter cho `_format_recent_events()` và `_build_related_history()` — filter dedup_entries theo timestamp (chỉ giữ entries detected ≥1h trước event hiện tại). Build per-event trong loop thay vì batch-wide.
+- **Fix 4 (Numeric sanity guard)** `generators/numeric_sanity.py` (NEW) + tích hợp vào `breaking/content_generator.py` + `generators/article_generator.py`: regex extract `\d+(\.\d+)?%`, cap > 100% (vd "Heat Score 1700%" → "100%" + warning). Module nhẹ, idempotent, log every cap. MKR/BTC.D parsing root cause = LLM hallucination từ training data (collector field verified correct) — defer Wave 0.6 RAG factcheck.
+- **Fix 5 (Date check suffix — Codex Finding)** `breaking/content_generator.py:_check_stale_dates`: thêm check 50 chars SAU date (combined với prefix). Cũ chỉ check prefix → miss "ngày 06/03 sắp tới" (marker AFTER date).
+- **Fix 6 (Spam cap thực sự — Devil)** `breaking_pipeline.py:42-50, 269, 393, 547, 632, 692`: `MAX_EVENTS_PER_RUN` 3 → **5** + scope đổi từ "fresh-only" sang **TOTAL messages/run** (deferred + crypto + digest + geo digest). Cũ thực tế 3+5=8/run. Thêm hard-stop check `run_log.events_sent >= max_per_run` ở mỗi stage. Deferred reprocess giờ bounded ≤50% budget (ưu tiên fresh news).
+- **Fix 7 (Quality warning → internal log)** `generators/quality_gate.py:34-43, 419-440`: `QUALITY_WARNING` text "⚠️ Lưu ý..." gắn vào content user-facing → erodes trust. Đổi thành empty string (back-compat); thay bằng `_QUALITY_WARNING_LOG_TEXT` log internal-only qua `logger.warning()`. `quality_warning_appended` flag giữ cho ops dashboards.
+
+- **Tests**: +28 trong `tests/test_breaking/test_wave052_critical.py` (7 fix x ~4 test/fix, 28/28 PASS); update 5 test cũ (2 quality_warning assertion, 3 max_events constant).
+- **Total**: 2171 → **2199 PASS** (+28 new, 0 regression).
+- **Lint**: ruff clean trên 5 file touched + 1 file mới.
+- **Version**: 2.0.0-alpha.18 → **2.0.0-alpha.19** (3 nơi đồng bộ: `__init__.py` qua `core/config.py`, `pyproject.toml`, `tests/test_core/test_config.py`).
+- **Risk note (Wave 0.6 follow-up)**: Fix 4 chỉ cap post-process, KHÔNG fix root cause LLM hallucination (MKR/BTC.D từ training data). Wave 0.6 RAG factcheck cần verify từng số trong content vs realtime data trước khi ship.
+
+### Wave 0.5 EMERGENCY HOTFIX — 6 P0 fixes (alpha.18)
+
+Audit 27-28/04/2026 (party-mode 6 agents) phat hien 18 bug breaking pipeline (87.5% historical claims SAI). Patch ngay 6 critical:
+
+- **Fix 1 (SMOKING GUN)** `breaking/content_generator.py:280-287`: XOA `historical_instruction_text` (ca block + vi du "Fed 06/2022 → BTC -15% 48h"). Nguyen nhan: prompt template co example cu the → LLM clone template + fill so bia (vd Poly Network "$6B" vs that $0.6B). Tai bat trong Wave 0.6+ khi co RAG/historical DB.
+- **Fix 2 (NQ05)** `generators/nq05_filter.py`: Them 3 advisory pattern moi vao `SEMANTIC_NQ05_PATTERNS` — `tích lũy dài hạn`, `nhà đầu tư cần theo dõi`, `nhà đầu tư chiến lược` — chan implicit accumulation/strategy advice.
+- **Fix 3 (Dedup)** `breaking/dedup_manager.py`: `SIMILARITY_THRESHOLD` 0.70 → 0.55 + them `_REG_BILL_PATTERNS` regex (Bill C-XX, MiCA, FIT21, GENIUS Act) auto-mark duplicate trong `_is_similar_to_recent` (bypass SequenceMatcher).
+- **Fix 4 (Pipeline alert)** `daily_pipeline.py:113-138`: Enrich `send_admin_alert` failure path voi `GITHUB_RUN_ID` + ISO timestamp + first error type. WHY: 26-27/04/2026 silent-fail 2 ngay khong nhan duoc alert; gio operator co the mo GH Actions run truc tiep tu Telegram.
+- **Fix 5 (Date freshness)** `breaking/content_generator.py`: Them `_check_stale_dates()` LOG-ONLY (chua block) — phat hien khi LLM viet "du kien dien ra vao ngay X/Y" ma ngay do < hom nay. Wave 0.6 se BLOCK; gio chi observe.
+- **Fix 6 (Source labels)** `breaking/content_generator.py:139+`: Mo rong `_SOURCE_DISPLAY_MAP` voi 12 source moi (Reuters_Business, CoinTelegraph, ...) + helper `_format_source()` co fallback `_` → space + title-case cho source la.
+
+- **Tests**: +19 trong `tests/test_breaking/test_wave05_hotfix.py` (19/19 PASS); update 4 test cu trong `test_qo19_breaking_enrichment.py` cho phu hop hanh vi moi (historical removed).
+- **Total**: 2148 → 2167 PASS (+19, 0 regression).
+- **Lint**: ruff clean tren 4 file modified.
+- **Version**: 2.0.0-alpha.17 → **2.0.0-alpha.18** (3 noi dong bo).
 
 ### [FIX] QuotaManager race condition — async lock per service
 

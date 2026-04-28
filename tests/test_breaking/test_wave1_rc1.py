@@ -704,8 +704,11 @@ class TestRegressionExistingBehavior:
 
         assert COOLDOWN_HOURS == 12
 
-    def test_max_events_per_run_still_3(self):
-        """Per-run cap unchanged."""
+    def test_max_events_per_run_is_total_cap_5(self):
+        """Wave 0.5.2 (alpha.19) Fix 6: MAX_EVENTS_PER_RUN raised from 3 → 5
+        AND scope changed from "fresh-only" to TOTAL messages/run (covers
+        deferred + crypto + digest). See breaking_pipeline.py header comment.
+        """
         from cic_daily_report.breaking_pipeline import MAX_EVENTS_PER_RUN
 
-        assert MAX_EVENTS_PER_RUN == 3
+        assert MAX_EVENTS_PER_RUN == 5
