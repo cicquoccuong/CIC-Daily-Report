@@ -253,6 +253,13 @@ class TestFix5DateFreshness:
         text = f"Sự kiện đã diễn ra ngày {past.day}/{past.month}/{past.year}."
         assert _check_stale_dates(text) == 0
 
+    def test_past_date_with_neutral_vao_ngay_no_warn(self):
+        # Codex finding: "vào ngày" is a NEUTRAL preposition, used equally for past
+        # and future. "đã diễn ra vào ngày X" is past-tense → must NOT warn.
+        past = datetime.now(timezone.utc).date() - timedelta(days=30)
+        text = f"Sự kiện đã diễn ra vào ngày {past.day}/{past.month}/{past.year}."
+        assert _check_stale_dates(text) == 0
+
 
 # ---------------------------------------------------------------------------
 # Fix 6 — SOURCE_DISPLAY_MAP expansion + auto-format fallback

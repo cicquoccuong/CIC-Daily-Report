@@ -183,7 +183,7 @@ def _format_source_link(source: str, url: str) -> str:
 # Wave 0.5 (alpha.18): Date freshness check — match dd/mm or dd-mm[-yyyy].
 _DATE_PATTERN = re.compile(r"\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b")
 # Future-tense indicators in Vietnamese that suggest LLM thinks date is upcoming.
-_FUTURE_TENSE_MARKERS = ("dự kiến", "sắp tới", "sắp diễn ra", "vào ngày")
+_FUTURE_TENSE_MARKERS = ("dự kiến", "sắp tới", "sắp diễn ra")
 
 
 def _check_stale_dates(content: str) -> int:
