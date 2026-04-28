@@ -2,6 +2,21 @@
 
 ## [Unreleased] - 2026-04-28
 
+### Wave 0.6 Story 0.6.2 — Wire RAG inject + Cerebras Qwen3 fact-checker (alpha.20)
+
+Story 0.6.1 đã build BM25 index. Story 0.6.2 wire vào breaking pipeline + thêm 2nd LLM (Cerebras Qwen3 235B) làm fact-checker — đây là **CỐT LÕI fix root cause hallucination 87.5%** Wave 0.5 audit. Default flag OFF — Story 0.6.5 sẽ bật sau Combo D replay validation.
+
+- **`adapters/llm_adapter.py`**: thêm `JudgeResult` dataclass + `LLMAdapter.judge_factual_claims(content, source_text, historical_context)`. Cerebras Qwen3 235B (`qwen-3-235b-a22b-instruct-2507`, env override `WAVE_0_6_JUDGE_MODEL`) verify mọi numerical/historical/quote claim. Trả `verdict`: approved / needs_revision / rejected. Prompt strict JSON output, temperature=0.0 deterministic. **Graceful degradation**: Cerebras 5xx/quota/timeout/parse fail → return `approved` + log warning (judge KHÔNG block pipeline — safety net, not gate).
+- **`breaking/content_generator.py`**:
+  - `_get_historical_context()` helper: query RAG (`get_or_build_index` Story 0.6.1), `top_k=3`, `min_score=0.5`, `exclude_recent_hours=1.0` (anti self-reference Wave 0.5.2). Trả `(prompt_text, raw_results)` — text vào prompt, dict vào judge.
+  - 2 path inject: RAG hit → `<historical_events>` block + ALLOW historical sentence constrained to listed events; no hit → INSTRUCT "KHÔNG viết tham chiếu lịch sử" (mirror Wave 0.5 safe behavior).
+  - Judge pass cho severity ∈ `{critical, important}` (skip notable để tiết kiệm quota). Rejected lần 1 → 1 retry với stricter prompt (issues list inject). Rejected lần 2 → raise `LLMError(retry=False)` — pipeline mark event `generation_failed` (cùng pattern v0.29.0 A4).
+  - Thêm param `sheets_client` cho `generate_breaking_content` (optional, RAG dùng để check row count cache invalidation).
+- **`core/config.py`**: thêm `WAVE_0_6_ENABLED` flag (default `False`, env `WAVE_0_6_ENABLED=1` để bật) + helper `_wave_0_6_enabled()` cho runtime override.
+- **Tests** (`tests/test_breaking/test_wave06_factcheck.py` NEW): 22 tests (RAG inject ON/OFF flag, RAG hit/miss → instruct text khác, judge approved/needs_revision/rejected, retry logic, judge skip cho notable, Cerebras failure graceful, malformed JSON, unknown verdict, confidence clamp, missing API key, JSON parse with markdown fence). 22/22 PASS.
+- **Version**: 2.0.0-alpha.19 → **2.0.0-alpha.20** (3 nơi: `core/config.py`, `pyproject.toml`, `tests/test_core/test_config.py`).
+- **Karpathy compliance**: surgical (4 file modify + 1 test new), simplicity (3-verdict enum, no semantic similarity), goal-driven (flag default False — safe deploy chờ Story 0.6.5 verify).
+
 ### Wave 0.6 Story 0.6.1 — RAG mini BM25 indexer (scaffolding)
 
 Build BM25 indexer cho `BREAKING_LOG` Sheets để Story 0.6.2 có thể inject ground-truth historical events vào prompt thay vì để LLM bịa (87.5% claims sai trong audit 27-28/04 — Powell sai năm, Wormhole sai hướng, Poly Network sai 10x số liệu).
