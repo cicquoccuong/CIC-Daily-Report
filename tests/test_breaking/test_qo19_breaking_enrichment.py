@@ -23,7 +23,16 @@ def _event():
     )
 
 
-def _mock_llm(text="Tin nóng: sự kiện tài sản mã hóa quan trọng."):
+def _mock_llm(text=None):
+    # Wave 0.5.2 (alpha.19) Fix 1: NQ05 fallback now raises if content stays
+    # <50 words after re-filter. Use a default text that comfortably exceeds 50
+    # words so prompt-structure tests don't trip the new guard.
+    if text is None:
+        text = (
+            "Tin nóng: sự kiện tài sản mã hóa quan trọng đang diễn ra trên thị "
+            "trường. " + "Cộng đồng nhà đầu tư đang theo dõi sát các diễn biến và "
+            "phản ứng từ các bên liên quan. " * 6
+        )
     mock = AsyncMock()
     mock.generate = AsyncMock(
         return_value=LLMResponse(text=text, tokens_used=100, model="test-model")

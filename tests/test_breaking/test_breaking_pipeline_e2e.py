@@ -419,9 +419,11 @@ class TestV029PipelineConstants:
     """v0.29.0: Pipeline limits and configuration constants."""
 
     def test_max_events_per_run(self):
+        # Wave 0.5.2 (alpha.19) Fix 6: raised 3 → 5; scope changed to TOTAL
+        # messages/run (covers fresh + deferred + digest). See breaking_pipeline.py.
         from cic_daily_report.breaking_pipeline import MAX_EVENTS_PER_RUN
 
-        assert MAX_EVENTS_PER_RUN == 3
+        assert MAX_EVENTS_PER_RUN == 5
 
     def test_max_deferred_per_run(self):
         from cic_daily_report.breaking_pipeline import MAX_DEFERRED_PER_RUN

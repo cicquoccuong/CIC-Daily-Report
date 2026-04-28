@@ -61,7 +61,14 @@ def _event():
     )
 
 
-def _mock_llm(text="Tin nong: su kien tai san ma hoa quan trong."):
+def _mock_llm(text=None):
+    # Wave 0.5.2 (alpha.19) Fix 1: stretched default to >50 words so the new
+    # NQ05 fallback re-check doesn't raise on prompt-structure tests.
+    if text is None:
+        text = (
+            "Tin nong: su kien tai san ma hoa quan trong dang dien ra. "
+            + "Cong dong nha dau tu theo doi sat dien bien. " * 8
+        )
     mock = AsyncMock()
     mock.generate = AsyncMock(
         return_value=LLMResponse(text=text, tokens_used=100, model="test-model")

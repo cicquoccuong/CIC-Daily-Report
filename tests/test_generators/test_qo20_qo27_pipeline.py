@@ -13,7 +13,6 @@ from cic_daily_report.collectors.market_data import (
     PriceSnapshot,
 )
 from cic_daily_report.generators.quality_gate import (
-    QUALITY_WARNING,
     run_quality_gate_with_retry,
 )
 
@@ -192,7 +191,8 @@ class TestRunQualityGateWithRetry:
         assert not result.passed
         assert result.was_retried
         assert result.quality_warning_appended
-        assert QUALITY_WARNING in content
+        # Wave 0.5.2 Fix 7: warning is internal-log only, not appended to user content.
+        assert "Lưu ý: Bài viết này có thể chưa đạt tiêu chuẩn" not in content
 
 
 # ============================================================================

@@ -39,8 +39,17 @@ BREAKING_TIMEOUT_SECONDS = 20 * 60  # 20 minutes
 
 # QO.31: Constants kept as DEFAULT FALLBACK — actual values read from CAU_HINH
 # at runtime via _get_pipeline_limits(). DO NOT call config_loader at module level.
-MAX_EVENTS_PER_RUN = 3  # B1: max events to generate+send per run (reduced from 5 to limit spam)
-MAX_DEFERRED_PER_RUN = 5  # A8: max deferred events to reprocess per run
+#
+# Wave 0.5.2 (alpha.19) Fix 6 — TRUE spam cap (Devil finding):
+# Before: MAX_EVENTS_PER_RUN=3 + MAX_DEFERRED_PER_RUN=5 = 8 actual messages/run.
+# That was a "fake" cap because deferred reprocessing happened on top of the 3.
+# Now: MAX_EVENTS_PER_RUN=5 covers TOTAL messages sent in a run (crypto + geo
+# digest + deferred reprocess + overflow). Hard cap enforced before each
+# telegram_bot send. MAX_DEFERRED_PER_RUN deprecated but kept for backwards
+# compat — its value is now bounded by MAX_EVENTS_PER_RUN at runtime.
+# B1: hard cap on TOTAL messages/run (was 3, Wave 0.5.2 raised to 5 + expanded scope)
+MAX_EVENTS_PER_RUN = 5
+MAX_DEFERRED_PER_RUN = 5  # A8: deprecated upper bound, runtime cap is MAX_EVENTS_PER_RUN
 DIGEST_THRESHOLD = 3  # B5: when >=N send_now events, switch to digest mode (reduced from 5)
 INTER_EVENT_DELAY = 30  # B2: seconds between events sent to TG
 
@@ -265,8 +274,8 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             logger.warning("LLM health check failed — circuit breaker will engage")
 
     # Stage 0: Reprocess deferred events from previous night (FR28)
-    # Uses shared LLM, limited by MAX_DEFERRED_PER_RUN (A8)
-    await _reprocess_deferred_events(run_log, result, dedup_mgr, llm)
+    # Wave 0.5.2 Fix 6: deferred bounded by remaining run budget (was MAX_DEFERRED_PER_RUN).
+    await _reprocess_deferred_events(run_log, result, dedup_mgr, llm, max_per_run=max_per_run)
 
     # Stage 1: Detect events — RSS first, CryptoPanic only if needed (v0.32.0)
     # WHY: CryptoPanic has tight daily quota. RSS is free and unlimited.
@@ -375,9 +384,13 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
         )
 
     # B1: Cap events per run to prevent spam (QO.31: uses config value)
-    if len(send_now) > max_per_run:
-        overflow = send_now[max_per_run:]
-        send_now = send_now[:max_per_run]
+    # Wave 0.5.2 Fix 6: cap on REMAINING budget (max_per_run - already sent in
+    # deferred reprocessing). Old behavior allowed +MAX_DEFERRED_PER_RUN above
+    # this cap → 8 actual messages. New: TOTAL <= max_per_run.
+    remaining_run_budget = max(0, max_per_run - run_log.events_sent)
+    if len(send_now) > remaining_run_budget:
+        overflow = send_now[remaining_run_budget:]
+        send_now = send_now[:remaining_run_budget]
         for classified_event in overflow:
             run_log.events_deferred += 1
             result.deferred_events.append(classified_event)
@@ -385,7 +398,11 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             dedup_mgr.update_entry_status(
                 h, "deferred_overflow", severity=classified_event.severity
             )
-        logger.info(f"B1: Capped at {max_per_run}, deferred {len(overflow)} overflow events")
+        logger.info(
+            f"B1+Fix6: Capped at remaining_budget={remaining_run_budget} "
+            f"(MAX_EVENTS_PER_RUN={max_per_run}, already_sent={run_log.events_sent}), "
+            f"deferred {len(overflow)} overflow events"
+        )
 
     # QO.14: Separate geo events from crypto events.
     # Geo events go to digest (grouped), crypto events go individually.
@@ -526,7 +543,10 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     except Exception as e:
         logger.debug(f"Consensus snapshot for breaking skipped: {e}")
 
-    recent_events_text = _format_recent_events(dedup_mgr.entries)
+    # Wave 0.5.2 (alpha.19) Fix 3: recent_events_text built per-event inside
+    # the loop below (anchored on each event's detected_at) so events from the
+    # same batch never appear as "lịch sử" of a sibling. Digest path doesn't
+    # consume recent_events.
 
     # v0.30.0 (Decision 1C): Critical → individual articles, Important → themed digest
     critical_now = [c for c in send_now if c.severity == "critical"]
@@ -540,11 +560,31 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
         important_now = []
 
     for i, classified_event in enumerate(all_individual):
+        # Wave 0.5.2 Fix 6: hard stop if TOTAL run cap reached mid-loop.
+        if run_log.events_sent >= max_per_run:
+            logger.info(
+                f"Fix 6: Stopping individual sends mid-loop — TOTAL run cap reached "
+                f"({run_log.events_sent}/{max_per_run})"
+            )
+            for remaining in all_individual[i:]:
+                run_log.events_deferred += 1
+                result.deferred_events.append(remaining)
+                h = compute_hash(remaining.event.title, remaining.event.source)
+                dedup_mgr.update_entry_status(h, "deferred_overflow", severity=remaining.severity)
+            break
         content = None  # v0.29.1 (BUG 5): track generation vs delivery failure
         try:
             if llm is None or llm.circuit_open:
                 raise RuntimeError("LLM unavailable — circuit open")
 
+            # Wave 0.5.2 (alpha.19) Fix 3: rebuild recent_events filtered to
+            # entries >=1h older than this event — prevents self-reference
+            # (LLM citing tin từ cùng batch as "lịch sử").
+            recent_events_text = _format_recent_events(
+                dedup_mgr.entries,
+                current_event_time=classified_event.event.detected_at,
+                min_age_hours=1.0,
+            )
             content = await asyncio.wait_for(
                 generate_breaking_content(
                     classified_event.event,
@@ -589,7 +629,13 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             run_log.errors.append(f"{'Deliver' if content else 'Generate'}: {e}")
 
     # Stage 4b: Important events (≥2) — batch into themed digest
-    if important_now and llm is not None and not llm.circuit_open:
+    # Wave 0.5.2 Fix 6: digest counts as 1 message — only run if budget allows.
+    if (
+        important_now
+        and llm is not None
+        and not llm.circuit_open
+        and run_log.events_sent < max_per_run
+    ):
         await _generate_and_deliver_digest(
             important_now,
             llm,
@@ -599,6 +645,18 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             market_snapshot,
             dedup_result.entries_written,
         )
+    elif important_now and run_log.events_sent >= max_per_run:
+        logger.info(
+            f"Fix 6: Skipping important digest — TOTAL run cap reached "
+            f"({run_log.events_sent}/{max_per_run})"
+        )
+        for classified_event in important_now:
+            run_log.events_deferred += 1
+            result.deferred_events.append(classified_event)
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
+            dedup_mgr.update_entry_status(
+                h, "deferred_overflow", severity=classified_event.severity
+            )
     elif important_now:
         # LLM unavailable — mark as generation_failed for retry
         for classified_event in important_now:
@@ -611,7 +669,13 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     # QO.14: Stage 4c — Geo events → digest (grouped message)
     # WHY separate stage: geo events are noisy individually but valuable as a digest.
     # Capping at MAX_GEO_DIGESTS_PER_DAY prevents geo spam while keeping coverage.
-    if geo_events and llm is not None and not llm.circuit_open:
+    # Wave 0.5.2 Fix 6: also enforce TOTAL run cap (1 digest = 1 message).
+    if (
+        geo_events
+        and llm is not None
+        and not llm.circuit_open
+        and run_log.events_sent < max_per_run
+    ):
         await _generate_and_deliver_digest(
             geo_events,
             llm,
@@ -622,6 +686,16 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             dedup_result.entries_written,
             digest_status="sent_geo_digest",
         )
+    elif geo_events and run_log.events_sent >= max_per_run:
+        logger.info(
+            f"Fix 6: Skipping geo digest — TOTAL run cap reached "
+            f"({run_log.events_sent}/{max_per_run})"
+        )
+        for classified_event in geo_events:
+            run_log.events_deferred += 1
+            result.deferred_events.append(classified_event)
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
+            dedup_mgr.update_entry_status(h, "deferred_geo_cap", severity=classified_event.severity)
     elif geo_events:
         for classified_event in geo_events:
             h = compute_hash(classified_event.event.title, classified_event.event.source)
@@ -929,6 +1003,7 @@ async def _reprocess_deferred_events(
     result: BreakingPipelineResult,
     dedup_mgr: DedupManager,
     llm=None,
+    max_per_run: int = MAX_EVENTS_PER_RUN,
 ) -> None:
     """FR28: Reprocess deferred events when we're past the night window.
 
@@ -938,6 +1013,13 @@ async def _reprocess_deferred_events(
     - A8: Limits to MAX_DEFERRED_PER_RUN events
     - B2: 30s delay between events
     Also retries generation_failed + delivery_failed + deferred_overflow events (C3, max 1 retry).
+
+    Wave 0.5.2 (alpha.19) Fix 6 — TOTAL run cap:
+    Deferred reprocessing now bounded by ``max_per_run`` minus messages already
+    sent in this run (always 0 for deferred since this is the first send stage).
+    Old behavior ran up to MAX_DEFERRED_PER_RUN(5) on top of MAX_EVENTS_PER_RUN(3) =
+    8 actual messages/run. New: deferred + crypto + digest + geo digest <=
+    max_per_run total.
     """
     from cic_daily_report.breaking.severity_classifier import _is_night_mode
 
@@ -958,10 +1040,17 @@ async def _reprocess_deferred_events(
     # A6: Sort by severity (critical first)
     all_events.sort(key=lambda e: _SEVERITY_ORDER.get(e.severity or "", 3))
 
-    # A8: Limit deferred reprocessing
-    if len(all_events) > MAX_DEFERRED_PER_RUN:
-        logger.info(f"A8: Capping deferred from {len(all_events)} to {MAX_DEFERRED_PER_RUN}")
-        all_events = all_events[:MAX_DEFERRED_PER_RUN]
+    # Wave 0.5.2 Fix 6: cap deferred to remaining budget of TOTAL run (not separate
+    # MAX_DEFERRED). Reserve room for fresh events expected after this stage.
+    # Heuristic: leave 50% of budget for fresh events; deferred gets 50% (rounded up).
+    # WHY: deferred is opportunistic, fresh news of the day is the priority.
+    deferred_budget = max(1, (max_per_run + 1) // 2)
+    if len(all_events) > deferred_budget:
+        logger.info(
+            f"Fix 6: Capping deferred from {len(all_events)} to {deferred_budget} "
+            f"(50%% of MAX_EVENTS_PER_RUN={max_per_run})"
+        )
+        all_events = all_events[:deferred_budget]
 
     logger.info(
         f"FR28: Reprocessing {len(morning_events)} deferred + "
@@ -1189,8 +1278,38 @@ def _format_market_snapshot(market_data: list | None, has_macro_event: bool = Fa
     return "Bối cảnh thị trường hiện tại: " + " | ".join(lines) if lines else ""
 
 
-def _format_recent_events(dedup_entries: list[DedupEntry], max_events: int = 5) -> str:
-    """Format recent breaking events for context injection."""
+def _format_recent_events(
+    dedup_entries: list[DedupEntry],
+    max_events: int = 5,
+    current_event_time: datetime | None = None,
+    min_age_hours: float = 1.0,
+) -> str:
+    """Format recent breaking events for context injection.
+
+    Wave 0.5.2 (alpha.19) Fix 3 (Devil CRITICAL — self-reference bug):
+    When ``current_event_time`` is provided, filter entries to only include
+    those detected at least ``min_age_hours`` (default 1h) BEFORE the current
+    event. This prevents LLM from referencing a tin VỪA TẠO trong cùng pipeline
+    run (e.g., Scallop tin 15:01 referencing ZetaChain tin 15:00 as "lịch sử").
+
+    The filter splits the context window by timestamp, not batch position —
+    so two unrelated events from the same run don't cross-pollute.
+    """
+    if current_event_time is not None:
+        from datetime import timedelta
+
+        cutoff = current_event_time - timedelta(hours=min_age_hours)
+        filtered: list[DedupEntry] = []
+        for entry in dedup_entries:
+            if not entry.detected_at:
+                continue
+            try:
+                entry_time = datetime.fromisoformat(entry.detected_at)
+            except (ValueError, TypeError):
+                continue
+            if entry_time <= cutoff:
+                filtered.append(entry)
+        dedup_entries = filtered
     recent = sorted(dedup_entries, key=lambda e: e.detected_at, reverse=True)[:max_events]
     if not recent:
         return ""

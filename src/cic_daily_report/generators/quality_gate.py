@@ -24,16 +24,41 @@ logger = get_logger("quality_gate")
 # are mostly filler text without data-backed claims.
 INSIGHT_DENSITY_THRESHOLD = 0.30
 
+# Wave 0.5.2 (alpha.19) Fix 2: per-tier density thresholds (Winston).
+# WHY: applying 0.30 uniformly fails L3-L5 narrative/macro articles by design
+# (they reason about scenarios, not raw metrics). Audit 28/04 found 100% of
+# Daily Report L3-L5 articles failed → quality warning attached to every
+# message → user trust eroded. Tiered thresholds reflect content shape.
+INSIGHT_DENSITY_THRESHOLDS = {
+    "L1": 0.30,  # quick takes, must be data-dense
+    "L2": 0.30,
+    "L3": 0.15,  # narrative analysis, looser
+    "L4": 0.15,
+    "L5": 0.10,  # macro/strategy, mostly reasoning
+    "summary": 0.20,
+    "Summary": 0.20,
+    "research": 0.20,
+    "Research": 0.20,
+    "breaking": 0.25,
+    "Breaking": 0.25,
+}
+
 # QO.20: Valid quality gate modes — BLOCK is the new default.
 # WHY BLOCK default: spec says "Active retry on quality issues, not LOG-ONLY anymore"
 VALID_MODES = {"BLOCK", "LOG", "OFF"}
 DEFAULT_MODE = "BLOCK"
 
-# QO.20: Quality warning appended to articles that fail retry.
-# WHY Vietnamese: user-facing text must be Vietnamese per language policy.
-QUALITY_WARNING = (
-    "\n\n⚠️ *Lưu ý: Bài viết này có thể chưa đạt tiêu chuẩn chất lượng tối ưu. "
-    "Vui lòng đối chiếu số liệu với nguồn chính thức.*"
+# QO.20 / Wave 0.5.2 Fix 7: Quality warning is now INTERNAL (log-only).
+# WHY changed: Devil audit found the user-facing warning eroded trust without
+# giving users actionable information. The warning was meant for dev/admin
+# triage, not end users. Constant kept (empty) for backwards compat with
+# existing tests that import QUALITY_WARNING; new code logs to logger.warning().
+QUALITY_WARNING = ""
+
+# Internal-only quality warning text (logged, never appended to user content).
+_QUALITY_WARNING_LOG_TEXT = (
+    "Quality gate: article shipped despite low density / factual issues — "
+    "monitor in CHANGELOG audit and tighten Wave 0.6 RAG."
 )
 
 # --- Vietnamese "no event" claim patterns ---
@@ -264,19 +289,40 @@ def get_quality_gate_mode(config_loader: object | None = None) -> str:
         return DEFAULT_MODE
 
 
-def _get_insight_density_threshold(config_loader: object | None = None) -> float:
+def _get_insight_density_threshold(
+    config_loader: object | None = None,
+    tier: str = "",
+) -> float:
     """QO.32: Read INSIGHT_DENSITY_THRESHOLD from CAU_HINH config at runtime.
 
-    Falls back to module-level constant if config unavailable.
+    Wave 0.5.2 Fix 2: tier-aware lookup. Resolution order:
+        1. CAU_HINH override per-tier key INSIGHT_DENSITY_THRESHOLD_<TIER>
+        2. CAU_HINH global key INSIGHT_DENSITY_THRESHOLD
+        3. Per-tier default in INSIGHT_DENSITY_THRESHOLDS
+        4. Module fallback INSIGHT_DENSITY_THRESHOLD (0.30)
+
+    WHY: L3-L5 narrative articles legitimately have lower data density than
+    L1-L2 quick-takes. A uniform 0.30 caused 100% false positives there.
     """
+    # Per-tier default from the dict
+    tier_default = INSIGHT_DENSITY_THRESHOLDS.get(tier, INSIGHT_DENSITY_THRESHOLD)
+
     if config_loader is None:
-        return INSIGHT_DENSITY_THRESHOLD
+        return tier_default
     try:
-        return config_loader.get_setting_float(
-            "INSIGHT_DENSITY_THRESHOLD", INSIGHT_DENSITY_THRESHOLD
-        )
+        # Per-tier config override takes precedence when set
+        if tier:
+            tier_key = f"INSIGHT_DENSITY_THRESHOLD_{tier.upper()}"
+            tier_override = config_loader.get_setting_float(tier_key, -1.0)
+            if tier_override >= 0:
+                return tier_override
+        # Global config override applies if set; otherwise tier default.
+        global_override = config_loader.get_setting_float("INSIGHT_DENSITY_THRESHOLD", -1.0)
+        if global_override >= 0:
+            return global_override
+        return tier_default
     except Exception:
-        return INSIGHT_DENSITY_THRESHOLD
+        return tier_default
 
 
 def run_quality_gate(
@@ -313,8 +359,8 @@ def run_quality_gate(
             details=f"tier={tier} | mode=OFF (skipped)",
         )
 
-    # QO.32: Read density threshold from config at runtime
-    density_threshold = _get_insight_density_threshold(config_loader)
+    # QO.32 + Wave 0.5.2 Fix 2: Read density threshold per-tier at runtime
+    density_threshold = _get_insight_density_threshold(config_loader, tier=tier)
 
     factual_issues = check_factual_consistency(content, input_data)
     density, total_sentences, data_backed = check_insight_density(content)
@@ -415,19 +461,23 @@ async def run_quality_gate_with_retry(
             logger.info(f"Quality gate [{tier}] BLOCK: retry PASSED")
             return new_content, retry_result
 
-        # Retry also failed — send with warning appended
+        # Retry also failed — Wave 0.5.2 Fix 7: log internally, ship clean content
+        # (no user-facing warning suffix).
         logger.warning(
             f"Quality gate [{tier}] BLOCK: retry also failed "
             f"(density={retry_result.insight_density:.0%}, "
             f"issues={len(retry_result.factual_issues)}). "
-            f"Sending with quality warning."
+            f"{_QUALITY_WARNING_LOG_TEXT}"
         )
-        retry_result.quality_warning_appended = True
+        retry_result.quality_warning_appended = True  # flag kept for ops dashboards
         return new_content + QUALITY_WARNING, retry_result
 
     except Exception as e:
         logger.error(f"Quality gate [{tier}] BLOCK: retry failed with error: {e}")
-        # On retry error, send original content with warning
+        # On retry error, ship original — Fix 7: no user-facing warning appended.
+        logger.warning(
+            f"Quality gate [{tier}] BLOCK: shipping original. {_QUALITY_WARNING_LOG_TEXT}"
+        )
         first_result.was_retried = True
         first_result.quality_warning_appended = True
         return content + QUALITY_WARNING, first_result
