@@ -2,6 +2,25 @@
 
 ## [Unreleased] - 2026-04-28
 
+### Wave 0.6 Story 0.6.3 — Date freshness HARD BLOCK + extended numeric guards (alpha.21)
+
+Wave 0.5.2 cảnh báo (LOG-ONLY) về stale dates và cap % > 100. Story 0.6.3 nâng lên thành **HARD BLOCK** có flag + thêm guard cho BTC/ETH price + year. Default flag OFF — safe deploy, chờ live monitoring confirm.
+
+- **`generators/numeric_sanity.py`**: thêm 4 hàm mới + giữ nguyên `check_and_cap_percentages` (back-compat):
+  - `check_btc_price_sanity(content, min, max)` — flag claims BTC < $10k hoặc > $200k (range plausible 2026). Context check ±60 chars yêu cầu "BTC" hoặc "Bitcoin" gần $X để tránh false positive trên giá generic.
+  - `check_eth_price_sanity(content, min, max)` — tương tự BTC, range $1k-$10k.
+  - `check_year_sanity(content, current_year, future_buffer=1)` — flag năm > current+1 (vd. "halving 2032" trong bài 2026 → cờ). Past years (2014, 2022) pass clean.
+  - `apply_all_numeric_guards(content, btc_snapshot=None, eth_snapshot=None)` — wrapper chạy tuần tự % cap → BTC → ETH → year. Snapshot tối ưu range ±50% nếu cung cấp; Story 0.6.4 sẽ wire `PriceSnapshot` thực.
+- **`breaking/content_generator.py`**:
+  - `_check_and_handle_stale_dates(content, today, block_enabled)` MỚI — flag-aware. Flag OFF → behavior LOG-ONLY (Wave 0.5.2 unchanged). Flag ON → strip sentence chứa past date + future marker; nếu strip > 2 sentences → raise `LLMError(retry=False)` (mark delivery_failed, mirror v0.29.0 A4 pattern).
+  - `_check_stale_dates()` GIỮ NGUYÊN cho back-compat tests Wave 0.5.2/0.5.x.
+  - Thay `check_and_cap_percentages` → `apply_all_numeric_guards` trong cả 2 path (`generate_breaking_content` + `generate_digest_content`).
+  - Helper `_split_sentences()` + `_sentence_has_stale_future_date()` cho strip path.
+- **`core/config.py`**: thêm `_wave_0_6_date_block_enabled()` + `WAVE_0_6_DATE_BLOCK` (env override `WAVE_0_6_DATE_BLOCK=1`). Tách riêng khỏi `WAVE_0_6_ENABLED` vì date-block aggressive hơn (drop sentences / fail delivery) — operator có thể bật RAG nhưng để date-block OFF trong rollout đầu.
+- **Tests** (`tests/test_breaking/test_wave063_guards.py` MỚI): 35 tests — date flag OFF (log-only) + ON (strip 1 / strip 3 → delivery_failed) + no-marker kept + future-date kept; BTC low/high/in-range + no-context ignored + k-suffix; ETH low/in-range + no-context; year far-future flagged + historical OK + within-buffer OK; combined wrapper với % + BTC + year violations; snapshot tightens range; edge cases (empty/no-numbers/unicode VN/very long); config flag truthy/falsy parametrize. **35/35 PASS**.
+- **Version**: 2.0.0-alpha.20 → **2.0.0-alpha.21** (3 nơi: `core/config.py`, `pyproject.toml`, `tests/test_core/test_config.py`).
+- **Karpathy compliance**: Think Before — assumption BTC range 2026 viết rõ trong docstring + constants. Simplicity — extend existing module, không tạo file mới. Surgical — 3 file modify (`numeric_sanity.py`, `content_generator.py`, `config.py`) + 1 test mới + version + CHANGELOG. Goal-driven — flag default OFF (safe deploy), full suite regression PASS.
+
 ### Wave 0.6 Story 0.6.2 — Wire RAG inject + Cerebras Qwen3 fact-checker (alpha.20)
 
 Story 0.6.1 đã build BM25 index. Story 0.6.2 wire vào breaking pipeline + thêm 2nd LLM (Cerebras Qwen3 235B) làm fact-checker — đây là **CỐT LÕI fix root cause hallucination 87.5%** Wave 0.5 audit. Default flag OFF — Story 0.6.5 sẽ bật sau Combo D replay validation.
