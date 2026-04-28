@@ -143,7 +143,10 @@ SEMANTIC_NQ05_PATTERNS = [
     # WHY: implicit accumulation/strategy advice = NQ05 violation (no buy/sell rec).
     r"tích\s+lũy\s+(?:dài\s+hạn|dài\s+hơi|chiến\s+lược)",
     r"nhà\s+đầu\s+tư\s+(?:chiến\s+lược\s+)?cần\s+(?:theo\s+dõi|lưu\s+ý|cân\s+nhắc)",
-    r"nhà\s+đầu\s+tư\s+chiến\s+lược",
+    # WHY refine (Quinn Wave 0.5 finding): bare phrase = false positive 100% — LLM
+    # echoes "nhà đầu tư chiến lược" as audience descriptor (from prompts). Require
+    # action verb (nên/cần/hãy/phải) so we only block actual advisory, not noun use.
+    r"nhà\s+đầu\s+tư\s+chiến\s+lược\s+(?:nên|cần|hãy|phải)\s+",
 ]
 
 

@@ -92,14 +92,20 @@ class TestFix1HistoricalRemoved:
 
 
 class TestFix2NQ05Patterns:
-    """Wave 0.5: 3 new advisory patterns must be filtered."""
+    """Wave 0.5: advisory patterns must be filtered.
+
+    Refine (post-Quinn): bare "nhà đầu tư chiến lược" was 100% false positive
+    in production — LLM echoed the audience descriptor from prompts. Pattern
+    now requires action verb (nên/cần/hãy/phải) so we only block real advisory.
+    """
 
     @pytest.mark.parametrize(
         "phrase",
         [
             "Nhà đầu tư tích lũy dài hạn cần theo dõi diễn biến.",
             "Nhà đầu tư chiến lược cần lưu ý rủi ro thanh khoản.",
-            "Đây là khuyến nghị cho nhà đầu tư chiến lược.",
+            # Real advisory — bare phrase + action verb (nên/cần/hãy/phải).
+            "Nhà đầu tư chiến lược nên tích lũy dài hạn.",
         ],
     )
     def test_new_patterns_are_filtered(self, phrase: str):
@@ -107,6 +113,23 @@ class TestFix2NQ05Patterns:
         # The violating sentence must be removed from output.
         assert phrase not in result.content
         assert result.violations_found >= 1
+
+    @pytest.mark.parametrize(
+        "phrase",
+        [
+            # Audience descriptor — must NOT be stripped (Quinn finding).
+            "Phân tích dành cho nhà đầu tư chiến lược.",
+            # Noun-phrase use in subject position — must NOT be stripped.
+            "Đối với nhà đầu tư chiến lược, tin này quan trọng.",
+            # Noun-phrase use as agent of unrelated verb — must NOT be stripped.
+            "Bitcoin tăng 5% hôm nay khi nhà đầu tư chiến lược tích lũy thêm.",
+        ],
+    )
+    def test_audience_descriptor_not_filtered(self, phrase: str):
+        """Bare 'nhà đầu tư chiến lược' phrases (no advisory action verb)
+        must pass through — they are audience/subject use, not buy/sell rec."""
+        result = check_and_fix(phrase)
+        assert phrase in result.content, f"Audience descriptor incorrectly stripped: {phrase!r}"
 
 
 # ---------------------------------------------------------------------------
