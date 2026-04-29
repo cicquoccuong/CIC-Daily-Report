@@ -184,6 +184,8 @@ class RAGIndex:
         self._events: list[RAGEvent] = []
         self._bm25: BM25Okapi | None = None
         self._tokenized_corpus: list[list[str]] = []
+        # Wave 0.6.6 B1: cached raw row count from build (None until build/load).
+        self._cached_raw_row_count: int | None = None
         # WHY: ensure parent dir exists before any sqlite open
         self._sqlite_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
@@ -248,10 +250,18 @@ class RAGIndex:
                     cache_key TEXT PRIMARY KEY,
                     model_blob BLOB,
                     doc_count INTEGER,
-                    built_at TEXT
+                    built_at TEXT,
+                    raw_row_count INTEGER
                 );
                 """
             )
+            # Wave 0.6.6 B1: migrate older cache files that lack `raw_row_count`.
+            # WHY ALTER + try/except: ADD COLUMN fails if column already exists;
+            # legacy DBs (pre-0.6.6) won't have it, fresh DBs from CREATE will.
+            try:
+                conn.execute("ALTER TABLE rag_bm25_cache ADD COLUMN raw_row_count INTEGER")
+            except sqlite3.OperationalError:
+                pass  # column already exists — fresh schema or already migrated
 
     # ------------------------------------------------------------------ build
 
@@ -342,13 +352,26 @@ class RAGIndex:
         self._tokenized_corpus = [_tokenize(e.to_doc_text()) for e in events]
         # WHY: BM25Okapi requires non-empty corpus → guard
         self._bm25 = BM25Okapi(self._tokenized_corpus) if self._tokenized_corpus else None
-        self._persist()
-        logger.info(f"RAGIndex built: {len(events)} events indexed")
+        # Wave 0.6.6 B1: track RAW row count (incl. malformed/skipped) so
+        # cache-freshness check compares the same dimension as the freshness
+        # query (sheets_client.get_row_count). Without this, dirty rows always
+        # cause cache misses (`doc_count` excludes skipped rows).
+        self._cached_raw_row_count = len(rows)
+        self._persist(raw_row_count=len(rows))
+        logger.info(f"RAGIndex built: {len(events)} events indexed (raw rows={len(rows)})")
         return len(events)
 
-    def _persist(self) -> None:
-        """Save events + BM25 model to SQLite."""
+    def _persist(self, raw_row_count: int | None = None) -> None:
+        """Save events + BM25 model to SQLite.
+
+        Args:
+            raw_row_count: Total row count from Sheets BEFORE filtering invalid
+                rows. Used for B1 cache-freshness compare. None → defaults to
+                doc_count (legacy behavior; tests that bypass build_from_sheets).
+        """
         now_iso = datetime.now(timezone.utc).isoformat()
+        if raw_row_count is None:
+            raw_row_count = len(self._events)
         with self._connect() as conn:
             conn.execute("DELETE FROM rag_events")
             conn.executemany(
@@ -375,13 +398,15 @@ class RAGIndex:
             )
             blob = pickle.dumps(self._bm25) if self._bm25 is not None else b""
             conn.execute(
-                """INSERT INTO rag_bm25_cache (cache_key, model_blob, doc_count, built_at)
-                   VALUES (?, ?, ?, ?)
+                """INSERT INTO rag_bm25_cache
+                       (cache_key, model_blob, doc_count, built_at, raw_row_count)
+                   VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(cache_key) DO UPDATE SET
                      model_blob=excluded.model_blob,
                      doc_count=excluded.doc_count,
-                     built_at=excluded.built_at""",
-                (_CACHE_KEY, blob, len(self._events), now_iso),
+                     built_at=excluded.built_at,
+                     raw_row_count=excluded.raw_row_count""",
+                (_CACHE_KEY, blob, len(self._events), now_iso, raw_row_count),
             )
             conn.commit()
 
@@ -391,14 +416,20 @@ class RAGIndex:
         """Try to load BM25 + events from SQLite. Returns True on success."""
         try:
             with self._connect() as conn:
+                # Wave 0.6.6 B1: also read raw_row_count for freshness compare.
                 cur = conn.execute(
-                    "SELECT model_blob, doc_count FROM rag_bm25_cache WHERE cache_key=?",
+                    "SELECT model_blob, doc_count, raw_row_count "
+                    "FROM rag_bm25_cache WHERE cache_key=?",
                     (_CACHE_KEY,),
                 )
                 row = cur.fetchone()
                 if not row:
                     return False
-                blob, doc_count = row
+                blob, doc_count, raw_row_count = row
+                # Legacy caches (pre-0.6.6) have NULL → fallback to doc_count.
+                self._cached_raw_row_count = (
+                    raw_row_count if raw_row_count is not None else doc_count
+                )
                 if not blob or doc_count == 0:
                     self._events = []
                     self._bm25 = None
@@ -570,13 +601,21 @@ def get_or_build_index(
         idx.build_from_sheets()
         return idx
 
-    # Compare cached doc_count vs current Sheets size
+    # Wave 0.6.6 B1: compare cached RAW row count vs current Sheets row count.
+    # WHY raw not doc_count: doc_count excludes malformed rows that
+    # `_row_to_event` skips. With dirty rows present, cached doc_count
+    # never equals get_row_count → cache never reused → defeats caching.
     if sheets_client is not None:
         try:
             current = sheets_client.get_row_count("BREAKING_LOG")
-            if current != idx.doc_count:
+            cached_raw = idx._cached_raw_row_count
+            if cached_raw is None:
+                # Legacy cache without raw_row_count → conservative rebuild
+                logger.info("RAGIndex: cache lacks raw_row_count metadata — rebuilding")
+                idx.build_from_sheets()
+            elif current != cached_raw:
                 logger.info(
-                    f"RAGIndex: cache stale ({idx.doc_count} cached vs "
+                    f"RAGIndex: cache stale (raw_row_count {cached_raw} cached vs "
                     f"{current} in Sheets) — rebuilding"
                 )
                 idx.build_from_sheets()
