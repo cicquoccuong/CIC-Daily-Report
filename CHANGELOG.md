@@ -2,6 +2,35 @@
 
 ## [Unreleased] - 2026-04-29
 
+### Wave 0.7 — Real-time Data + Coin Scope Filter (alpha.26)
+
+Merge gộp 2 sprint nhỏ (0.7.1 data + 0.7.2 scope) thành 1 deploy. Origin:
+
+- Mary fact-check batch 29/04/2026 phát hiện 8/20 claims sai số liệu (F&G, USDT/VND, hash rate, difficulty, FOMC date, reporter name, USDT supply).
+- Winston code audit phát hiện L2 article leak coin ngoài scope: top performers lấy từ toàn thị trường top-50 → DOGE/MKR/AAVE/TAO/PI chen vào L2 dù L2 chỉ nên có L1 (BTC/ETH) + 17 coins L2.
+
+**Wave 0.7.1 — Real-time data fixes:**
+
+- **A1 (F&G)**: Verified `_collect_fear_greed` already real-time qua `api.alternative.me/fng/`. Test mới chốt: API fail → return `[]` (không giữ stale).
+- **A2 (USDT/VND)**: Verified `_fetch_binance_p2p_vnd` already real-time (median top 5 BUY ads). Test mới chốt: input ~26,340 → median in [26,300, 26,400] (NOT stale 26,694).
+- **A3 (Hash rate)**: `mempool_data.py` switch endpoint `/mining/hashrate/1w` → `/mining/hashrate/3d` để current value reflect 3-day window thay vì week-old. Fallback to `/1w` if 404. Mary verified ~994 EH/s vs cached 927.
+- **A4 (FOMC date)**: `master_analysis.py` MASTER_SYSTEM_PROMPT thêm rule "KHÔNG tự đoán NGÀY của FOMC/CPI/PPI/Fed meetings — CHỈ dùng ngày trong section LICH SU KIEN KINH TE; nếu không có, viết 'theo lịch Fed sắp tới' không kèm ngày cụ thể".
+- **A5 (Reporter name)**: Same prompt rule "KHÔNG bịa tên reporter/journalist; nếu không có byline → 'theo {publication}'".
+- **A6 (USDT supply)**: Verified `_collect_stablecoin_data` already pulls live DefiLlama. Test mới chốt path.
+
+**Wave 0.7.2 — Coin scope filter:**
+
+- **B1**: `tier_extractor.py` thêm helpers `_cumulative_tier_set`, `_filter_top_performers_by_tier`. `build_l2_data_injection` + `build_l2_retry_instruction` giờ filter top performers theo scope tier (L2 = L1+L2 cumulative).
+- **B2**: `extract_tier` thêm `build_tier_coin_scope_rule` injecting strict allow-list cho L2/L3/L4/L5 vào prompt: "CHỈ được nhắc tới các coin sau ({N} coins): {list}. TUYỆT ĐỐI KHÔNG nhắc coin ngoài list".
+- **B3**: `extract_tier` + `extract_all` thêm kwarg `coin_lists`. Wired từ `daily_pipeline.py` xuống.
+
+**Tests:**
+
+- `tests/test_breaking/test_wave07_data_scope.py` — 35 tests mới (Part A 6 tests, Part B 29 tests). 2384 total pass (+35 vs alpha.25 baseline 2349).
+- `tests/test_collectors/test_mempool_data.py` — fixture URL update from `/1w` → `/3d` (matches new primary endpoint).
+
+**Version bump:** alpha.24 (pyproject) + alpha.25 (config) → alpha.26 đồng bộ ở 3 nơi (`pyproject.toml`, `core/config.py`, `tests/test_core/test_config.py`).
+
 ### Wave 0.6.7 — Polish 2 (alpha.25)
 
 - Fix 1: DedupManager signature mismatch trong scripts/ingest_url.py — dedup giờ ACTUAL work cho URL ingest manual (cũ bug TypeError swallowed → mọi ingest bypass dedup im lặng).

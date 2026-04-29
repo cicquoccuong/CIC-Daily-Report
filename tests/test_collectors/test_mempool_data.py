@@ -21,7 +21,7 @@ MODULE = "cic_daily_report.collectors.mempool_data"
 
 
 def _make_hashrate_response() -> dict:
-    """Build mock /mining/hashrate/1w response."""
+    """Build mock /mining/hashrate/3d response (Wave 0.7.1: switched from /1w)."""
     return {
         "currentHashrate": 650e18,  # 650 EH/s in H/s
         "currentDifficulty": 80e12,
@@ -60,7 +60,7 @@ def _mock_httpx_client(hashrate=None, fees=None, difficulty=None, raise_on=None)
     """Create a mock httpx.AsyncClient for 3 Mempool endpoints.
 
     Args:
-        hashrate: Response for /mining/hashrate/1w
+        hashrate: Response for /mining/hashrate/3d
         fees: Response for /fees/recommended
         difficulty: Response for /difficulty-adjustment
         raise_on: If set, endpoint name ("hashrate", "fees", "difficulty")
@@ -74,13 +74,13 @@ def _mock_httpx_client(hashrate=None, fees=None, difficulty=None, raise_on=None)
         difficulty = _make_difficulty_response()
 
     url_responses = {
-        "/mining/hashrate/1w": hashrate,
+        "/mining/hashrate/3d": hashrate,
         "/fees/recommended": fees,
         "/difficulty-adjustment": difficulty,
     }
     url_raises = {}
     if raise_on == "hashrate":
-        url_raises["/mining/hashrate/1w"] = Exception("hashrate error")
+        url_raises["/mining/hashrate/3d"] = Exception("hashrate error")
     elif raise_on == "fees":
         url_raises["/fees/recommended"] = Exception("fees error")
     elif raise_on == "difficulty":

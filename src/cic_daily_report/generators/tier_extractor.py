@@ -214,16 +214,97 @@ def _count_numbers_in_text(text: str) -> int:
     return count
 
 
-def build_l2_data_injection(price_snapshot: object | None = None) -> str:
-    """QO.22: Build mandatory data injection string for L2 extraction.
+def _cumulative_tier_set(coin_lists: dict[str, list[str]] | None, tier: str) -> set[str] | None:
+    """Wave 0.7.2: Build the cumulative coin allow-set for a given tier.
+
+    L2 = L1 ∪ L2 (19 coins).
+    L3 = L1 ∪ L2 ∪ L3 (62 coins).
+    L4 = L1..L4 (131 coins).
+    L5 = L1..L5 (169 coins, full).
+
+    Returns None when coin_lists is missing/empty so callers fall back to
+    legacy (unfiltered) behaviour. WHY None: previous behaviour passed
+    top market performers regardless — keep that path when tier lists are
+    not wired in (tests using stubs, fallback path).
+    """
+    if not coin_lists:
+        return None
+    order = ["L1", "L2", "L3", "L4", "L5"]
+    if tier not in order:
+        return None
+    allowed: set[str] = set()
+    for t in order[: order.index(tier) + 1]:
+        for sym in coin_lists.get(t, []) or []:
+            if sym:
+                allowed.add(sym.upper())
+    return allowed if allowed else None
+
+
+def _filter_top_performers_by_tier(
+    price_snapshot: object,
+    tier: str,
+    coin_lists: dict[str, list[str]] | None,
+    n: int = 3,
+) -> list:
+    """Wave 0.7.2: Return top performers restricted to coins inside the tier scope.
+
+    Pulls a wider set (`get_top_performers(50)`) then filters to the tier
+    allow-set, dropping BTC/USDT (those are surfaced separately via
+    btc_price/USDT/VND lines).
+
+    WHY 50: covers top movers from CoinLore top-50 universe so we still have
+    candidates after filtering out unlisted coins (DOGE/PI/MKR/WBTC/AAVE/TAO).
+    """
+    allowed = _cumulative_tier_set(coin_lists, tier)
+    # Pull a wider candidate pool so filter has enough symbols to choose from
+    candidates = price_snapshot.get_top_performers(50)
+    if allowed is None:
+        # Legacy (unfiltered) — keep prior behaviour for callers without coin_lists
+        return [dp for dp in candidates if dp.symbol not in ("BTC", "USDT")][:n]
+    filtered = [
+        dp for dp in candidates if dp.symbol.upper() in allowed and dp.symbol not in ("BTC", "USDT")
+    ]
+    return filtered[:n]
+
+
+def build_tier_coin_scope_rule(tier: str, coin_lists: dict[str, list[str]] | None) -> str:
+    """Wave 0.7.2: Build a strict allow-list instruction for a tier prompt.
+
+    Tells the LLM: only mention coins in this list. Returns "" if the tier
+    has no coin list (e.g., L1 or Summary), keeping prompts unchanged.
+    """
+    allowed = _cumulative_tier_set(coin_lists, tier)
+    if not allowed:
+        return ""
+    # Sort for deterministic prompt + easier debugging
+    coin_str = ", ".join(sorted(allowed))
+    return (
+        "\n\nPHẠM VI COIN BẮT BUỘC cho "
+        f"{tier} (Wave 0.7.2 scope guard):\n"
+        f"CHỈ được nhắc tới các coin sau "
+        f"({len(allowed)} coins): {coin_str}.\n"
+        "TUYỆT ĐỐI KHÔNG nhắc tới bất kỳ "
+        f"coin nào KHÔNG có trong danh sách trên. "
+        "Nếu trong dữ liệu gốc có nhắc tới "
+        "coin ngoài list, BO QUA — không viết vào bài.\n"
+    )
+
+
+def build_l2_data_injection(
+    price_snapshot: object | None = None,
+    coin_lists: dict[str, list[str]] | None = None,
+) -> str:
+    """QO.22 + Wave 0.7.2: Build mandatory data injection string for L2 extraction.
 
     Injects key data into L2 prompt so the output contains specific numbers:
     - BTC current price + 24h change %
     - Fear & Greed index value + label
-    - Top 3 altcoin performers (% change)
+    - Top 3 altcoin performers (% change) RESTRICTED to L1+L2 cumulative scope
 
     Args:
         price_snapshot: PriceSnapshot object (optional, for frozen prices).
+        coin_lists: Wave 0.7.2 — Per-tier coin allow-list. When None, falls
+            back to legacy unfiltered top-3 (back-compat for tests/stubs).
 
     Returns:
         Formatted injection string to append to L2 prompt.
@@ -255,15 +336,15 @@ def build_l2_data_injection(price_snapshot: object | None = None) -> str:
             label = "Tham lam c\u1ef1c \u0111\u1ed9"
         parts.append(f"Fear & Greed: {int(fg)} ({label})")
 
-    # Top 3 altcoin performers
-    top_performers = price_snapshot.get_top_performers(3)
+    # Top 3 altcoin performers — Wave 0.7.2: filtered to L1+L2 cumulative scope
+    # WHY: previously returned top movers from full CoinLore top-50, which leaked
+    # L4/unlisted coins (DOGE, MKR, AAVE, TAO, PI) into L2 article. Filter
+    # against the cumulative tier allow-set so L2 only mentions L1+L2 coins.
+    top_performers = _filter_top_performers_by_tier(price_snapshot, "L2", coin_lists, n=3)
     if top_performers:
-        alts = []
-        for dp in top_performers:
-            if dp.symbol not in ("BTC", "USDT"):
-                alts.append(f"{dp.symbol} {dp.change_24h:+.1f}%")
+        alts = [f"{dp.symbol} {dp.change_24h:+.1f}%" for dp in top_performers]
         if alts:
-            parts.append(f"Top altcoins: {', '.join(alts[:3])}")
+            parts.append(f"Top altcoins: {', '.join(alts)}")
 
     if not parts:
         return ""
@@ -274,16 +355,21 @@ def build_l2_data_injection(price_snapshot: object | None = None) -> str:
     )
 
 
-def build_l2_retry_instruction(price_snapshot: object | None = None) -> str:
-    """QO.22: Build explicit retry instruction when L2 lacks data points.
+def build_l2_retry_instruction(
+    price_snapshot: object | None = None,
+    coin_lists: dict[str, list[str]] | None = None,
+) -> str:
+    """QO.22 + Wave 0.7.2: Build explicit retry instruction when L2 lacks data points.
 
     Returns instruction string demanding specific numbers in output.
+    Wave 0.7.2: top altcoin filtered to L1+L2 scope so retry suggestion does
+    not mention out-of-scope coins (DOGE/MKR/AAVE/TAO etc).
     """
     parts = []
     if price_snapshot:
         btc_price = price_snapshot.get_price("BTC")
         fg = price_snapshot.get_price("Fear&Greed")
-        top = price_snapshot.get_top_performers(3)
+        top = _filter_top_performers_by_tier(price_snapshot, "L2", coin_lists, n=3)
         if btc_price:
             parts.append(f"BTC gi\u00e1 ${btc_price:,.0f}")
         if fg:
@@ -357,6 +443,7 @@ async def extract_tier(
     tier_context_str: str = "",
     price_snapshot: object | None = None,
     consensus_data: list | None = None,
+    coin_lists: dict[str, list[str]] | None = None,
 ) -> GeneratedArticle:
     """Extract a single tier article from the Master Analysis.
 
@@ -389,9 +476,19 @@ async def extract_tier(
 
     # QO.22: L2 mandatory data injection
     if config.tier == "L2" and price_snapshot is not None:
-        l2_injection = build_l2_data_injection(price_snapshot)
+        l2_injection = build_l2_data_injection(price_snapshot, coin_lists=coin_lists)
         if l2_injection:
             prompt += l2_injection
+
+    # Wave 0.7.2: Per-tier coin scope guard (L2/L3/L4/L5).
+    # WHY: Without this guard, master analysis could mention coins outside the
+    # tier's investor scope (e.g., L2 article mentioning DOGE/MKR/AAVE). After
+    # extraction, those leaked through. This rule pins the LLM to only mention
+    # coins inside the cumulative tier list.
+    if config.tier in ("L2", "L3", "L4", "L5"):
+        scope_rule = build_tier_coin_scope_rule(config.tier, coin_lists)
+        if scope_rule:
+            prompt += scope_rule
 
     # QO.26: Consensus display instruction for Summary + L3+
     # WHY: Spec says "Summary + L3+ tiers must include ĐỒNG THUẬN section"
@@ -480,7 +577,7 @@ async def extract_tier(
                 f"L2 has {num_count} data points (min {L2_MIN_DATA_POINTS}), "
                 f"retrying with explicit instruction"
             )
-            retry_instruction = build_l2_retry_instruction(price_snapshot)
+            retry_instruction = build_l2_retry_instruction(price_snapshot, coin_lists=coin_lists)
             retry_response: LLMResponse = await llm.generate(
                 prompt=prompt + retry_instruction,
                 system_prompt=NQ05_SYSTEM_PROMPT,
@@ -550,6 +647,7 @@ async def extract_all(
     price_snapshot: object | None = None,
     consensus_data: list | None = None,
     config_loader: object | None = None,
+    coin_lists: dict[str, list[str]] | None = None,
 ) -> list[GeneratedArticle]:
     """Extract all tiers + summary from Master Analysis sequentially.
 
@@ -578,6 +676,7 @@ async def extract_all(
                     tier_ctx,
                     price_snapshot=price_snapshot,
                     consensus_data=consensus_data,
+                    coin_lists=coin_lists,
                 )
                 articles.append(article)
                 logger.info(f"Extracted {config.tier}: {article.word_count} words")
@@ -642,6 +741,7 @@ async def extract_all(
                         anti_rep_ctx,
                         price_snapshot=price_snapshot,
                         consensus_data=consensus_data,
+                        coin_lists=coin_lists,
                     )
                     # Replace the old article with the retry
                     articles = [retry_article if a.tier == tier_b else a for a in articles]

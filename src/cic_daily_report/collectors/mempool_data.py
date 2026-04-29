@@ -86,13 +86,24 @@ async def collect_mempool_data() -> MempoolData | None:
 
 
 async def _fetch_hashrate(client: httpx.AsyncClient) -> dict | None:
-    """Fetch hashrate from /mining/hashrate/1w endpoint.
+    """Fetch hashrate from /mining/hashrate/3d endpoint (Wave 0.7.1).
 
     Returns dict with hashrate_eh (exahash/s) and change_7d (percent).
     The API returns hashrate in H/s — we convert to EH/s.
+
+    WHY 3d (was 1w): Mary's fact-check 29/04 showed cached value 927 EH/s while
+    actual was ~994 EH/s. The /1w endpoint averages too much old data; /3d gives
+    a fresher 3-day window so currentHashrate reflects today, not week-ago.
+    Fallback to /1w if /3d returns no data (some Mempool instances may not expose it).
     """
+    endpoint_path = "/mining/hashrate/3d"
     try:
-        resp = await client.get(f"{MEMPOOL_BASE_URL}/mining/hashrate/1w")
+        resp = await client.get(f"{MEMPOOL_BASE_URL}{endpoint_path}")
+        if resp.status_code == 404:
+            # Fallback for Mempool instances that only expose /1w
+            logger.info("Mempool /3d hashrate not available, falling back to /1w")
+            endpoint_path = "/mining/hashrate/1w"
+            resp = await client.get(f"{MEMPOOL_BASE_URL}{endpoint_path}")
         resp.raise_for_status()
         data = resp.json()
 
@@ -102,7 +113,7 @@ async def _fetch_hashrate(client: httpx.AsyncClient) -> dict | None:
 
         hashrate_eh = current / 1e18  # H/s → EH/s
 
-        # Calculate 7d change from first and last entries
+        # Calculate change from first and last entries (label as 7d for back-compat)
         change_7d = 0.0
         if len(hashrates) >= 2:
             first_val = hashrates[0].get("avgHashrate", 0)
@@ -113,7 +124,7 @@ async def _fetch_hashrate(client: httpx.AsyncClient) -> dict | None:
         return {"hashrate_eh": hashrate_eh, "change_7d": change_7d}
 
     except Exception as e:
-        logger.warning(f"Mempool hashrate fetch failed: {e}")
+        logger.warning(f"Mempool hashrate fetch failed ({endpoint_path}): {e}")
         return None
 
 
