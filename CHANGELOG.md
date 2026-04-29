@@ -2,6 +2,11 @@
 
 ## [Unreleased] - 2026-04-29
 
+### Wave 0.6.7 — Polish 2 (alpha.25)
+
+- Fix 1: DedupManager signature mismatch trong scripts/ingest_url.py — dedup giờ ACTUAL work cho URL ingest manual (cũ bug TypeError swallowed → mọi ingest bypass dedup im lặng).
+- Fix 2: Bỏ "nhà đầu tư chiến lược" khỏi prompt template (3 chỗ trong content_generator.py BREAKING + DIGEST) — thay bằng "cộng đồng CIC". Giảm stale repeat phrase + tránh NQ05 false positive sau này. research_generator giữ nguyên (BIC L1 paid tier branding).
+
 ### Wave 0.6.6 — Polish (8 Codex fixes + 2 features) (alpha.24)
 
 8 Codex bot findings từ 5 PR Wave 0.6 + 2 features mới — chuẩn bị Wave 0.6.5

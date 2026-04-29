@@ -41,7 +41,7 @@ _DISCLAIMER_RE = re.compile(
 
 BREAKING_PROMPT_TEMPLATE = """\
 Phóng viên thị trường tài sản mã hóa, viết cho cộng đồng CIC \
-(nhà đầu tư chiến lược, đã có kiến thức — KHÔNG giải thích khái niệm cơ bản).
+(cộng đồng CIC đã có kiến thức cơ bản về crypto — KHÔNG giải thích khái niệm cơ bản).
 
 <source>
 Tiêu đề: {title}
@@ -60,7 +60,8 @@ FORMAT (KHÔNG thêm nguồn hay disclaimer — hệ thống tự thêm):
 ai làm gì, **con số** cụ thể, quy mô, timeline. Dùng **bold** cho mọi số liệu.
 - (dòng trống)
 - Đoạn 2 — TẠI SAO QUAN TRỌNG cho CIC (2-3 câu): \
-Nêu hệ quả CỤ THỂ cho nhà đầu tư chiến lược dài hạn. \
+Nêu hệ quả CỤ THỂ cho cộng đồng — ngắn gọn ý chính. \
+KHÔNG dùng cụm "nhà đầu tư chiến lược". \
 KHÔNG lặp lại thông tin đoạn 1. Nếu không có info mới → viết 1 câu ngắn hoặc bỏ qua.
 {historical_instruction}
 CÁCH KẾT THÚC MỖI ĐOẠN:
@@ -88,7 +89,7 @@ Dùng 'tài sản mã hóa' thay 'tiền điện tử'."""
 
 DIGEST_PROMPT_TEMPLATE = """\
 Phóng viên tài sản mã hóa, viết cho cộng đồng CIC \
-(nhà đầu tư chiến lược, đã có kiến thức).
+(cộng đồng CIC đã có kiến thức cơ bản về crypto — KHÔNG giải thích khái niệm cơ bản).
 
 <source>
 {events_list}

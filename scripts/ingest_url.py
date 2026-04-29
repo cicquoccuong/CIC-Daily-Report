@@ -184,12 +184,39 @@ async def ingest_one_url(
     # Dedup check.
     if not skip_dedup:
         try:
-            from cic_daily_report.breaking.dedup_manager import DedupManager
+            # Wave 0.6.7 Fix 1: DedupManager constructor accepts
+            # `existing_entries` (list[DedupEntry]) + `config_loader`, NOT
+            # `sheets_client`. Old code was a constructor-signature mismatch
+            # → DedupManager() always raised TypeError → except branch hid
+            # the bug as "Dedup check failed (...) — proceeding without dedup",
+            # so EVERY manual ingest skipped dedup silently. Now we mirror
+            # breaking_pipeline._load_dedup_state(): read BREAKING_LOG rows
+            # via SheetsClient, build DedupEntry list, then pass to manager,
+            # then call check_and_filter (real method name) on the event.
+            from cic_daily_report.breaking.dedup_manager import (
+                DedupEntry,
+                DedupManager,
+            )
             from cic_daily_report.storage.sheets_client import SheetsClient
 
             sheets = SheetsClient()
-            dedup_mgr = DedupManager(sheets_client=sheets)
-            dedup_result = dedup_mgr.process_events([event])
+            rows = sheets.read_all("BREAKING_LOG")
+            existing_entries = []
+            for row in rows:
+                entry = DedupEntry(
+                    hash=str(row.get("Hash", "")),
+                    title=str(row.get("Tiêu đề", "")),
+                    source=str(row.get("Nguồn", "")),
+                    severity=str(row.get("Mức độ", "")),
+                    detected_at=str(row.get("Thời gian", "")),
+                    status=str(row.get("Trạng thái gửi", "")),
+                    url=str(row.get("URL", "")),
+                    delivered_at=str(row.get("Thời gian gửi", "")),
+                )
+                if entry.hash:
+                    existing_entries.append(entry)
+            dedup_mgr = DedupManager(existing_entries=existing_entries)
+            dedup_result = dedup_mgr.check_and_filter([event])
             if dedup_result.duplicates_skipped > 0:
                 print(
                     "[INFO] Event flagged as duplicate (already in BREAKING_LOG). "
