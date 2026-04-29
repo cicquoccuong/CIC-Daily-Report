@@ -1078,6 +1078,9 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
                 tier_context,
                 price_snapshot=price_snapshot,
                 config_loader=locals().get("config"),
+                # Wave 0.7.2: Pass cumulative coin lists per tier so extractor
+                # can filter top performers + inject scope guard rule.
+                coin_lists=coin_lists,
             )
 
             # Separate tier articles from summary
