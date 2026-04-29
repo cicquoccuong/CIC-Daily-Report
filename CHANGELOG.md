@@ -2,6 +2,39 @@
 
 ## [Unreleased] - 2026-04-28
 
+### Wave 0.6 Story 0.6.4 — Wire PriceSnapshot vào breaking + 2-source verification (alpha.22)
+
+Audit Round 2 phát hiện 2 lỗ hổng còn lại sau Story 0.6.3:
+- BTC giá $76k → $74k → $77k trong 3 breaking trong 4 phút (PriceSnapshot KHÔNG wire vào breaking pipeline).
+- Tin Canada Bill C-25 từ CoinDesk + CoinTelegraph cùng được gửi 2 lần (1 sự kiện thật).
+
+Story 0.6.4 fix cả 2 root cause + thêm 1 feature flag default OFF mới:
+
+- **`breaking_pipeline.py`** — Stage 3b xây `PriceSnapshot` từ `collect_market_data()` (cùng pattern `daily_pipeline.py:440`) → pass `price_snapshot=` xuống `generate_breaking_content()` để mọi breaking trong cùng run đều dùng đúng 1 giá BTC/ETH frozen tại pipeline start.
+- **`breaking/content_generator.py`**:
+  - Param mới `price_snapshot: object | None = None` cho `generate_breaking_content`.
+  - Khi snapshot có → inject prompt section `GIÁ ĐÃ KHÓA (BẮT BUỘC dùng đúng): BTC price = $76,000. KHÔNG dùng giá khác cho BTC trong toàn bài.` (cộng ETH tương tự).
+  - Truyền `btc_snapshot=` + `eth_snapshot=` vào `apply_all_numeric_guards` (Story 0.6.3 đã chuẩn bị field này) — range tighten ±50% snapshot thay vì global $10k-$200k.
+  - Helper mới `_replace_off_snapshot_prices(content, coin, snapshot, tolerance_pct=1.0)`: regex match `BTC|Bitcoin ... $X` (cùng cho ETH/Ethereum), nếu drift > 1% nhưng < 50% thì replace `$X` bằng `${snapshot:,.0f}`. Drift > 50% giữ nguyên (numeric_sanity territory).
+- **`breaking/two_source_verifier.py` MỚI** (~210 LOC): `verify_two_sources(event, recent_events, similarity_threshold=0.4, recent_hours=24)` returns `TwoSourceResult(verdict, second_source, similarity_score, matched_title)`. Verdicts:
+  - `verified` — sim ≥ 0.4 + entity overlap ≥ 1 + nguồn KHÁC + trong 24h window.
+  - `single_source` — không tìm thấy match.
+  - `conflict` — sim ≥ 0.7 + magnitudes (`$1B` vs `$10B`) khác nhau → flag warning.
+  - Skip same-source (CoinDesk repost CoinDesk không tính corroboration).
+  - Reuse `_extract_entities()` và `SequenceMatcher` từ `dedup_manager` để consistency với threshold dedup hiện có.
+- **`breaking_pipeline.py`** wire `verify_two_sources` SAU `classify_batch`, BEFORE B1 cap:
+  - Flag `WAVE_0_6_2SOURCE_REQUIRED` OFF (default) → behavior cũ.
+  - Flag ON: `verified` → ship; `conflict` → defer + status `deferred_2source_conflict`; `single_source` + critical → defer + status `deferred_single_source`; `single_source` + non-critical → ship + log warning.
+- **`core/config.py`**: thêm `_wave_0_6_2source_required()` + `WAVE_0_6_2SOURCE_REQUIRED` (env override `WAVE_0_6_2SOURCE_REQUIRED=1`). Tách flag riêng (giống pattern `WAVE_0_6_DATE_BLOCK`) để operator có thể bật từng phần.
+- **Tests** (`tests/test_breaking/test_wave064_pricesnap_2source.py` MỚI): 25 tests (8 PriceSnapshot wire + 11 verifier logic + 6 flag/constants). Cover prompt injection, replace logic (1% tolerance, 50% guard, k-suffix, no-match, ETH path), verifier (verified/single/conflict/skip-same-source/window/empty/entity-required/unicode VN/malformed timestamp/threshold edge), flag default OFF + env override truthy/falsy. **25/25 PASS**.
+- **Version**: 2.0.0-alpha.21 → **2.0.0-alpha.22** (3 nơi: `core/config.py`, `pyproject.toml`, `tests/test_core/test_config.py`).
+- **Karpathy compliance**:
+  - **Think Before**: assumption ghi rõ trong docstring `_replace_off_snapshot_prices` (1% tolerance vs 50% guard) + `verify_two_sources` (0.4 sim + entity ≥ 1 vs dedup 0.55).
+  - **Simplicity First**: 1 file mới (`two_source_verifier.py`), reuse `_extract_entities` + `SequenceMatcher` từ dedup_manager, KHÔNG abstract thành class hierarchy.
+  - **Surgical Changes**: 4 file modify (`breaking_pipeline.py`, `breaking/content_generator.py`, `core/config.py`, `tests/test_core/test_config.py`) + 1 file mới (`breaking/two_source_verifier.py`) + 1 test mới + version + CHANGELOG.
+  - **Goal-Driven**: 2 flags default OFF (safe deploy), full suite regression PASS (2281 → 2306, +25 expected).
+- **Devil flag — chưa wire vào digest path**: `generate_digest_content` cũng cần `price_snapshot` để consistency, nhưng digest dùng template khác và thường ít narrative giá cụ thể → defer Story 0.6.5 nếu audit Round 3 phát hiện vấn đề ở digest. Hiện tại chỉ wire individual breaking path (nơi audit Round 2 thấy bug $76k/$74k/$77k).
+
 ### Wave 0.6 Story 0.6.3 — Date freshness HARD BLOCK + extended numeric guards (alpha.21)
 
 Wave 0.5.2 cảnh báo (LOG-ONLY) về stale dates và cap % > 100. Story 0.6.3 nâng lên thành **HARD BLOCK** có flag + thêm guard cho BTC/ETH price + year. Default flag OFF — safe deploy, chờ live monitoring confirm.

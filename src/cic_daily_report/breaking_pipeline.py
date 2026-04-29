@@ -383,6 +383,51 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             h, classified_event.delivery_action, severity=classified_event.severity
         )
 
+    # Wave 0.6 Story 0.6.4 (alpha.22): 2-source verification gate.
+    # Audit Round 2 found CoinDesk + CoinTelegraph publishing the same Canada
+    # Bill C-25 event within minutes — both sent (duplicate). Conversely,
+    # single-source critical claims have higher hallucination risk.
+    # Flag default OFF — safe deploy. ON: critical single-source → defer,
+    # important/notable single-source → ship + log warning, conflict → defer.
+    from cic_daily_report.core.config import _wave_0_6_2source_required
+
+    if _wave_0_6_2source_required() and send_now:
+        from cic_daily_report.breaking.two_source_verifier import verify_two_sources
+
+        send_now_after_gate: list = []
+        for c in send_now:
+            verdict = verify_two_sources(c.event, dedup_mgr.entries)
+            if verdict.verdict == "verified":
+                send_now_after_gate.append(c)
+            elif verdict.verdict == "conflict":
+                # WHY defer (not skip): operator review needed; surface in
+                # deferred_2source_conflict status so daily digest can flag.
+                logger.error(
+                    f"Story 0.6.4: Source conflict — defer '{c.event.title[:60]}' "
+                    f"vs second source '{verdict.second_source}'"
+                )
+                run_log.events_deferred += 1
+                result.deferred_events.append(c)
+                h = compute_hash(c.event.title, c.event.source)
+                dedup_mgr.update_entry_status(h, "deferred_2source_conflict", severity=c.severity)
+            else:  # single_source
+                if c.severity == "critical":
+                    logger.warning(
+                        f"Story 0.6.4: Critical event single-source — defer '{c.event.title[:60]}'"
+                    )
+                    run_log.events_deferred += 1
+                    result.deferred_events.append(c)
+                    h = compute_hash(c.event.title, c.event.source)
+                    dedup_mgr.update_entry_status(h, "deferred_single_source", severity=c.severity)
+                else:
+                    # important/notable: ship + log only.
+                    logger.info(
+                        f"Story 0.6.4: Single-source non-critical event "
+                        f"'{c.event.title[:60]}' — ship with warning log"
+                    )
+                    send_now_after_gate.append(c)
+        send_now = send_now_after_gate
+
     # B1: Cap events per run to prevent spam (QO.31: uses config value)
     # Wave 0.5.2 Fix 6: cap on REMAINING budget (max_per_run - already sent in
     # deferred reprocessing). Old behavior allowed +MAX_DEFERRED_PER_RUN above
@@ -473,10 +518,22 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     # Stage 3b: Build enrichment context for content generation
     market_snapshot = ""
     market_data = None  # WHY init: used by QO.19 consensus snapshot below
+    # Wave 0.6 Story 0.6.4 (alpha.22): PriceSnapshot for breaking — same pattern as
+    # daily_pipeline.py:440. Audit Round 2 found 3 breaking msg in 4 min reporting
+    # BTC at $76k / $74k / $77k because each call to LLM produced a different price
+    # in narrative. Freezing once per pipeline run + injecting explicit lock note
+    # into prompt + post-process replace prevents this.
+    price_snapshot = None
     try:
-        from cic_daily_report.collectors.market_data import collect_market_data
+        from cic_daily_report.collectors.market_data import PriceSnapshot, collect_market_data
 
         market_data = await asyncio.wait_for(collect_market_data(), timeout=30)
+        if market_data:
+            price_snapshot = PriceSnapshot(market_data=market_data)
+            logger.info(
+                f"Story 0.6.4: PriceSnapshot frozen "
+                f"({len(market_data)} data points, BTC=${price_snapshot.btc_price})"
+            )
         # QO.09: Detect if any event in this run is macro-type (geopolitical/economic)
         # so _format_market_snapshot knows whether to include DXY.
         # WHY "market_data" only: market_trigger.py sets source="market_data" for all
@@ -593,6 +650,7 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
                     market_context=market_snapshot,
                     recent_events=recent_events_text,
                     consensus_snapshot=consensus_text,
+                    price_snapshot=price_snapshot,  # Story 0.6.4 (alpha.22)
                 ),
                 timeout=60,
             )

@@ -47,7 +47,7 @@ Phóng viên thị trường tài sản mã hóa, viết cho cộng đồng CIC 
 Tiêu đề: {title}
 Nguồn: {source}
 {summary_section}</source>
-{market_context}
+{market_context}{price_lock}
 {consensus_section}
 {recent_events}
 {enrichment_context}
@@ -453,6 +453,79 @@ async def _fetch_article_text(url: str, max_chars: int = 3000) -> str:
     return ""
 
 
+# Wave 0.6 Story 0.6.4 (alpha.22): coin-name + price detection regex.
+# Matches "BTC ... $76,000" or "Bitcoin $76k" within 60-char window.
+# WHY 60 chars: balances precision (avoid matching unrelated price elsewhere)
+# vs flexibility (LLM may insert qualifiers like "hiện đạt" between name + price).
+_COIN_PRICE_PATTERN_BTC = re.compile(
+    r"(?P<name>BTC|Bitcoin)(?P<gap>[^$\n]{0,60}?)\$(?P<price>[\d,]+(?:\.\d+)?)\s*(?P<suffix>k|K)?",
+    re.IGNORECASE,
+)
+_COIN_PRICE_PATTERN_ETH = re.compile(
+    r"(?P<name>ETH|Ethereum)(?P<gap>[^$\n]{0,60}?)\$(?P<price>[\d,]+(?:\.\d+)?)\s*(?P<suffix>k|K)?",
+    re.IGNORECASE,
+)
+
+
+def _replace_off_snapshot_prices(
+    content: str,
+    coin: str,
+    snapshot_price: float,
+    tolerance_pct: float = 1.0,
+) -> str:
+    """Wave 0.6 Story 0.6.4: Replace coin prices that drift from snapshot.
+
+    Scans content for "BTC ... $X" or "ETH ... $X" patterns. If $X is within
+    tolerance_pct of snapshot_price → keep as-is (already correct). If $X is
+    >tolerance_pct off (but still within 50% range — beyond that
+    numeric_sanity already stripped) → replace with snapshot price formatted
+    as "${snapshot:,.0f}".
+
+    Args:
+        content: Generated article text.
+        coin: "BTC" or "ETH".
+        snapshot_price: Frozen price from PriceSnapshot.
+        tolerance_pct: Replace any price more than this % off snapshot.
+
+    Returns:
+        Content with off-snapshot prices replaced. Logs each replacement.
+
+    WHY tolerance 1%: snapshot is "the truth for this run"; any drift means
+    LLM hallucinated a slightly different value. Even small drift across 3
+    breaking msgs in same run looks unprofessional ($76k → $74k → $77k).
+    """
+    pattern = _COIN_PRICE_PATTERN_BTC if coin.upper() == "BTC" else _COIN_PRICE_PATTERN_ETH
+
+    def _maybe_replace(m: re.Match) -> str:
+        raw_price = m.group("price").replace(",", "")
+        try:
+            extracted = float(raw_price)
+        except ValueError:
+            return m.group(0)
+        suffix = m.group("suffix") or ""
+        if suffix.lower() == "k":
+            extracted *= 1000
+        # Skip absurdly off prices (>50% drift) — numeric_sanity should have
+        # already stripped those; if it didn't, replacing here would mask a
+        # real bug in the upstream guard.
+        drift_pct = abs(extracted - snapshot_price) / snapshot_price * 100
+        if drift_pct > 50:
+            return m.group(0)
+        if drift_pct <= tolerance_pct:
+            return m.group(0)  # within tolerance — keep
+        # Replace the $X portion only (preserve coin name + gap text).
+        # Reconstruct: <name><gap><new_price>  (drop suffix since we use full number).
+        new_price_str = f"${snapshot_price:,.0f}"
+        replacement = m.group("name") + m.group("gap") + new_price_str
+        logger.info(
+            f"Story 0.6.4: Replaced off-snapshot {coin} price "
+            f"${extracted:,.0f} → ${snapshot_price:,.0f} (drift {drift_pct:.1f}%)"
+        )
+        return replacement
+
+    return pattern.sub(_maybe_replace, content)
+
+
 async def generate_breaking_content(
     event: BreakingEvent,
     llm,
@@ -466,6 +539,7 @@ async def generate_breaking_content(
     polymarket_shift: str = "",
     breaking_history: str = "",
     sheets_client: object | None = None,
+    price_snapshot: object | None = None,
 ) -> BreakingContent:
     """Generate breaking news content for a detected event.
 
@@ -513,6 +587,29 @@ async def generate_breaking_content(
     market_section = (
         f"\nData thị trường hiện tại:\n{market_context}" if market_context.strip() else ""
     )
+
+    # Wave 0.6 Story 0.6.4 (alpha.22): Inject explicit price-lock instruction when
+    # PriceSnapshot is provided. WHY: Audit Round 2 found 3 breaking msg in 4 min
+    # showing BTC at $76k / $74k / $77k — different per LLM call. Locking BTC/ETH
+    # to snapshot in BOTH the prompt (lock note) AND post-process (replace wrong
+    # numbers near coin name) eliminates inconsistency across the run.
+    price_lock_section = ""
+    snapshot_btc: float | None = None
+    snapshot_eth: float | None = None
+    if price_snapshot is not None:
+        snapshot_btc = price_snapshot.get_price("BTC")
+        snapshot_eth = price_snapshot.get_price("ETH")
+        lock_lines = []
+        if snapshot_btc and snapshot_btc > 0:
+            lock_lines.append(
+                f"BTC price = ${snapshot_btc:,.0f}. KHÔNG dùng giá khác cho BTC trong toàn bài."
+            )
+        if snapshot_eth and snapshot_eth > 0:
+            lock_lines.append(
+                f"ETH price = ${snapshot_eth:,.0f}. KHÔNG dùng giá khác cho ETH trong toàn bài."
+            )
+        if lock_lines:
+            price_lock_section = "\nGIÁ ĐÃ KHÓA (BẮT BUỘC dùng đúng):\n" + "\n".join(lock_lines)
     recent_section = f"\nTin breaking gần đây:\n{recent_events}" if recent_events.strip() else ""
 
     # QO.19: Consensus snapshot — current market consensus from consensus_engine.
@@ -578,6 +675,7 @@ async def generate_breaking_content(
         url=event.url,
         summary_section=summary_section,
         market_context=market_section,
+        price_lock=price_lock_section,
         consensus_section=consensus_section_text,
         recent_events=recent_section,
         enrichment_context=enrichment_text,
@@ -688,14 +786,28 @@ async def generate_breaking_content(
 
     logger.info(f"Breaking content generated: {word_count} words via {model_used}")
 
-    # Wave 0.6 Story 0.6.3 (alpha.21): full numeric guard suite (% + BTC + ETH + year).
+    # Wave 0.6 Story 0.6.3/0.6.4 (alpha.21/22): full numeric guard suite.
     # WHY here: after NQ05 filter so we don't sanitize content that gets
     # rewritten by re-filter; before truncation so cap doesn't push past limit.
-    # WHY no btc/eth snapshot pass yet: Story 0.6.4 will wire PriceSnapshot
-    # from market_context. For now use global ranges (BTC $10k-$200k, ETH
-    # $1k-$10k) — wide enough to avoid false positives but tight enough to
-    # catch obvious LLM hallucinations ($5k BTC, $20k ETH).
-    clean_content, guard_issues = apply_all_numeric_guards(clean_content)
+    # Story 0.6.4: PriceSnapshot now wired — passes BTC/ETH snapshot to tighten
+    # range to ±50% of frozen price (vs global $10k-$200k for BTC).
+    clean_content, guard_issues = apply_all_numeric_guards(
+        clean_content, btc_snapshot=snapshot_btc, eth_snapshot=snapshot_eth
+    )
+
+    # Wave 0.6 Story 0.6.4 (alpha.22): Post-process price replace.
+    # WHY: numeric_sanity flags out-of-range prices but does NOT replace; LLM
+    # may still write $80k BTC when snapshot says $76k (within range, valid
+    # but inconsistent). Replace any BTC/ETH price within ±10% of snapshot
+    # to lock to snapshot value. >10% off → numeric_sanity already flagged.
+    if snapshot_btc and snapshot_btc > 0:
+        clean_content = _replace_off_snapshot_prices(
+            clean_content, "BTC", snapshot_btc, tolerance_pct=1.0
+        )
+    if snapshot_eth and snapshot_eth > 0:
+        clean_content = _replace_off_snapshot_prices(
+            clean_content, "ETH", snapshot_eth, tolerance_pct=1.0
+        )
     if guard_issues:
         logger.warning(
             f"Story 0.6.3 numeric guards: {len(guard_issues)} issue(s). "
