@@ -217,6 +217,38 @@ async def _replay_one_event_mock(row: dict) -> ReplayEntry:
     )
 
 
+def _fetch_baseline_from_url(url: str, timeout: float = 12.0) -> str:
+    """Wave 0.6.6 B8: fetch original article text from URL as baseline.
+
+    BREAKING_LOG schema does NOT have a `content` column (it stores
+    title/hash/severity/url only — see storage/sheets_client.py BREAKING_LOG
+    schema). Without this fallback, `old_content=""` → reduction metrics
+    meaningless (always 0 baseline → 0% reduction). Use trafilatura to fetch
+    the original article body so we have something real to compare against.
+
+    Returns empty string on any failure (network, parse, missing trafilatura).
+    """
+    if not url:
+        return ""
+    try:
+        import trafilatura  # lazy import — keeps mock mode lightweight
+    except ImportError:
+        return ""
+    try:
+        downloaded = trafilatura.fetch_url(url, no_ssl=True)
+        if not downloaded:
+            return ""
+        extracted = trafilatura.extract(
+            downloaded,
+            include_comments=False,
+            include_tables=False,
+        )
+        return extracted or ""
+    except Exception as e:
+        print(f"[WARN] baseline fetch failed for {url}: {e}", file=sys.stderr)
+        return ""
+
+
 async def _replay_one_event_real(row: dict) -> ReplayEntry:
     """Real replay — re-runs generate_breaking_content with Wave 0.6 ON.
 
@@ -233,7 +265,13 @@ async def _replay_one_event_real(row: dict) -> ReplayEntry:
     source = str(row.get("Nguồn", "") or row.get("source", ""))
     severity = str(row.get("Mức độ", "") or row.get("severity", "important"))
     detected_at = str(row.get("Thời gian", "") or row.get("detected_at", ""))
-    old = str(row.get("content", ""))
+    # Wave 0.6.6 B8: BREAKING_LOG has no `content` column — fall back to fetching
+    # original article body via URL so reduction metrics use a real baseline.
+    old = str(row.get("content", "") or "")
+    if not old:
+        url = str(row.get("URL", "") or row.get("url", ""))
+        if url:
+            old = await asyncio.to_thread(_fetch_baseline_from_url, url)
 
     entry = ReplayEntry(
         title=title,
@@ -295,11 +333,22 @@ async def run_replay(
 
     saved_flags = {
         k: os.environ.get(k)
-        for k in ("WAVE_0_6_ENABLED", "WAVE_0_6_DATE_BLOCK", "WAVE_0_6_2SOURCE_REQUIRED")
+        for k in (
+            "WAVE_0_6_ENABLED",
+            "WAVE_0_6_DATE_BLOCK",
+            "WAVE_0_6_2SOURCE_REQUIRED",
+            # Wave 0.6.6 B9: include kill switch in saved set so we restore it.
+            "WAVE_0_6_KILL_SWITCH",
+        )
     }
     os.environ["WAVE_0_6_ENABLED"] = "1"
     os.environ["WAVE_0_6_DATE_BLOCK"] = "1"
     os.environ["WAVE_0_6_2SOURCE_REQUIRED"] = "1"
+    # Wave 0.6.6 B9: kill switch overrides ALL Wave 0.6 flags. Without unsetting
+    # it, replay would silently run with Wave 0.6 OFF → metrics meaningless.
+    # WHY pop (not set "0"): _wave_0_6_kill_switch_active() treats any unset
+    # value as inactive; explicitly popping is unambiguous.
+    os.environ.pop("WAVE_0_6_KILL_SWITCH", None)
     try:
         replay_fn = _replay_one_event_mock if mock else _replay_one_event_real
         for row in filtered:

@@ -601,6 +601,20 @@ class LLMAdapter:
                 raw_text=raw,
             )
 
+        # Wave 0.6.6 B3: judge sometimes returns valid JSON but non-object
+        # (list `[]`, string, or null). Calling `.get()` on those → AttributeError
+        # → uncaught → generate_breaking_content fails → critical event dropped.
+        # Defend by treating any non-dict as "judge unavailable" → approved.
+        if not isinstance(data, dict):
+            logger.warning(f"Judge returned non-object JSON ({type(data).__name__}): {raw[:200]!r}")
+            return JudgeResult(
+                verdict="approved",
+                issues=[f"judge_unavailable: non-object JSON ({type(data).__name__})"],
+                confidence=0.0,
+                model_used=judge_provider.name,
+                raw_text=raw,
+            )
+
         verdict = data.get("verdict", "approved")
         if verdict not in ("approved", "needs_revision", "rejected"):
             # WHY normalize to approved: unknown verdict = unsafe to block

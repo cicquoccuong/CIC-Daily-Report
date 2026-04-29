@@ -66,12 +66,17 @@ class TestDateBlockFlag:
         assert len(issues) == 1
 
     def test_date_block_too_many_strip_delivery_failed(self):
-        """Flag ON + 3 violations (>2 threshold) → delivery_failed=True."""
+        """Flag ON + 3 violations (>2 threshold) → delivery_failed=True.
+
+        Wave 0.6.6 B4: dates without year > 90 days in the past now assume
+        next-year rollover. Use dates within the last 90 days to keep this
+        test exercising the "too many strips" path.
+        """
         today = date(2026, 4, 27)
         content = (
             "Dự kiến 06/03 sắp tới có sự kiện. "
             "Sự kiện ngày 10/02 sắp tới quan trọng. "
-            "Dự kiến triển khai vào 15/01 sắp tới. "
+            "Dự kiến triển khai vào 20/02 sắp tới. "
             "Đoạn này là lành mạnh."
         )
         cleaned, issues, failed = _check_and_handle_stale_dates(

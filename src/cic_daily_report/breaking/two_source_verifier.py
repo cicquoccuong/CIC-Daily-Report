@@ -47,9 +47,18 @@ CONFLICT_SIMILARITY_THRESHOLD = 0.7
 # Recent window: 24h is industry standard for "same news cycle".
 DEFAULT_RECENT_HOURS = 24
 
-# Regex to extract numeric magnitudes (with $/% suffix or plain ints) for
-# conflict detection between two close-similarity titles.
-_NUMERIC_PATTERN = re.compile(r"\$?(\d+(?:[.,]\d+)?)\s*(?:[%KkMmBb])?")
+# Wave 0.6.6 B6: regex captures the magnitude SUFFIX too (K/M/B/T) so we can
+# scale the value before comparing. Original `(?:...)` non-capture group
+# treated "$1M" and "$1B" both as 1.0 → false-no-conflict on orders-of-mag
+# disagreements.
+_NUMERIC_PATTERN = re.compile(r"\$?(\d+(?:[.,]\d+)?)\s*([KkMmBbTt%])?")
+# Multipliers for magnitude suffixes. "%" stays 1.0 (it's a percent, not size).
+_MAG_MULTIPLIERS: dict[str, float] = {
+    "K": 1e3,
+    "M": 1e6,
+    "B": 1e9,
+    "T": 1e12,
+}
 
 
 @dataclass
@@ -72,13 +81,20 @@ class TwoSourceResult:
 def _extract_magnitudes(title: str) -> set[float]:
     """Extract numeric magnitudes from a title for conflict detection.
 
+    Wave 0.6.6 B6: scale value by suffix (K/M/B/T) so $1M and $1B compare
+    correctly as 1e6 vs 1e9 (not both as 1.0). Percent suffix ("%") leaves
+    value unchanged — percents are independent of dollar magnitudes.
+
     WHY set: order doesn't matter; we want overlap check.
     """
     out: set[float] = set()
     for m in _NUMERIC_PATTERN.finditer(title):
         try:
             val_str = m.group(1).replace(",", "")
-            out.add(float(val_str))
+            val = float(val_str)
+            suffix = (m.group(2) or "").upper()
+            mult = _MAG_MULTIPLIERS.get(suffix, 1.0)
+            out.add(val * mult)
         except (ValueError, IndexError):
             continue
     return out
@@ -90,16 +106,26 @@ def _has_numeric_conflict(title_a: str, title_b: str) -> bool:
     Conservative: only flags conflict when BOTH titles contain numbers AND
     the numeric sets differ by more than tolerance. Pure-text titles
     (no numbers) → never conflict here.
+
+    Wave 0.6.6 B6: tolerance now 5% — $1.0M vs $1.05M should NOT be flagged
+    (rounding/reporting variance) but $1M vs $1B (1000x) MUST be flagged.
     """
     nums_a = _extract_magnitudes(title_a)
     nums_b = _extract_magnitudes(title_b)
     if not nums_a or not nums_b:
         return False
-    # If any number in A appears in B (or vice versa) → likely same fact.
-    if nums_a & nums_b:
-        return False
-    # All numbers differ → conflict signal. WHY not stricter ratio check:
-    # the magnitude differences ($1B vs $10B) speak for themselves.
+    # If any number in A is "close enough" (5%) to a number in B → same fact.
+    # WHY relative not absolute: $1B has different absolute tolerance than $50.
+    for a in nums_a:
+        for b in nums_b:
+            if a == 0 or b == 0:
+                if a == b:
+                    return False
+                continue
+            ratio = a / b if a > b else b / a
+            if ratio <= 1.05:
+                return False
+    # All numbers materially differ → conflict signal.
     return True
 
 

@@ -2,6 +2,46 @@
 
 ## [Unreleased] - 2026-04-29
 
+### Wave 0.6.6 — Polish (8 Codex fixes + 2 features) (alpha.24)
+
+8 Codex bot findings từ 5 PR Wave 0.6 + 2 features mới — chuẩn bị Wave 0.6.5
+validation cho anh Cường flip flag thực:
+
+**Features:**
+- **A1**: `.github/workflows/breaking-news.yml` — add `TELEGRAM_API_ID`,
+  `TELEGRAM_API_HASH`, `TELEGRAM_SESSION_STRING` env (OPTIONAL, không vào
+  "Validate required secrets" — TG fail thì fallback RSS, không block).
+- **A2**: `scripts/ingest_url.py` — CLI ingest 1 URL (cho bài cũ rớt khỏi RSS).
+  Args: `<URL> [--severity] [--source-name] [--dry-run] [--skip-dedup]`.
+
+**Codex fixes:**
+- **B1** `breaking/rag_index.py`: cache freshness compare RAW row count
+  (incl. dirty rows) thay vì doc_count. Migrate schema thêm `raw_row_count`.
+- **B2** `tests/test_breaking/test_rag_index.py`: `_make_row` dùng UUID4 hex
+  thay vì `hash() % 10000` → tránh sqlite IntegrityError flaky CI.
+- **B3** `adapters/llm_adapter.py:judge_factual_claims`: guard `data` không
+  phải dict (list/string/null) → fall back "approved" thay vì AttributeError
+  drop critical event.
+- **B4** `breaking/content_generator.py`: dd/mm không có year + parsed-date
+  > 90 ngày past → assume NEXT YEAR (e.g., "01/01 sắp tới" viết 31/12).
+- **B5** `breaking/content_generator.py:_check_and_handle_stale_dates`:
+  thêm condition `cleaned_body_len < 50` → delivery_failed (tránh ship
+  empty body sau khi strip 1-2 sentences).
+- **B6** `breaking/two_source_verifier.py:_extract_magnitudes`: scale theo
+  suffix K/M/B/T → `$1M` vs `$1B` đúng là conflict (1e6 vs 1e9). Tolerance
+  5% relative cho rounding variance.
+- **B7** `breaking_pipeline.py`: dedup verified events trong cùng 1 run
+  bằng entity-key set → 2 outlets cùng event chỉ ship 1 alert.
+- **B8** `scripts/replay_breaking.py`: BREAKING_LOG không có `content`
+  column → fallback fetch URL via trafilatura làm baseline.
+- **B9** `scripts/replay_breaking.py:run_replay`: pop `WAVE_0_6_KILL_SWITCH`
+  từ env trong scope replay → flags thực sự active (không bị silently
+  override). Restore sau khi replay xong.
+
+**Test coverage:** 24 new tests (`test_wave066_polish.py`) — 1 test cũ
+(`test_date_block_too_many_strip_delivery_failed`) update dates để khớp B4
+year-rollover heuristic mới. Tổng: 2318 → 2342 PASS.
+
 ### Wave 0.6 Story 0.6.5 — Validation infrastructure (alpha.23)
 
 CUỐI CÙNG của Wave 0.6 sprint. Build infrastructure để anh Cường validate

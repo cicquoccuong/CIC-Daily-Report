@@ -403,9 +403,16 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     from cic_daily_report.core.config import _wave_0_6_2source_required
 
     if _wave_0_6_2source_required() and send_now:
+        from cic_daily_report.breaking.dedup_manager import _extract_entities
         from cic_daily_report.breaking.two_source_verifier import verify_two_sources
 
         send_now_after_gate: list = []
+        # Wave 0.6.6 B7: track verified events by entity-key within the SAME run.
+        # WHY: when 2 outlets report the same event in this very batch, each
+        # verifies against the other (verdict=verified for both) → without
+        # this guard we'd ship 2 alerts for 1 event. Use the entity set hash
+        # as the dedup key (identical algorithm dedup_manager uses).
+        verified_event_keys: set[frozenset[str]] = set()
         for c in send_now:
             verdict = verify_two_sources(c.event, dedup_mgr.entries)
             # Story 0.6.5: track verifier outcomes for monitoring rollout.
@@ -416,6 +423,17 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             else:
                 wave06_metrics.increment("two_source_single")
             if verdict.verdict == "verified":
+                # Wave 0.6.6 B7: same-run duplicate guard.
+                event_key = frozenset(_extract_entities(c.event.title))
+                if event_key and event_key in verified_event_keys:
+                    logger.info(
+                        f"Story 0.6.6 B7: skipping duplicate verified event "
+                        f"'{c.event.title[:60]}' (entity key already shipped this run)"
+                    )
+                    wave06_metrics.increment("two_source_duplicate_skipped")
+                    continue
+                if event_key:
+                    verified_event_keys.add(event_key)
                 send_now_after_gate.append(c)
             elif verdict.verdict == "conflict":
                 # WHY defer (not skip): operator review needed; surface in

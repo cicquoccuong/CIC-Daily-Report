@@ -236,6 +236,18 @@ def _sentence_has_stale_future_date(sentence: str, today: datetime.date | None =
             ref_date = datetime(year, month, day).date()
         except (ValueError, IndexError):
             continue
+        # Wave 0.6.6 B4: year rollover. dd/mm without year + already past +
+        # significantly far in the past (>90 days) → likely refers to NEXT year
+        # (e.g., "01/01 sắp tới" written on 31/12 means Jan 1 of next year).
+        # WHY 90 days threshold: tolerate near-past references (last week's
+        # data referenced as "sắp tới" was likely a real LLM error). Only
+        # flip year when the parsed date is so far in the past that next-year
+        # interpretation is the only sensible reading.
+        if not year_str and ref_date < today and (today - ref_date).days > 90:
+            try:
+                ref_date = datetime(year + 1, month, day).date()
+            except ValueError:
+                pass  # leap-day edge: keep original
         if ref_date < today:
             return True
     return False
@@ -325,6 +337,14 @@ def _check_and_handle_stale_dates(
                 ref_date = datetime(year, month, day).date()
             except (ValueError, IndexError):
                 continue
+            # Wave 0.6.6 B4: same year-rollover heuristic as
+            # _sentence_has_stale_future_date — "01/01 sắp tới" near year-end
+            # actually means next year, not last Jan-1.
+            if not year_str and ref_date < today and (today - ref_date).days > 90:
+                try:
+                    ref_date = datetime(year + 1, month, day).date()
+                except ValueError:
+                    pass
             if ref_date >= today:
                 continue
             prefix = content[max(0, m.start() - 50) : m.start()].lower()
@@ -355,10 +375,18 @@ def _check_and_handle_stale_dates(
             kept.append(sent)
 
     cleaned = "".join(kept)
-    delivery_failed = stripped_count > _DATE_STRIP_THRESHOLD
+    # Wave 0.6.6 B5: also fail delivery when stripping leaves an empty body.
+    # WHY 50 chars threshold: a real article body is much longer than that —
+    # if all that remains is short metadata/disclaimer fragments, shipping
+    # would deliver a near-empty Telegram message (operator confusion).
+    cleaned_body_len = len(cleaned.strip())
+    delivery_failed = stripped_count > _DATE_STRIP_THRESHOLD or (
+        stripped_count > 0 and cleaned_body_len < 50
+    )
     if delivery_failed:
         logger.error(
-            f"Stale-date BLOCK: stripped {stripped_count} sentences (>{_DATE_STRIP_THRESHOLD}) "
+            f"Stale-date BLOCK: stripped {stripped_count} sentences "
+            f"(>{_DATE_STRIP_THRESHOLD}) or empty body ({cleaned_body_len}<50 chars) "
             "— marking delivery_failed."
         )
     return cleaned, issues, delivery_failed

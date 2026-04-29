@@ -61,6 +61,12 @@ jobs:
           CRYPTOPANIC_API_KEY: ${{ secrets.CRYPTOPANIC_API_KEY }}
           COINALYZE_API_KEY: ${{ secrets.COINALYZE_API_KEY }}
           ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+          # Wave 0.6.6 A1: Telethon creds for breaking pipeline TG scraper.
+          # WHY OPTIONAL (not in "Validate required secrets"): if missing or auth fails,
+          # pipeline must fall back to RSS — TG outage cannot block breaking news.
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_SESSION_STRING: ${{ secrets.TELEGRAM_SESSION_STRING }}
         run: uv run cic-breaking
 
       - name: Update dashboard on gh-pages

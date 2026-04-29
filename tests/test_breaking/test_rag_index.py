@@ -8,6 +8,7 @@ unicode VN, metadata preservation, concurrency, and edge cases.
 from __future__ import annotations
 
 import threading
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -45,7 +46,11 @@ def _make_row(
         "ID": "",
         "Thời gian": timestamp,
         "Tiêu đề": title,
-        "Hash": hash_val or f"h_{abs(hash(title)) % 10000:04d}",
+        # Wave 0.6.6 B2: use UUID4 to eliminate hash collision flakes.
+        # Old f"h_{abs(hash(title)) % 10000:04d}" had 10k keyspace + Python's
+        # randomized hash → multi-row tests sporadically hit collisions →
+        # sqlite3.IntegrityError when PRIMARY KEY (event_id derived from hash).
+        "Hash": hash_val or f"h_{uuid.uuid4().hex[:12]}",
         "Nguồn": source,
         "Mức độ": severity,
         "Trạng thái gửi": "sent",
