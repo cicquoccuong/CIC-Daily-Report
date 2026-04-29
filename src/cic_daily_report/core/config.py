@@ -7,7 +7,7 @@ import os
 IS_PRODUCTION: bool = os.getenv("GITHUB_ACTIONS") == "true"
 
 # Version — single source of truth
-VERSION = "2.0.0-alpha.21"
+VERSION = "2.0.0-alpha.22"
 
 
 def _wave_0_6_enabled() -> bool:
@@ -39,3 +39,25 @@ def _wave_0_6_date_block_enabled() -> bool:
 
 
 WAVE_0_6_DATE_BLOCK: bool = _wave_0_6_date_block_enabled()
+
+
+def _wave_0_6_2source_required() -> bool:
+    """Wave 0.6 Story 0.6.4 (alpha.22) — Require 2nd source for breaking events.
+
+    WHY: Audit Round 2 found CoinDesk + CoinTelegraph publishing the same event
+    (Canada Bill C-25) within minutes — both passed dedup as separate sources
+    and got sent twice. Conversely, single-source critical claims have higher
+    hallucination risk. With this flag ON, critical events without a 2nd source
+    are deferred; important/notable single-source events ship but get logged.
+
+    Defaults to False — safe deploy. Override via `WAVE_0_6_2SOURCE_REQUIRED=1`.
+    """
+    return os.getenv("WAVE_0_6_2SOURCE_REQUIRED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+WAVE_0_6_2SOURCE_REQUIRED: bool = _wave_0_6_2source_required()
