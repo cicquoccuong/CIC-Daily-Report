@@ -1,6 +1,85 @@
 # Changelog
 
-## [Unreleased] - 2026-04-28
+## [Unreleased] - 2026-04-29
+
+### Wave 0.6 Story 0.6.5 — Validation infrastructure (alpha.23)
+
+CUỐI CÙNG của Wave 0.6 sprint. Build infrastructure để anh Cường validate
++ rollout 4 feature flags Wave 0.6 (RAG, judge, date block, 2-source) một cách
+an toàn — KHÔNG bật flag default. Anh Cường tự confirm sau khi xem replay.
+
+**HƯỚNG DẪN ANH CƯỜNG (cho rollout sau khi merge alpha.23)**:
+
+1. Chạy replay test (cần `CEREBRAS_API_KEY` + Google Sheets creds trong env):
+   ```
+   uv run python scripts/replay_breaking.py --from 2026-04-27 --to 2026-04-28 \
+       --output reports/replay-wave-0.6.md
+   ```
+   Hoặc chạy thử mock (không tốn API) trước để verify script:
+   ```
+   uv run python scripts/replay_breaking.py --mock --output reports/replay-mock.md
+   ```
+
+2. Đọc báo cáo `reports/replay-wave-0.6.md`. Nếu **Reduction >= 70%** và
+   **Regressions == 0** → an toàn để bật flag production.
+
+3. Bật flag (1 trong 2 cách):
+   - **Cách 1 (khuyến nghị)**: Set GitHub Secrets:
+     - `WAVE_0_6_ENABLED=true`
+     - `WAVE_0_6_DATE_BLOCK=true` (nếu muốn HARD BLOCK ngày cũ)
+     - `WAVE_0_6_2SOURCE_REQUIRED=true` (nếu muốn yêu cầu 2 nguồn)
+   - **Cách 2**: Set env trong `.github/workflows/breaking-news.yml`.
+
+4. Monitor 3 ngày: check log `wave06 | factcheck=… | rag=… | dateblock=… |
+   numguard=… | 2src=…` ở cuối mỗi run breaking trong NHAT_KY_PIPELINE.
+
+5. **NẾU CÓ BUG** (rollback 1-click): set GitHub secret
+   `WAVE_0_6_KILL_SWITCH=true` → tất cả 3 flags Wave 0.6 bị OVERRIDE OFF
+   ngay lập tức ở pipeline run kế tiếp, KHÔNG cần unset từng flag.
+
+**Thay đổi code**:
+
+- **`scripts/replay_breaking.py` MỚI** (~360 LOC) — CLI script replay
+  BREAKING_LOG events với Wave 0.6 flags ON, output markdown report so sánh
+  với historical content. Args: `--from / --to` (date range), `--output`,
+  `--mock` (no-API mode), `--limit N`. Detect:
+  - Historical claims (regex `Lần cuối`, `năm 20\d{2}`, `kể từ năm`, `lần đầu`).
+  - Numeric claims (`$X`, `X%`).
+  - NQ05 advisory phrases (`nên mua/bán`, `khuyến nghị`, `lời khuyên`).
+  - Compute reduction % + flag REGRESSION nếu new > old.
+  - Mock mode dùng dataset 2 events fabricated → script wiring testable
+    không cần Cerebras API/Sheets creds.
+- **`src/cic_daily_report/core/config.py`** — thêm `_wave_0_6_kill_switch_active()`
+  master kill switch. Khi `WAVE_0_6_KILL_SWITCH=1`, 3 sub-flags
+  (`_wave_0_6_enabled`, `_wave_0_6_date_block_enabled`,
+  `_wave_0_6_2source_required`) đều trả `False` bất kể env value riêng. WHY:
+  rollback production phải 1-click — không bắt operator unset từng flag.
+- **`src/cic_daily_report/breaking/wave06_metrics.py` MỚI** (~100 LOC) —
+  dataclass `Wave06Metrics` với 10 counters cho 4 sub-feature: factcheck
+  (passed/rejected/needs_revision), RAG (inject_count/no_match), date_block
+  strip, numeric_guard strip, 2-source (verified/single/conflict). Method
+  `to_log_line()` format compact `wave06 | factcheck=P/R/V | rag=I/N | …`
+  cho NHAT_KY_PIPELINE grep. `is_empty()` skip log khi all flags OFF.
+- **`src/cic_daily_report/breaking_pipeline.py`** — wire `Wave06Metrics`:
+  - Init `wave06_metrics` đầu pipeline.
+  - Log warning khi kill switch active (1 lần/run).
+  - Increment `two_source_*` counters tại 2-source verifier loop (Story 0.6.4).
+  - Emit summary log line cuối pipeline (chỉ nếu `is_empty() == False`).
+- **Tests** (`tests/test_breaking/test_wave065_validation.py` MỚI) — **12/12 PASS**:
+  - Replay (4): mock-mode end-to-end, date-range filter, regex detection,
+    reduction-percentage math (zero/full/partial/regression edges).
+  - Kill switch (3): overrides 3 sub-flags, default OFF behavior, truthy
+    variants accept (1/true/yes/on).
+  - Wave06Metrics (5): dataclass defaults + `is_empty`, increment known +
+    extras, log line format deterministic, edge `is_empty` chỉ-extras,
+    edge all-rejected scenario.
+- **Version**: 2.0.0-alpha.22 → **2.0.0-alpha.23** (3 nơi: `core/config.py`,
+  `pyproject.toml`, `tests/test_core/test_config.py`).
+
+**Test status**: 2306 → 2318 (12 tests new, 0 regression). Ruff clean.
+
+**LƯU Ý**: KHÔNG bật flag default. Wave 0.6 vẫn OFF trong production cho đến
+khi anh Cường chạy replay + confirm. Story 0.6.5 chỉ build infrastructure.
 
 ### Wave 0.6 Story 0.6.4 — Wire PriceSnapshot vào breaking + 2-source verification (alpha.22)
 

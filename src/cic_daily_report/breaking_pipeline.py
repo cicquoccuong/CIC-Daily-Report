@@ -31,6 +31,8 @@ from cic_daily_report.breaking.severity_classifier import (
     mark_legend_sent,
     should_send_legend,
 )
+from cic_daily_report.breaking.wave06_metrics import Wave06Metrics
+from cic_daily_report.core.config import _wave_0_6_kill_switch_active
 from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("breaking_pipeline")
@@ -230,6 +232,15 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     """
     result = BreakingPipelineResult(run_log=run_log)
 
+    # Story 0.6.5 (alpha.23): per-run Wave 0.6 metrics + kill-switch warning.
+    # WHY init early: passed to downstream gates so they can increment counters.
+    wave06_metrics = Wave06Metrics()
+    if _wave_0_6_kill_switch_active():
+        logger.warning(
+            "WAVE_0_6_KILL_SWITCH active — ALL Wave 0.6 flags forced OFF "
+            "(RAG/judge/date-block/2-source). Story 0.6.5 rollback in effect."
+        )
+
     # QO.31: Load config from CAU_HINH ONCE for entire pipeline run.
     # WHY here: config_loader needs SheetsClient which is expensive —
     # create once and pass to all downstream consumers.
@@ -397,6 +408,13 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
         send_now_after_gate: list = []
         for c in send_now:
             verdict = verify_two_sources(c.event, dedup_mgr.entries)
+            # Story 0.6.5: track verifier outcomes for monitoring rollout.
+            if verdict.verdict == "verified":
+                wave06_metrics.increment("two_source_verified")
+            elif verdict.verdict == "conflict":
+                wave06_metrics.increment("two_source_conflict")
+            else:
+                wave06_metrics.increment("two_source_single")
             if verdict.verdict == "verified":
                 send_now_after_gate.append(c)
             elif verdict.verdict == "conflict":
@@ -789,6 +807,11 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             save_breaking_summary(feedback_events, config_loader=config_loader)
         except Exception as e:
             logger.warning(f"Breaking feedback save failed (non-critical): {e}")
+
+    # Story 0.6.5 (alpha.23): emit Wave 0.6 metrics summary line for grep-friendly
+    # post-run monitoring. Only logs if any counter > 0 (avoids noise when flags OFF).
+    if not wave06_metrics.is_empty():
+        logger.info(wave06_metrics.to_log_line())
 
     run_log.status = "success" if run_log.events_sent > 0 else "partial"
     return result
