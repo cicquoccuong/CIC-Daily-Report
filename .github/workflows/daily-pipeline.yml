@@ -85,6 +85,11 @@ jobs:
           TELEGRAM_SESSION_STRING: ${{ secrets.TELEGRAM_SESSION_STRING }}
           SENTINEL_SPREADSHEET_ID: ${{ secrets.SENTINEL_SPREADSHEET_ID }}
           ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+          # Wave 0.8.1 fix: Wave 0.6 feature flags (same as breaking-news.yml).
+          WAVE_0_6_ENABLED: ${{ secrets.WAVE_0_6_ENABLED }}
+          WAVE_0_6_DATE_BLOCK: ${{ secrets.WAVE_0_6_DATE_BLOCK }}
+          WAVE_0_6_2SOURCE_REQUIRED: ${{ secrets.WAVE_0_6_2SOURCE_REQUIRED }}
+          WAVE_0_6_KILL_SWITCH: ${{ secrets.WAVE_0_6_KILL_SWITCH }}
         run: uv run cic-daily
 
       - name: Retry pipeline on failure
