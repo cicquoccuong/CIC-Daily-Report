@@ -30,4 +30,4 @@ class TestConfig:
     def test_version_exists(self):
         from cic_daily_report.core.config import VERSION
 
-        assert VERSION == "2.0.0-alpha.26"
+        assert VERSION == "2.0.0-alpha.27"
