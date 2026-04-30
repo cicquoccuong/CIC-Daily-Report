@@ -2,6 +2,14 @@
 
 ## [Unreleased] - 2026-04-30
 
+### Wave 0.8.3 — Daily pipeline retry path flags fix (alpha.30)
+
+**Critical fix (Codex F8 P1)**: Wave 0.8.1 wired `WAVE_0_6_*` flags vào primary `Run daily pipeline` step nhưng QUÊN `Retry pipeline on failure` step. Hậu quả: nếu primary fail + retry succeed → output gửi user ĐƯỢC SẢN XUẤT VỚI Wave 0.6 DISABLED silently (kill switch / date block / 2-source gate effective OFF). Khác safety logic vs primary.
+
+- `.github/workflows/daily-pipeline.yml:120-128`: thêm 4 env lines vào retry step (đồng bộ với primary)
+
+KHÔNG có code change → tests 2406 PASS unchanged.
+
 ### Wave 0.8.2 — RAG sheets_client wire fix (alpha.29)
 
 **Critical fix**: Production logs 30/04 (06:37, 06:51, 07:01 UTC) all showed warning `RAGIndex.build_from_sheets: no sheets_client provided` → RAG returned empty list → judge had no historical context → fact-check fail-open / false reject. Root cause: `breaking_pipeline._execute_pipeline` created a `SheetsClient` for ConfigLoader at line 252 but never passed it to `generate_breaking_content` → `_get_historical_context` → `RAGIndex` got `sheets_client=None`.
