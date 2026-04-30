@@ -2,6 +2,16 @@
 
 ## [Unreleased] - 2026-04-30
 
+### Wave 0.8.2 — RAG sheets_client wire fix (alpha.29)
+
+**Critical fix**: Production logs 30/04 (06:37, 06:51, 07:01 UTC) all showed warning `RAGIndex.build_from_sheets: no sheets_client provided` → RAG returned empty list → judge had no historical context → fact-check fail-open / false reject. Root cause: `breaking_pipeline._execute_pipeline` created a `SheetsClient` for ConfigLoader at line 252 but never passed it to `generate_breaking_content` → `_get_historical_context` → `RAGIndex` got `sheets_client=None`.
+
+- `breaking_pipeline.py`: +1 kwarg `sheets_client=sheets` at the individual-events call site (line 682); thread `sheets_client` param through `_reprocess_deferred_events` (deferred-retry path also wires RAG); guard `sheets = None` initial so rebuild after `SheetsClient()` failure stays safe.
+- `rag_index.py`: demote `"no sheets_client provided"` log from WARNING → DEBUG (legitimate cache-only callers like `scripts/ingest_url.py` were producing log spam that masked the real wire bug).
+- `tests/test_breaking/test_wave082_rag_wire.py` (NEW): 6 tests lock the wire — `generate_breaking_content` forwards `sheets_client`, `_get_historical_context` calls RAG when provided, no WARNING when None, RAG block injected into prompt, flag OFF skips entirely, static call-site assertion prevents regression in `breaking_pipeline.py`.
+
+Tests: 2400 → 2406 PASS (+6 new, zero regression). Ruff clean. Production warning eliminated for breaking-news.yml path; ingest_url.py path now silent.
+
 ### Wave 0.8.1 — Workflow env wiring fix (alpha.28)
 
 **Critical fix**: Wave 0.8 added `WAVE_0_6_*` flag logic + GitHub Secrets support, but workflows did NOT pass those secrets into Python env. Result: even when operator set `WAVE_0_6_ENABLED=true` in GH Secrets, pipeline read empty string → flag effectively OFF (verified by 06:37 UTC run on 30/04 — no Cerebras judge / RAG inject in log).
