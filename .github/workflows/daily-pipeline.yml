@@ -118,6 +118,13 @@ jobs:
           TELEGRAM_SESSION_STRING: ${{ secrets.TELEGRAM_SESSION_STRING }}
           SENTINEL_SPREADSHEET_ID: ${{ secrets.SENTINEL_SPREADSHEET_ID }}
           ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+          # Wave 0.8.3 fix (Codex F8): Wave 0.6 flags MUST also be passed to retry path,
+          # otherwise retry runs with kill switch/date block/2-source DISABLED silently —
+          # successful retry output produced under different safety logic than primary.
+          WAVE_0_6_ENABLED: ${{ secrets.WAVE_0_6_ENABLED }}
+          WAVE_0_6_DATE_BLOCK: ${{ secrets.WAVE_0_6_DATE_BLOCK }}
+          WAVE_0_6_2SOURCE_REQUIRED: ${{ secrets.WAVE_0_6_2SOURCE_REQUIRED }}
+          WAVE_0_6_KILL_SWITCH: ${{ secrets.WAVE_0_6_KILL_SWITCH }}
         run: |
           echo "Pipeline failed, retrying after 30s..."
           sleep 30
