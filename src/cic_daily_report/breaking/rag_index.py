@@ -327,7 +327,11 @@ class RAGIndex:
         return 0 (caller can decide whether to retry / surface).
         """
         if self._sheets is None:
-            logger.warning("RAGIndex.build_from_sheets: no sheets_client provided")
+            # Wave 0.8.2: demote to DEBUG. WARNING here was log-spam: the legit
+            # callers (scripts/ingest_url.py, cache-only test paths) pass None
+            # by design. The actual wire bug — pipeline forgetting to pass its
+            # SheetsClient — is fixed in breaking_pipeline.py at the call site.
+            logger.debug("RAGIndex.build_from_sheets: no sheets_client provided (cache-only mode)")
             return 0
         try:
             rows = self._sheets.read_all("BREAKING_LOG")

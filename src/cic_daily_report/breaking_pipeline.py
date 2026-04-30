@@ -245,6 +245,9 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
     # WHY here: config_loader needs SheetsClient which is expensive —
     # create once and pass to all downstream consumers.
     config_loader = None
+    sheets = None  # Wave 0.8.2: ensure defined for downstream RAG wire even if
+    # SheetsClient() construction fails (auth/network issue → fall back to None,
+    # _get_historical_context will skip RAG silently).
     try:
         from cic_daily_report.storage.config_loader import ConfigLoader
         from cic_daily_report.storage.sheets_client import SheetsClient
@@ -286,7 +289,11 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
 
     # Stage 0: Reprocess deferred events from previous night (FR28)
     # Wave 0.5.2 Fix 6: deferred bounded by remaining run budget (was MAX_DEFERRED_PER_RUN).
-    await _reprocess_deferred_events(run_log, result, dedup_mgr, llm, max_per_run=max_per_run)
+    # Wave 0.8.2: pass sheets so deferred-retry path also wires RAG
+    # (otherwise overflow re-sends miss historical context).
+    await _reprocess_deferred_events(
+        run_log, result, dedup_mgr, llm, max_per_run=max_per_run, sheets_client=sheets
+    )
 
     # Stage 1: Detect events — RSS first, CryptoPanic only if needed (v0.32.0)
     # WHY: CryptoPanic has tight daily quota. RSS is free and unlimited.
@@ -687,6 +694,12 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
                     recent_events=recent_events_text,
                     consensus_snapshot=consensus_text,
                     price_snapshot=price_snapshot,  # Story 0.6.4 (alpha.22)
+                    # Wave 0.8.2: wire SheetsClient down so RAG (BREAKING_LOG)
+                    # can build its index. Missing wire was the root cause of
+                    # production warning "RAGIndex.build_from_sheets: no
+                    # sheets_client provided" — RAG returned empty list →
+                    # judge had no historical context → fact-check fail-open.
+                    sheets_client=sheets,
                 ),
                 timeout=60,
             )
@@ -1103,6 +1116,7 @@ async def _reprocess_deferred_events(
     dedup_mgr: DedupManager,
     llm=None,
     max_per_run: int = MAX_EVENTS_PER_RUN,
+    sheets_client: object | None = None,
 ) -> None:
     """FR28: Reprocess deferred events when we're past the night window.
 
@@ -1186,6 +1200,9 @@ async def _reprocess_deferred_events(
                         event,
                         llm,
                         severity=entry.severity or "important",
+                        # Wave 0.8.2: deferred reprocess also wires RAG so
+                        # judge sees historical context.
+                        sheets_client=sheets_client,
                     ),
                     timeout=60,
                 )
