@@ -1,6 +1,21 @@
 # Changelog
 
-## [Unreleased] - 2026-04-29
+## [Unreleased] - 2026-04-30
+
+### Wave 0.8 — Flag Activation Rollout Infrastructure (alpha.27)
+
+Build infrastructure để anh Cường tự rollout 4 flags Wave 0.6 + 0.7:
+
+- `scripts/preflight_check.py` (NEW): CLI verify 6 areas (secrets, 4 LLM providers smoke, Sheets read, Telegram, RAG build) trước khi bật flag
+- `docs/WAVE-0.6-0.7-ROLLOUT-GUIDE.md` (NEW): 4-phase rollout plan (Day 1: WAVE_0_6_ENABLED → Day 7: full activation) + monitor metrics + 1-click rollback via WAVE_0_6_KILL_SWITCH
+- `tests/test_scripts/test_preflight_check.py` (NEW): 16 tests cover secrets, LLM smoke, Sheets, Telegram, RAG, exit codes, output format
+- Fix: `RagIndex` → `RAGIndex` import (tên class thực tế)
+
+KHÔNG bật flag default trong code — anh Cường chủ động set GitHub Secret sau khi `preflight_check.py` PASS + `replay_breaking.py` reduction ≥ 70%.
+
+Tests: 2384 → 2400 PASS (+16), zero regression.
+
+## [Released] - 2026-04-29
 
 ### Wave 0.7 — Real-time Data + Coin Scope Filter (alpha.26)
 
