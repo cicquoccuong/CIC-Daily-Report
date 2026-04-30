@@ -2,6 +2,15 @@
 
 ## [Unreleased] - 2026-04-30
 
+### Wave 0.8.1 — Workflow env wiring fix (alpha.28)
+
+**Critical fix**: Wave 0.8 added `WAVE_0_6_*` flag logic + GitHub Secrets support, but workflows did NOT pass those secrets into Python env. Result: even when operator set `WAVE_0_6_ENABLED=true` in GH Secrets, pipeline read empty string → flag effectively OFF (verified by 06:37 UTC run on 30/04 — no Cerebras judge / RAG inject in log).
+
+- `.github/workflows/breaking-news.yml`: +4 env lines (`WAVE_0_6_ENABLED`, `WAVE_0_6_DATE_BLOCK`, `WAVE_0_6_2SOURCE_REQUIRED`, `WAVE_0_6_KILL_SWITCH`)
+- `.github/workflows/daily-pipeline.yml`: same 4 env lines
+
+KHÔNG validate là required (giữ default OFF behavior — nếu operator chưa add secret → flag OFF, không break pipeline).
+
 ### Wave 0.8 — Flag Activation Rollout Infrastructure (alpha.27)
 
 Build infrastructure để anh Cường tự rollout 4 flags Wave 0.6 + 0.7:
