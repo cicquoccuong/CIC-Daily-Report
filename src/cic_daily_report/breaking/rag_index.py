@@ -27,6 +27,7 @@ import sqlite3
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -496,6 +497,8 @@ class RAGIndex:
         exclude_recent_hours: float = 1.0,
         severity: str | None = None,
         exclude_url: str | None = None,
+        exclude_title: str | None = None,
+        exclude_entities: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """BM25 search with score + recency + severity filters.
 
@@ -513,6 +516,16 @@ class RAGIndex:
                 written about is never returned as "history". Bug 4 (01/05):
                 Wasabi event self-cited because both timestamp drift and
                 generic exclude_recent_hours=1.0 missed it.
+            exclude_title: Wave 0.8.5 F7 — current event title for fuzzy
+                match (SequenceMatcher ratio >= 0.7 → exclude). Devil B1
+                scenario: same Wasabi event from AMBCrypto (URL A) then
+                The Block (URL B) — URL exact match fails, but titles are
+                near-identical → fuzzy catches it.
+            exclude_entities: Wave 0.8.5 F7 — set of entities extracted
+                from current event title. Any indexed event sharing >= 2
+                entities is excluded as same-story. Reuses
+                `dedup_manager._extract_entities` for consistency with
+                dedup pipeline (no duplicate logic).
 
         Returns:
             List of dicts sorted by score desc, capped at top_k.
@@ -557,6 +570,37 @@ class RAGIndex:
                     and ev_url.strip().rstrip("/").lower()
                     == exclude_url.strip().rstrip("/").lower()
                 ):
+                    continue
+            # Wave 0.8.5 F7: title fuzzy match — same event from different
+            # outlets has near-identical titles ("Wasabi shuts down 5M...")
+            # but different URLs, so URL filter misses it. SequenceMatcher
+            # ratio >= 0.7 catches reworded variants ("Wasabi closes" vs
+            # "Wasabi shuts down") while staying loose enough to not block
+            # legitimate analogous-but-distinct events.
+            if exclude_title and ev.title:
+                ratio = SequenceMatcher(
+                    None,
+                    exclude_title.strip().lower(),
+                    ev.title.strip().lower(),
+                ).ratio()
+                if ratio >= 0.7:
+                    logger.debug(
+                        f"RAG exclude title-fuzzy match: '{ev.title[:60]}' ratio={ratio:.2f}"
+                    )
+                    continue
+            # Wave 0.8.5 F7: entity overlap — when the same event is reported
+            # by 2+ outlets with reworded headlines that fail the fuzzy ratio,
+            # entity overlap (>=2 shared named entities) still catches it.
+            # Reuses dedup_manager._extract_entities so RAG and dedup share
+            # one entity vocabulary (lazy import: avoid circular at module
+            # load — dedup_manager imports from breaking too).
+            if exclude_entities and ev.title:
+                from cic_daily_report.breaking.dedup_manager import _extract_entities
+
+                ev_entities = _extract_entities(ev.title)
+                overlap = ev_entities & exclude_entities
+                if len(overlap) >= 2:
+                    logger.debug(f"RAG exclude entity-overlap: '{ev.title[:60]}' shared={overlap}")
                     continue
             # WHY: tolerate any ISO format that fromisoformat parses;
             # malformed/empty timestamps are kept (treated as "old enough")

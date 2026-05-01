@@ -189,15 +189,18 @@ def test_audience_descriptor_no_jargon():
 
 
 def test_paragraph2_instruction_updated():
-    """Paragraph 2 instruction in BREAKING_PROMPT_TEMPLATE must use the new
-    'cộng đồng' wording AND explicitly forbid the old phrase to keep the LLM
-    from echoing it back even after the descriptor change.
+    """Paragraph 2 instruction in BREAKING_PROMPT_TEMPLATE must keep CIC
+    community framing AND explicitly forbid the old "nhà đầu tư chiến lược"
+    phrase. Wave 0.8.5 reframed Đoạn 2 from "BẮT BUỘC viết" to escape-clause
+    pattern (write only when source has data, else exact disclaimer) so the
+    "Nêu hệ quả CỤ THỂ" affirmative phrase no longer appears verbatim — the
+    "cộng đồng CIC" framing is preserved via "hệ quả cho cộng đồng CIC".
     """
     from cic_daily_report.breaking.content_generator import BREAKING_PROMPT_TEMPLATE
 
-    # New phrasing present.
-    assert "Nêu hệ quả CỤ THỂ cho cộng đồng" in BREAKING_PROMPT_TEMPLATE
-    # Explicit forbid line.
+    # CIC community framing preserved (post-Wave 0.8.5 wording).
+    assert "hệ quả cho cộng đồng CIC" in BREAKING_PROMPT_TEMPLATE
+    # Explicit forbid line — preserved across Wave 0.6.7 + 0.8.5.
     assert 'KHÔNG dùng cụm "nhà đầu tư chiến lược"' in BREAKING_PROMPT_TEMPLATE
 
 

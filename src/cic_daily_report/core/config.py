@@ -7,7 +7,7 @@ import os
 IS_PRODUCTION: bool = os.getenv("GITHUB_ACTIONS") == "true"
 
 # Version — single source of truth
-VERSION = "2.0.0-alpha.31"
+VERSION = "2.0.0-alpha.32"
 
 
 def _wave_0_6_kill_switch_active() -> bool:

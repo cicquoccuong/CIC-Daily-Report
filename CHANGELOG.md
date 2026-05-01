@@ -2,6 +2,18 @@
 
 ## [Unreleased] - 2026-05-01
 
+### Wave 0.8.5 — Devil cross-check patches (alpha.32)
+
+Build trên Wave 0.8.4 (cùng branch). Devil's Advocate cross-check Wave 0.8.4 phát hiện 2 risk:
+- F4 URL-only filter MISS khi 2 outlets cùng event nhưng URL khác (Wasabi AMBCrypto vs The Block)
+- F6 "BẮT BUỘC 2-3 câu" ép LLM bịa fill quota khi thiếu data → rollback Wave 0.6 guardrail
+
+Patches:
+- **F7**: `RAGIndex.query()` thêm `exclude_title` (SequenceMatcher ratio ≥ 0.7) + `exclude_entities` (overlap ≥ 2) ngoài URL exact match. Caller `_get_historical_context()` truyền cả 3 params (URL + title + entities reuse `_extract_entities` từ dedup_manager).
+- **F8**: BREAKING_PROMPT_TEMPLATE escape clause — "CHỈ viết Đoạn 2 khi có data từ source. Nếu thiếu → viết câu disclaimer 'Đây là tin nhanh, chưa có thông tin chi tiết...' EXACTLY. TUYỆT ĐỐI KHÔNG BỊA 'có thể ảnh hưởng', 'nhà phân tích cho rằng'".
+
+Tests: 2431 → 2441 PASS (+10 new), 0 regression. Ruff clean.
+
 ### Wave 0.8.4 — EMERGENCY quality fix (alpha.31)
 
 **Context**: Sau khi bật `WAVE_0_6_ENABLED=true` + `CEREBRAS_API_KEY` (30/04 chiều), batch sáng 01/05 (5 tin breaking) phát hiện chất lượng degraded — 4 bug visible + 2 latent risk. Mary + Winston cross-check đồng thuận 6 fixes nhỏ + surgical, KHÔNG refactor judge architecture.

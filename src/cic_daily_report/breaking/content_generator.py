@@ -59,12 +59,14 @@ FORMAT (KHÔNG thêm nguồn hay disclaimer — hệ thống tự thêm):
 - Đoạn 1 — CHUYỆN GÌ XẢY RA (3-5 câu): Trích xuất từ <source> — \
 ai làm gì, **con số** cụ thể, quy mô, timeline. Dùng **bold** cho mọi số liệu.
 - (dòng trống)
-- Đoạn 2 — TẠI SAO QUAN TRỌNG cho CIC (BẮT BUỘC 2-3 câu): \
-Nêu hệ quả CỤ THỂ cho cộng đồng — ngắn gọn ý chính. \
+- Đoạn 2 — TẠI SAO QUAN TRỌNG cho CIC: 2-3 câu hệ quả cho cộng đồng CIC. \
+CHỈ viết khi có data từ source article. \
 KHÔNG dùng cụm "nhà đầu tư chiến lược". \
 KHÔNG lặp lại thông tin đoạn 1. \
-KHÔNG bỏ qua đoạn này — nếu không có info specific, \
-viết 1 câu generic về tác động chung (không bỏ trống).
+Nếu source article KHÔNG có thông tin về tác động/hệ quả → viết EXACTLY: \
+"Đây là tin nhanh, chưa có thông tin chi tiết về tác động lên thị trường tài sản mã hóa. \
+Anh em theo dõi diễn biến tiếp theo trên BIC Group." \
+TUYỆT ĐỐI KHÔNG BỊA "có thể ảnh hưởng", "nhà phân tích cho rằng", "diễn biến này có thể"...
 {historical_instruction}
 CÁCH KẾT THÚC MỖI ĐOẠN:
 - Câu cuối = HỆ QUẢ CỤ THỂ (ai bị ảnh hưởng, bao nhiêu, khi nào)
@@ -429,11 +431,18 @@ def _get_historical_context(
     clock skew or parse failure lets a same-URL match through, URL match
     catches it directly. The URL of the current event is the strongest
     self-reference signal we have.
+
+    WHY exclude_title + exclude_entities (Wave 0.8.5 F7 — Devil B1): URL
+    exact match misses when the SAME event is reported by 2+ outlets with
+    different URLs (Wasabi 02:05 AMBCrypto vs Wasabi 08:47 The Block in
+    01/05 batch). Title fuzzy (ratio>=0.7) + entity overlap (>=2) close
+    that hole — same event still gets flagged as same-batch self-ref.
     """
     if not _wave_0_6_enabled():
         return ("", [])
 
     try:
+        from cic_daily_report.breaking.dedup_manager import _extract_entities
         from cic_daily_report.breaking.rag_index import get_or_build_index
 
         idx = get_or_build_index(sheets_client=sheets_client)
@@ -442,6 +451,9 @@ def _get_historical_context(
             + " "
             + ((event.raw_data or {}).get("summary", "") if event.raw_data else "")
         )
+        # Wave 0.8.5 F7: extract entities once from current event title for
+        # the entity-overlap filter inside RAGIndex.query.
+        title_entities = _extract_entities(event.title or "")
         results = idx.query(
             query=query,
             top_k=top_k,
@@ -451,6 +463,10 @@ def _get_historical_context(
             # Wave 0.8.4 F4: belt-and-suspenders — exclude the URL of the
             # current event explicitly (defends against timestamp parse drift).
             exclude_url=(event.url or None),
+            # Wave 0.8.5 F7: 2 extra layers when 2+ outlets cover same event
+            # with different URLs but near-identical content.
+            exclude_title=(event.title or None),
+            exclude_entities=(title_entities or None),
         )
     except Exception as e:
         # WHY catch broad: RAG failure (sheets down, sqlite corrupt, BM25

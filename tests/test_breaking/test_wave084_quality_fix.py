@@ -475,8 +475,17 @@ class TestF6PromptNoBoQua:
     """Prompt no longer permits Đoạn 2 to be skipped."""
 
     def test_template_does_not_contain_bo_qua(self):
-        """Wave 0.8.4 F6: phrase 'ngắn hoặc bỏ qua' removed from prompt."""
+        """Wave 0.8.4 F6 → Wave 0.8.5 F8 evolution: 'ngắn hoặc bỏ qua' still
+        gone, but the F6 affirmative ("BẮT BUỘC 2-3 câu" + "KHÔNG bỏ qua đoạn
+        này") was Devil-flagged as invitation to hallucinate when source lacks
+        data → replaced by escape clause in Wave 0.8.5 F8. Explicit assertions
+        for the new escape pattern live in
+        `test_wave085_devil_patches.TestF8EscapeClause`.
+        """
+        # Original Wave 0.8.4 F6 invariant — still holds.
         assert "ngắn hoặc bỏ qua" not in BREAKING_PROMPT_TEMPLATE
-        # And the affirmative replacement is present
-        assert "BẮT BUỘC 2-3 câu" in BREAKING_PROMPT_TEMPLATE
-        assert "KHÔNG bỏ qua đoạn này" in BREAKING_PROMPT_TEMPLATE
+        # Wave 0.8.5 F8 superseded: the "BẮT BUỘC" / "KHÔNG bỏ qua" phrasing
+        # was REMOVED. Confirm both old phrases are gone (escape clause path
+        # replaces them — see TestF8EscapeClause).
+        assert "BẮT BUỘC 2-3 câu" not in BREAKING_PROMPT_TEMPLATE
+        assert "KHÔNG bỏ qua đoạn này" not in BREAKING_PROMPT_TEMPLATE
