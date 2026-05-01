@@ -509,14 +509,14 @@ class TestL2RetryInstructionWithScope:
 
 
 class TestVersionBump:
-    """Wave 0.7: alpha.30 across pyproject + core/config."""
+    """Wave 0.8.4: alpha.31 across pyproject + core/config."""
 
     def test_core_config_version(self):
         from cic_daily_report.core.config import VERSION
 
-        assert VERSION == "2.0.0-alpha.30"
+        assert VERSION == "2.0.0-alpha.31"
 
     def test_module_version(self):
         from cic_daily_report import __version__
 
-        assert __version__ == "2.0.0-alpha.30"
+        assert __version__ == "2.0.0-alpha.31"

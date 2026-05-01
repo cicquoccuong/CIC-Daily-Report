@@ -1,6 +1,35 @@
 # Changelog
 
-## [Unreleased] - 2026-04-30
+## [Unreleased] - 2026-05-01
+
+### Wave 0.8.4 — EMERGENCY quality fix (alpha.31)
+
+**Context**: Sau khi bật `WAVE_0_6_ENABLED=true` + `CEREBRAS_API_KEY` (30/04 chiều), batch sáng 01/05 (5 tin breaking) phát hiện chất lượng degraded — 4 bug visible + 2 latent risk. Mary + Winston cross-check đồng thuận 6 fixes nhỏ + surgical, KHÔNG refactor judge architecture.
+
+**Bugs phát hiện (batch 01/05)**:
+
+- Bug 1: 3/5 tin chỉ có 1 câu (no Đoạn 2)
+- Bug 2: tin truncated giữa câu ("...tính đến tháng 4 năm…")
+- Bug 3: Wasabi gửi 2 lần (02:05 + 08:47, khác source) — entity miss trong dedup
+- Bug 4: **CRITICAL** — Wasabi 02:05 self-cited "30/4/2026" làm "lịch sử" (RAG self-reference leak)
+- Bug 5: Cerebras 429 silently fail-open, no metric/alert (latent risk)
+- Bug 6: word_count<50 chỉ log, no block ship
+
+**6 fixes (Winston conditions: F1 hard block <80, F4 URL match)**:
+
+- **F1 (`breaking/content_generator.py`)**: HARD GATE — judge retry produce <80 words → raise `LLMError(source="breaking_content_word_gate")` → pipeline marks `generation_failed`. Retry prompt cũng re-emphasize `word_target` + "ĐỦ 2 đoạn" để tránh "tóm tắt cho an toàn".
+- **F2 (`generators/text_utils.py`)**: Truncation thêm fallback layer — single `\n` boundary BEFORE hard cut. Vietnamese LLM dùng `\n` cho sub-bullets không paragraph break, tránh chặt mid-sentence.
+- **F3 (`breaking/dedup_manager.py`)**: `_ENTITY_PATTERN` thêm 10 protocols/wallets: Wasabi, EigenLayer, Spark, Sparklend, Symbiotic, Babylon, Berachain, Monad, Renzo, Karak. SIMILARITY_THRESHOLD giữ 0.55 (entity expand đủ).
+- **F4 (`breaking/rag_index.py` + `breaking/content_generator.py`)**: 3-layer self-ref defence:
+  1. `exclude_recent_hours` default 1.0 → **24.0** (24h = same news cycle, not history)
+  2. `RAGIndex.query()` mới `exclude_url` param — case-insensitive + trailing-slash tolerant; metadata stores URL từ BREAKING_LOG
+  3. Prompt rule explicit: "KHÔNG ref event xảy ra trong 24h qua làm 'lịch sử' — đó là tin cùng batch"
+- **F5 (`breaking/wave06_metrics.py` + `breaking/content_generator.py` + `breaking_pipeline.py`)**: `Wave06Metrics.judge_unavailable` field + `to_log_line()` (`judge_unavail=N`). `BreakingContent` thêm `judge_unavailable: bool` flag (set khi judge issues chứa `"judge_unavailable:"` prefix). Pipeline đọc flag → `metrics.increment("judge_unavailable")` + WARNING log realtime.
+- **F6 (`breaking/content_generator.py`)**: `BREAKING_PROMPT_TEMPLATE` bỏ phrase "ngắn hoặc bỏ qua" cho Đoạn 2; thay "BẮT BUỘC 2-3 câu" + "KHÔNG bỏ qua đoạn này".
+
+**Tests**: 2406 → 2431 (+25 mới, zero regression). New file `tests/test_breaking/test_wave084_quality_fix.py` cover 6 fix groups (F1×5, F2×4, F3×4, F4×5, F5×6, F6×1). 2 existing tests updated reflecting new behavior (RAG default hours + retry word floor). Ruff clean.
+
+**Goal**: tin sáng 02/05 KHÔNG còn 4 bug visible. Latent risks (judge unavailable, short retry) bây giờ visible qua metric + log → ops phản ứng nhanh.
 
 ### Wave 0.8.3 — Daily pipeline retry path flags fix (alpha.30)
 

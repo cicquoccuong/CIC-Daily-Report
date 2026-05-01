@@ -291,6 +291,13 @@ class RAGIndex:
             "Thời gian gửi",
         }
         metadata = {k: v for k, v in row.items() if k not in canonical}
+        # Wave 0.8.4 F4: Preserve URL in metadata so query() can do
+        # URL-based exclusion (anti self-reference). Bug 4 (01/05): tin
+        # Wasabi self-cited "30/4/2026" because RAG returned the very same
+        # batch event as "historical context".
+        url_val = (row.get("URL") or "").strip()
+        if url_val:
+            metadata["url"] = url_val
         # Optional summary — BREAKING_LOG doesn't carry it natively; tolerate
         # both schemas (some test fixtures may include "Tóm tắt" / "summary").
         summary = row.get("summary") or row.get("Tóm tắt") or metadata.pop("summary", "") or ""
@@ -488,6 +495,7 @@ class RAGIndex:
         min_score: float = 0.5,
         exclude_recent_hours: float = 1.0,
         severity: str | None = None,
+        exclude_url: str | None = None,
     ) -> list[dict[str, Any]]:
         """BM25 search with score + recency + severity filters.
 
@@ -499,6 +507,12 @@ class RAGIndex:
                 hours) are excluded — prevents the LLM citing the very event
                 it is currently writing about (Wave 0.5.2 self-reference fix).
             severity: optional exact match filter on severity column.
+            exclude_url: Wave 0.8.4 F4 — exact URL to exclude (anti
+                self-reference by URL). Even if recency filter fails (clock
+                skew, timestamp parse), URL match guarantees the event being
+                written about is never returned as "history". Bug 4 (01/05):
+                Wasabi event self-cited because both timestamp drift and
+                generic exclude_recent_hours=1.0 missed it.
 
         Returns:
             List of dicts sorted by score desc, capped at top_k.
@@ -533,6 +547,17 @@ class RAGIndex:
                     continue
             if severity and ev.severity != severity:
                 continue
+            # Wave 0.8.4 F4: URL-based self-reference exclusion. Compared
+            # case-insensitive + stripped — RSS feeds occasionally vary
+            # trailing slash / case; treat near-identical URLs as same event.
+            if exclude_url:
+                ev_url = (ev.metadata or {}).get("url", "")
+                if (
+                    isinstance(ev_url, str)
+                    and ev_url.strip().rstrip("/").lower()
+                    == exclude_url.strip().rstrip("/").lower()
+                ):
+                    continue
             # WHY: tolerate any ISO format that fromisoformat parses;
             # malformed/empty timestamps are kept (treated as "old enough")
             if exclude_recent_hours > 0 and ev.timestamp:
@@ -562,6 +587,9 @@ class RAGIndex:
                     "fng_index": ev.fng_index,
                     "score": score,
                     "metadata": ev.metadata,
+                    # Wave 0.8.4 F4: surface URL so judge / downstream can
+                    # double-check no self-citation slipped through.
+                    "url": (ev.metadata or {}).get("url", ""),
                 }
             )
         return results

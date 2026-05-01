@@ -60,5 +60,16 @@ def truncate_to_limit(
         if len(result) > 1:
             return (result, True)
 
+    # Wave 0.8.4 F2: single-newline fallback BEFORE hard cut.
+    # WHY: Bug 2 (01/05) showed truncation cutting mid-sentence ("...tính
+    # đến tháng 4 năm…"). Vietnamese content from LLM frequently uses
+    # single \n line breaks for sub-bullets without paragraph break. Prefer
+    # single \n boundary over chopping mid-word/mid-clause.
+    nl_idx = search_region.rfind("\n")
+    if nl_idx > 0:
+        result = search_region[:nl_idx].rstrip()
+        if len(result) > 1:
+            return (result, True)
+
     # Hard cut — no boundary found (e.g., one giant word block)
     return (search_region.rstrip(), True)

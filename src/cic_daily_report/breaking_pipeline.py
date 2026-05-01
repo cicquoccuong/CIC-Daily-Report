@@ -704,6 +704,19 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
                 timeout=60,
             )
 
+            # Wave 0.8.4 F5: bump judge_unavailable metric + WARNING log so
+            # ops can spot Cerebras outages mid-run instead of finding out
+            # the next morning when hallucinations slip through. Bug 5
+            # (01/05): judge fail-open silently → 0 rejections all run.
+            if getattr(content, "judge_unavailable", False):
+                wave06_metrics.increment("judge_unavailable")
+                logger.warning(
+                    "Wave 0.8.4 F5: judge unavailable for "
+                    f"'{classified_event.event.title[:60]}' (Cerebras "
+                    f"fail-open). Total this run: "
+                    f"{wave06_metrics.judge_unavailable}"
+                )
+
             # Deliver immediately (not batched)
             await _deliver_single_breaking(content, classified_event, dedup_mgr=dedup_mgr)
 
