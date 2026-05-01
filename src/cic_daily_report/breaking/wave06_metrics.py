@@ -52,6 +52,13 @@ class Wave06Metrics:
     two_source_single: int = 0
     two_source_conflict: int = 0
 
+    # Wave 0.8.4 F5: judge unavailable counter (Cerebras 429 / network /
+    # parse fail-open path). Bug 5 (01/05): Cerebras silently fail-opened
+    # → judge effectively bypassed → fact-check rejection rate dropped to
+    # 0% even though hallucinations slipped through. Visibility = ops
+    # can decide to swap quota tier or temporarily disable Wave 0.6.
+    judge_unavailable: int = 0
+
     # Free-form telemetry (extensible without dataclass churn)
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -90,7 +97,9 @@ class Wave06Metrics:
             f"dateblock={self.date_block_strip_count} | "
             f"numguard={self.numeric_guard_strip_count} | "
             f"2src={self.two_source_verified}/{self.two_source_single}"
-            f"/{self.two_source_conflict}"
+            f"/{self.two_source_conflict} | "
+            # Wave 0.8.4 F5: judge_unavailable visibility
+            f"judge_unavail={self.judge_unavailable}"
         )
 
     def is_empty(self) -> bool:
@@ -110,5 +119,6 @@ class Wave06Metrics:
             and self.two_source_verified == 0
             and self.two_source_single == 0
             and self.two_source_conflict == 0
+            and self.judge_unavailable == 0
             and not self.extra
         )

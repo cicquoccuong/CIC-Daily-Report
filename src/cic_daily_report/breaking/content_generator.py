@@ -59,10 +59,14 @@ FORMAT (KHÔNG thêm nguồn hay disclaimer — hệ thống tự thêm):
 - Đoạn 1 — CHUYỆN GÌ XẢY RA (3-5 câu): Trích xuất từ <source> — \
 ai làm gì, **con số** cụ thể, quy mô, timeline. Dùng **bold** cho mọi số liệu.
 - (dòng trống)
-- Đoạn 2 — TẠI SAO QUAN TRỌNG cho CIC (2-3 câu): \
-Nêu hệ quả CỤ THỂ cho cộng đồng — ngắn gọn ý chính. \
+- Đoạn 2 — TẠI SAO QUAN TRỌNG cho CIC: 2-3 câu hệ quả cho cộng đồng CIC. \
+CHỈ viết khi có data từ source article. \
 KHÔNG dùng cụm "nhà đầu tư chiến lược". \
-KHÔNG lặp lại thông tin đoạn 1. Nếu không có info mới → viết 1 câu ngắn hoặc bỏ qua.
+KHÔNG lặp lại thông tin đoạn 1. \
+Nếu source article KHÔNG có thông tin về tác động/hệ quả → viết EXACTLY: \
+"Đây là tin nhanh, chưa có thông tin chi tiết về tác động lên thị trường tài sản mã hóa. \
+Anh em theo dõi diễn biến tiếp theo trên BIC Group." \
+TUYỆT ĐỐI KHÔNG BỊA "có thể ảnh hưởng", "nhà phân tích cho rằng", "diễn biến này có thể"...
 {historical_instruction}
 CÁCH KẾT THÚC MỖI ĐOẠN:
 - Câu cuối = HỆ QUẢ CỤ THỂ (ai bị ảnh hưởng, bao nhiêu, khi nào)
@@ -130,6 +134,11 @@ class BreakingContent:
     ai_generated: bool
     model_used: str = ""
     image_url: str | None = None  # FR25: illustration image URL
+    # Wave 0.8.4 F5: surface judge availability so the pipeline can bump
+    # Wave06Metrics.judge_unavailable. True = at least one judge call hit
+    # the fail-open path (Cerebras 429 / network / parse error) during
+    # this content generation. Pipeline reads this once after generation.
+    judge_unavailable: bool = False
 
     @property
     def formatted(self) -> str:
@@ -412,13 +421,28 @@ def _get_historical_context(
     WHY return both: prompt needs human-readable text; judge needs structured
     JSON. Building once here avoids re-querying.
 
-    WHY exclude_recent_hours=1.0: anti self-reference (Wave 0.5.2 fix) —
-    don't let the LLM cite the very event it's currently writing about.
+    WHY exclude_recent_hours=24.0 (Wave 0.8.4 F4): bumped from 1.0 after
+    Bug 4 (01/05) where Wasabi tin self-cited "30/4/2026" because the same
+    batch event was less than 24h old and dedup hash differed — RAG returned
+    the very event being written about as "lịch sử". 24h floor matches our
+    "recent enough = same news cycle, not history" heuristic.
+
+    WHY exclude_url: belt-and-suspenders for the timestamp filter — even if
+    clock skew or parse failure lets a same-URL match through, URL match
+    catches it directly. The URL of the current event is the strongest
+    self-reference signal we have.
+
+    WHY exclude_title + exclude_entities (Wave 0.8.5 F7 — Devil B1): URL
+    exact match misses when the SAME event is reported by 2+ outlets with
+    different URLs (Wasabi 02:05 AMBCrypto vs Wasabi 08:47 The Block in
+    01/05 batch). Title fuzzy (ratio>=0.7) + entity overlap (>=2) close
+    that hole — same event still gets flagged as same-batch self-ref.
     """
     if not _wave_0_6_enabled():
         return ("", [])
 
     try:
+        from cic_daily_report.breaking.dedup_manager import _extract_entities
         from cic_daily_report.breaking.rag_index import get_or_build_index
 
         idx = get_or_build_index(sheets_client=sheets_client)
@@ -427,11 +451,22 @@ def _get_historical_context(
             + " "
             + ((event.raw_data or {}).get("summary", "") if event.raw_data else "")
         )
+        # Wave 0.8.5 F7: extract entities once from current event title for
+        # the entity-overlap filter inside RAGIndex.query.
+        title_entities = _extract_entities(event.title or "")
         results = idx.query(
             query=query,
             top_k=top_k,
             min_score=0.5,
-            exclude_recent_hours=1.0,
+            # Wave 0.8.4 F4: 1.0 → 24.0 hours
+            exclude_recent_hours=24.0,
+            # Wave 0.8.4 F4: belt-and-suspenders — exclude the URL of the
+            # current event explicitly (defends against timestamp parse drift).
+            exclude_url=(event.url or None),
+            # Wave 0.8.5 F7: 2 extra layers when 2+ outlets cover same event
+            # with different URLs but near-identical content.
+            exclude_title=(event.title or None),
+            exclude_entities=(title_entities or None),
         )
     except Exception as e:
         # WHY catch broad: RAG failure (sheets down, sqlite corrupt, BM25
@@ -691,6 +726,11 @@ async def generate_breaking_content(
             "\n- (Optional) 1 câu THAM CHIẾU LỊCH SỬ — CHỈ dùng events có "
             "trong <historical_events> dưới đây. KHÔNG TỰ BỊA số/ngày/sự "
             "kiện khác.\n"
+            # Wave 0.8.4 F4: explicit guard against 24h-window self-ref —
+            # even if a same-day event slips into <historical_events> via
+            # filter edge case, the LLM is told NOT to treat it as history.
+            "- KHÔNG ref event xảy ra trong 24h qua làm 'lịch sử' — đó là "
+            "tin cùng batch (cùng news cycle), KHÔNG phải lịch sử.\n"
             f"\n{rag_context_text}\n"
         )
     else:
@@ -728,24 +768,47 @@ async def generate_breaking_content(
     # WHY retry inside this function (not pipeline): retry needs the same
     # prompt + context. Surfacing retry to pipeline would leak prompt details.
     judge_skipped = not _wave_0_6_enabled() or severity not in ("critical", "important")
+    # Wave 0.8.4 F1: track judge retry to apply hard word-count gate later.
+    # Only applied when judge actually retried (the retry path is where
+    # short outputs were observed in Bug 1 — see retry_prompt below).
+    judge_retried = False
+    judge_unavailable_seen = False  # Wave 0.8.4 F5
     if not judge_skipped:
         judge1 = await llm.judge_factual_claims(
             content=response.text,
             source_text=summary_text or event.title,
             historical_context=rag_results,
         )
+        # Wave 0.8.4 F5: detect judge unavailability via the
+        # "judge_unavailable:" issue prefix (existing convention from
+        # llm_adapter.judge_factual_claims fail-open path). Caller
+        # (breaking_pipeline) reads this off the BreakingContent so the
+        # Wave06Metrics counter can be bumped without coupling the LLM
+        # adapter to metrics.
+        for issue in judge1.issues or []:
+            if isinstance(issue, str) and issue.startswith("judge_unavailable:"):
+                judge_unavailable_seen = True
+                break
         if judge1.verdict == "rejected":
             logger.warning(
                 f"Fact-check rejected (1st pass): {judge1.issues[:3]} (model={judge1.model_used})"
             )
+            judge_retried = True
             # WHY 1 retry only: more retries waste quota; the issues list
             # already tells the LLM what to avoid.
+            # Wave 0.8.4 F1: re-emphasize word_target + 2 đoạn after judge
+            # reject. Bug 1 (01/05): retry produced 1-câu output because
+            # the original word_target hint got buried under fact-check
+            # complaints — model defaulted to "tóm tắt cho an toàn".
+            issues_text = "; ".join(judge1.issues[:5])
             retry_prompt = (
                 prompt
-                + "\n\nLẦN TRƯỚC bị reject vì: "
-                + "; ".join(judge1.issues[:5])
-                + "\nViết lại CHỈ với fact verify được trong <source>. "
-                "KHÔNG bịa số/ngày/sự kiện."
+                + f"\n\nLẦN TRƯỚC bị reject: {issues_text}.\n"
+                + f"VIẾT LẠI tin {word_target} từ, ĐỦ 2 đoạn: "
+                + "(1) sự kiện chi tiết, "
+                + "(2) TẠI SAO QUAN TRỌNG cho cộng đồng CIC. "
+                + "CHỈ dùng fact verify được trong <source>. "
+                + "KHÔNG bịa số/ngày/sự kiện."
             )
             response = await llm.generate(
                 prompt=retry_prompt,
@@ -758,6 +821,11 @@ async def generate_breaking_content(
                 source_text=summary_text or event.title,
                 historical_context=rag_results,
             )
+            # Wave 0.8.4 F5: also check 2nd-pass judge availability
+            for issue in judge2.issues or []:
+                if isinstance(issue, str) and issue.startswith("judge_unavailable:"):
+                    judge_unavailable_seen = True
+                    break
             if judge2.verdict == "rejected":
                 # WHY raise instead of return broken content: pipeline must
                 # be told this event failed so it logs + skips delivery.
@@ -812,6 +880,26 @@ async def generate_breaking_content(
                 f"Fix 1: content still <50 words after re-filter ({word_count}). "
                 "Shipping NQ05-clean short content rather than raw bypass."
             )
+
+    # Wave 0.8.4 F1: HARD GATE — block ship when judge retried but final
+    # output remains <80 words. Bug 1+6 (01/05): 3/5 tin had no Đoạn 2
+    # because retry produced 1-câu output and only word_count<50 was
+    # logged (not blocked). 80 chosen per Winston condition: even
+    # critical alerts deserve at least Đoạn 1 (3-5 câu) + 1-câu Đoạn 2.
+    # WHY only when judge_retried: tests + non-judge paths intentionally
+    # feed short content; we must not break those flows.
+    if judge_retried and word_count < 80:
+        from cic_daily_report.core.error_handler import LLMError
+
+        logger.error(
+            f"Wave 0.8.4 F1 HARD BLOCK: word_count={word_count} <80 after "
+            f"judge retry — refusing to ship 1-câu output (severity={severity})"
+        )
+        raise LLMError(
+            f"content too short after judge retry ({word_count} words)",
+            source="breaking_content_word_gate",
+            retry=False,
+        )
 
     logger.info(f"Breaking content generated: {word_count} words via {model_used}")
 
@@ -888,6 +976,8 @@ async def generate_breaking_content(
         ai_generated=True,
         model_used=model_used,
         image_url=event.image_url,
+        # Wave 0.8.4 F5: pass through to pipeline metrics
+        judge_unavailable=judge_unavailable_seen,
     )
 
 

@@ -159,6 +159,10 @@ _ENTITY_PATTERN = re.compile(
     # WHY: Expand entity coverage to reduce false negatives in dedup
     # for DeFi, stablecoin, geopolitical, security, and institutional news
     r"|Drift|Aave|Compound|Maker|MakerDAO|Lido|Uniswap|Curve|dYdX|GMX|Pendle|Ethena|Morpho|Balancer|Yearn|Frax"
+    # Wave 0.8.4 F3: Bug 3 (01/05) — Wasabi sent twice (02:05 + 08:47,
+    # different sources, similar topic). Wasabi missing from entity set.
+    # Plus other DeFi/wallet protocols that recur in news cycles.
+    r"|Wasabi|EigenLayer|Spark|Sparklend|Symbiotic|Babylon|Berachain|Monad|Renzo|Karak"
     r"|USDC|USDT|DAI|USDS|USDe|FDUSD|TUSD|BUSD"
     # QO.13: Expanded country list — key crypto-regulatory jurisdictions
     r"|Canada|China|Japan|Korea|India|Russia|Iran|Israel|UK|Australia|Singapore|Brazil|Vietnam"

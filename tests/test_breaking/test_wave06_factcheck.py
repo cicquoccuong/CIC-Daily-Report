@@ -149,7 +149,12 @@ class TestRagInject:
         assert "KHÔNG viết tham chiếu lịch sử" in prompt
 
     async def test_rag_self_reference_filter_param(self, wave06_on):
-        """RAG.query MUST be called with exclude_recent_hours=1.0 (anti Wave 0.5.2 bug)."""
+        """RAG.query MUST exclude recent (24h) AND exclude current URL.
+
+        Wave 0.8.4 F4: bumped from 1.0 → 24.0 hours after Bug 4 (01/05)
+        where Wasabi tin self-cited the same batch event as 'lịch sử'.
+        Plus exclude_url passes the current event URL for belt-and-suspenders.
+        """
         mock_idx = MagicMock()
         mock_idx.query.return_value = []
         with patch(
@@ -159,7 +164,9 @@ class TestRagInject:
             llm = _mock_llm()
             await generate_breaking_content(_event(), llm)
         kwargs = mock_idx.query.call_args.kwargs
-        assert kwargs.get("exclude_recent_hours") == 1.0
+        assert kwargs.get("exclude_recent_hours") == 24.0
+        # exclude_url must be passed (not None) for the test event URL
+        assert kwargs.get("exclude_url") == _event().url
 
 
 # ---------------------------------------------------------------------------
@@ -199,10 +206,24 @@ class TestJudgePass:
         assert llm.generate.call_count == 1  # no retry
 
     async def test_judge_rejected_then_approved_on_retry(self, wave06_on):
-        """1st rejected → retry → 2nd approved → ship retry content."""
+        """1st rejected → retry → 2nd approved → ship retry content.
+
+        Wave 0.8.4 F1: retry must produce >= 80 words; otherwise hard gate
+        triggers. Bumped fixture text to 100+ words to clear the gate.
+        """
+        # 110-word mock text — clears Wave 0.8.4 F1 gate (>= 80)
+        long_text = (
+            "Tin nóng: tài sản mã hóa bị hack 100 triệu USD trên sàn lớn. "
+            "Hacker đã khai thác lỗ hổng oracle để rút tiền từ pool thanh khoản. "
+            "Sự kiện diễn ra trong vòng 30 phút và ảnh hưởng đến hàng nghìn người dùng. "
+            "Đội ngũ bảo mật đang điều tra nguyên nhân và truy vết hacker qua on-chain. "
+            "Với cộng đồng CIC, đây là lời nhắc về rủi ro DeFi và tầm quan trọng của bảo mật. "
+            "Người dùng nên kiểm tra lại các vị thế và chuyển tài sản sang ví lạnh nếu cần. "
+            "Sàn cam kết bồi thường thiệt hại theo chính sách bảo hiểm hiện hành."
+        )
         with patch("cic_daily_report.breaking.rag_index.get_or_build_index") as mock_get:
             mock_get.return_value.query.return_value = []
-            llm = _mock_llm()
+            llm = _mock_llm(text=long_text)
             llm.judge_factual_claims = AsyncMock(
                 side_effect=[
                     JudgeResult(verdict="rejected", issues=["bịa $6B Poly"]),
