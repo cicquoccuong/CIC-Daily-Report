@@ -245,7 +245,11 @@ def check_insight_density(content: str) -> tuple[float, int, int]:
         and len(s.strip()) > 10  # skip fragments too short to be real sentences
         and not s.strip().startswith("##")  # skip markdown headers
         and not s.strip().startswith("---")  # skip horizontal rules
-        and not s.strip().startswith("*Tuyên bố")  # skip disclaimer
+        # Wave 0.8.7.1: disclaimer giờ plain text bắt đầu bằng "⚠️ Tuyên bố"
+        # (KHÔNG còn asterisk markdown). Skip cả 2 dạng để backward-compat
+        # với content cũ trong test fixtures.
+        and not s.strip().startswith("*Tuyên bố")  # legacy disclaimer (markdown)
+        and not s.strip().startswith("⚠️ Tuyên bố")  # new plain-text disclaimer
     ]
 
     total = len(sentences)

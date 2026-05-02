@@ -987,10 +987,13 @@ async def generate_breaking_content(
     # truncation budget unchanged so existing limit tests + NQ05-never-cut
     # invariant remain valid (see tests/test_breaking/test_content_generator_limits.py).
     source_block = f"\n\n🔗 {source_html}"
-    # WHY len(source_block) + len(DISCLAIMER_SHORT): truncation budget must reserve
-    # room for both source link AND disclaimer (appended via helper). Avoids raw
-    # `+ DISCLAIMER_SHORT` concat which the NQ05 linter forbids.
-    body_limit = BREAKING_MAX_CHARS - len(source_block) - len(DISCLAIMER_SHORT)
+    # WHY len(source_block) + len(DISCLAIMER_SHORT) + 1: truncation budget must
+    # reserve room cho source link AND disclaimer. `+1` cho separator overhead:
+    # helper `append_nq05_disclaimer` thực hiện `text.rstrip() + "\n\n" +
+    # disclaimer.lstrip("\n")` → adds "\n\n" (2 chars) nhưng strip max 1 leading
+    # \n từ disclaimer → net +1 char vs len(DISCLAIMER_SHORT). Wave 0.8.7.1
+    # SHORT starts with single "\n" (cũ: "\n\n") → off-by-one xuất hiện.
+    body_limit = BREAKING_MAX_CHARS - len(source_block) - len(DISCLAIMER_SHORT) - 1
     # BUG-15: Floor at 500 chars — if suffix is extremely long, body_limit
     # could go negative, causing text[:negative] → empty string → content lost.
     if body_limit < 500:
@@ -1313,16 +1316,20 @@ async def generate_digest_content(
     # QO.07 (VD-36): Digest is breaking news → use short disclaimer.
     links = "\n".join(f"🔗 {_format_source_link(e.source, e.url)}" for e in events if e.url)
     links_block = f"\n\n{links}"
-    # Budget = total - links_block - disclaimer (helper appends disclaimer at end).
-    body_limit = BREAKING_MAX_CHARS - len(links_block) - len(DISCLAIMER_SHORT)
+    # Budget = total - links_block - disclaimer - 1 (separator overhead).
+    # WHY -1: helper `append_nq05_disclaimer` thực hiện rstrip + "\n\n" +
+    # disclaimer.lstrip("\n") → adds "\n\n" (2 chars) nhưng strip max 1 leading
+    # \n từ disclaimer → net +1 char vs len(DISCLAIMER_SHORT). Wave 0.8.7.1
+    # SHORT bắt đầu bằng single "\n" → off-by-one xuất hiện ở edge case.
+    body_limit = BREAKING_MAX_CHARS - len(links_block) - len(DISCLAIMER_SHORT) - 1
     # BUG-15: Floor at 500 chars — too many event links can make suffix huge,
     # pushing body_limit negative → text[:negative] → empty body → content lost.
     # When this happens, truncate the links list to fit.
     if body_limit < 500:
-        max_link_chars = BREAKING_MAX_CHARS - 500 - len(DISCLAIMER_SHORT)
+        max_link_chars = BREAKING_MAX_CHARS - 500 - len(DISCLAIMER_SHORT) - 1
         links = links[:max_link_chars].rsplit("\n", 1)[0]  # Cut at last complete link
         links_block = f"\n\n{links}"
-        body_limit = BREAKING_MAX_CHARS - len(links_block) - len(DISCLAIMER_SHORT)
+        body_limit = BREAKING_MAX_CHARS - len(links_block) - len(DISCLAIMER_SHORT) - 1
     clean_content, was_truncated = truncate_to_limit(clean_content, body_limit)
     if was_truncated:
         logger.warning(

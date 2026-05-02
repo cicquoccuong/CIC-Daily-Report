@@ -113,9 +113,12 @@ def test_recap_quote_with_real_marker_skips_acceptable_per_devil() -> None:
     LOCK this design choice so future contributors do not "fix" it without
     intentional discussion.
     """
+    # Wave 0.8.7.1: marker giờ plain text "⚠️ Tuyên bố..." (no asterisk).
+    # Quote phải chứa exact marker (bao gồm "thông tin và phân tích") mới
+    # trigger skip.
     quoted_recap = (
-        'Bài hôm qua kết luận: "⚠️ *Tuyên bố miễn trừ trách nhiệm:* '
-        'Nội dung trên chỉ mang tính chất thông tin..." Hôm nay tiếp tục.'
+        'Bài hôm qua kết luận: "⚠️ Tuyên bố miễn trừ trách nhiệm: '
+        'Nội dung trên chỉ mang tính chất thông tin và phân tích..." Hôm nay tiếp tục.'
     )
     result = append_nq05_disclaimer(quoted_recap, short=False)
     # Skip — quote already carries marker. Acceptable per Wave C+.2 design.

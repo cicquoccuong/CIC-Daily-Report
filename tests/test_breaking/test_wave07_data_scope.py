@@ -509,14 +509,14 @@ class TestL2RetryInstructionWithScope:
 
 
 class TestVersionBump:
-    """Wave C+ (alpha.35) — centralize NQ05 disclaimer + heterogeneous verifier."""
+    """Wave 0.8.7.1 (alpha.36) — geo single-event guard + unified disclaimer."""
 
     def test_core_config_version(self):
         from cic_daily_report.core.config import VERSION
 
-        assert VERSION == "2.0.0-alpha.35"
+        assert VERSION == "2.0.0-alpha.36"
 
     def test_module_version(self):
         from cic_daily_report import __version__
 
-        assert __version__ == "2.0.0-alpha.35"
+        assert __version__ == "2.0.0-alpha.36"

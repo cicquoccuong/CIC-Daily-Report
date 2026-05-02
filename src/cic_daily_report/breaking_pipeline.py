@@ -813,6 +813,68 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             )
             run_log.errors.append(f"LLM unavailable for digest: {classified_event.event.title}")
 
+    # Wave 0.8.7.1: 1 geo event → ship dạng individual breaking thay vì digest.
+    # WHY: digest format ("TỔNG HỢP TIN QUAN TRỌNG" + "1️⃣ ...") trông lố khi
+    # chỉ có 1 mục — bug 02/05/2026 14:18 VN: 1 tin Trump-Iran lọt vào digest path.
+    # Mirror guard giống important_now (line 658-660) nhưng đặt ở đây vì geo path
+    # nằm SAU all_individual loop — không thể merge ngược lên.
+    if (
+        len(geo_events) == 1
+        and llm is not None
+        and not llm.circuit_open
+        and run_log.events_sent < max_per_run
+    ):
+        single_geo = geo_events[0]
+        content = None
+        try:
+            recent_events_text = _format_recent_events(
+                dedup_mgr.entries,
+                current_event_time=single_geo.event.detected_at,
+                min_age_hours=1.0,
+            )
+            content = await asyncio.wait_for(
+                generate_breaking_content(
+                    single_geo.event,
+                    llm,
+                    severity=single_geo.severity,
+                    market_context=market_snapshot,
+                    recent_events=recent_events_text,
+                    consensus_snapshot=consensus_text,
+                    price_snapshot=price_snapshot,
+                    sheets_client=sheets,
+                ),
+                timeout=60,
+            )
+            if getattr(content, "judge_unavailable", False):
+                wave06_metrics.increment("judge_unavailable")
+                logger.warning(
+                    "Wave 0.8.4 F5: judge unavailable for "
+                    f"'{single_geo.event.title[:60]}' (Cerebras "
+                    f"fail-open). Total this run: "
+                    f"{wave06_metrics.judge_unavailable}"
+                )
+            await _deliver_single_breaking(content, single_geo, dedup_mgr=dedup_mgr)
+            result.contents.append(content)
+            result.sent_events.append(single_geo)
+            run_log.events_sent += 1
+            h = compute_hash(single_geo.event.title, single_geo.event.source)
+            # Status "sent" (giống individual flow) thay vì "sent_geo_digest" —
+            # đây không còn là digest message nữa. Daily cap vẫn count qua _count_today_sent_events.
+            dedup_mgr.update_entry_status(
+                h,
+                "sent",
+                delivered_at=datetime.now(timezone.utc).isoformat(),
+                severity=single_geo.severity,
+            )
+            await _persist_dedup_to_sheets(dedup_mgr, new_entries=dedup_result.entries_written)
+        except Exception as e:
+            logger.error(f"Single-geo event failed for '{single_geo.event.title}': {e}")
+            h = compute_hash(single_geo.event.title, single_geo.event.source)
+            status = "delivery_failed" if content is not None else "generation_failed"
+            dedup_mgr.update_entry_status(h, status, severity=single_geo.severity)
+            run_log.errors.append(f"{'Deliver' if content else 'Generate'} single-geo: {e}")
+        geo_events = []  # đã xử lý — vô hiệu hóa digest path bên dưới
+
     # QO.14: Stage 4c — Geo events → digest (grouped message)
     # WHY separate stage: geo events are noisy individually but valuable as a digest.
     # Capping at MAX_GEO_DIGESTS_PER_DAY prevents geo spam while keeping coverage.
