@@ -92,11 +92,14 @@ class TestQO07DisclaimerShort:
     """QO.07 (VD-36): Breaking news uses short disclaimer, daily keeps full."""
 
     def test_disclaimer_short_exists(self):
-        """DISCLAIMER_SHORT constant is defined in article_generator."""
+        """Wave 0.8.7.1: SHORT vẫn defined, nhưng giờ unified wording với FULL
+        (anh Cường mandate) → length ~210 chars (không còn 60-char target)."""
         from cic_daily_report.generators.article_generator import DISCLAIMER_SHORT
 
         assert "DYOR" in DISCLAIMER_SHORT
-        assert len(DISCLAIMER_SHORT) < 100  # ~60 chars target
+        # SHORT vẫn ngắn hơn FULL (thiếu `---\n` separator + 1 newline mở đầu)
+        # nhưng wording giống → length ~210 (không còn ~60 target).
+        assert len(DISCLAIMER_SHORT) > 100
 
     def test_disclaimer_short_is_nq05_compliant(self):
         """Short disclaimer still mentions it's not investment advice."""
@@ -112,10 +115,12 @@ class TestQO07DisclaimerShort:
         assert "Tuyên bố miễn trừ trách nhiệm" in DISCLAIMER_SHORT
 
     def test_disclaimer_short_has_risk_warning(self):
-        """QO.07 fix: DISCLAIMER_SHORT includes 'Rủi ro cao' risk warning."""
+        """Wave 0.8.7.1: SHORT giờ unified với FULL — wording lowercase
+        "rủi ro cao" thay vì "Rủi ro cao." (compact). NQ05 risk warning
+        contract giữ nguyên — chỉ đổi case."""
         from cic_daily_report.generators.article_generator import DISCLAIMER_SHORT
 
-        assert "Rủi ro cao" in DISCLAIMER_SHORT
+        assert "rủi ro cao" in DISCLAIMER_SHORT
 
     def test_nq05_filter_detects_short_disclaimer(self):
         """QO.07 fix: nq05_filter reports disclaimer_present=True for short disclaimer."""
@@ -134,33 +139,38 @@ class TestQO07DisclaimerShort:
         assert len(DISCLAIMER) > 100
 
     async def test_breaking_content_uses_short_disclaimer(self):
-        """Generated breaking content uses short disclaimer, not full."""
+        """Wave 0.8.7.1: SHORT giờ unified với FULL về wording. Discrimination
+        chỉ ở `---` separator (FULL có, SHORT không) và double-newline mở
+        đầu (FULL có, SHORT single)."""
         from cic_daily_report.breaking.content_generator import generate_breaking_content
 
         llm = _mock_llm()
         result = await generate_breaking_content(_event(), llm)
 
-        # Short disclaimer present
+        # Disclaimer present
         assert "DYOR" in result.content
-        # Full disclaimer NOT present (check unique substring from full version)
-        assert "Nội dung trên chỉ mang tính chất thông tin và phân tích" not in result.content
+        # Breaking dùng SHORT → KHÔNG có `---` separator
+        assert "\n---\n" not in result.content
 
     async def test_breaking_content_shorter_than_full(self):
-        """Breaking content with short disclaimer is shorter than it would be with full."""
+        """Wave 0.8.7.1: SHORT chỉ ngắn hơn FULL ~4 chars (không có `---\n` +
+        single newline thay vì double newline). Wording giống nhau."""
         from cic_daily_report.generators.article_generator import DISCLAIMER, DISCLAIMER_SHORT
 
+        # SHORT vẫn ngắn hơn vì thiếu `---\n` separator + 1 newline mở đầu.
         assert len(DISCLAIMER_SHORT) < len(DISCLAIMER)
 
     def test_raw_data_fallback_uses_short_disclaimer(self):
-        """Raw data fallback also uses short disclaimer since it's breaking."""
+        """Wave 0.8.7.1: raw_data_fallback dùng SHORT — KHÔNG có `---`
+        separator (đặc trưng SHORT)."""
         from cic_daily_report.breaking.content_generator import _raw_data_fallback
 
         result = _raw_data_fallback(_event())
         assert "DYOR" in result.content
-        assert "Nội dung trên chỉ mang tính chất thông tin và phân tích" not in result.content
+        assert "\n---\n" not in result.content
 
     async def test_digest_uses_short_disclaimer(self):
-        """Digest content also uses short disclaimer."""
+        """Wave 0.8.7.1: digest dùng SHORT — KHÔNG có `---` separator."""
         from cic_daily_report.breaking.content_generator import generate_digest_content
 
         events = [
@@ -175,7 +185,7 @@ class TestQO07DisclaimerShort:
         llm = _mock_llm()
         result = await generate_digest_content(events, llm)
         assert "DYOR" in result.content
-        assert "Nội dung trên chỉ mang tính chất thông tin và phân tích" not in result.content
+        assert "\n---\n" not in result.content
 
 
 # =====================================================================

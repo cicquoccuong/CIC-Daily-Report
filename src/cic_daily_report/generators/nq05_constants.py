@@ -11,77 +11,78 @@ WHY tách module (Wave C+.1, 2026-05-01):
       cả hai cùng import từ `nq05_constants` → KHÔNG còn cycle, helper
       có thể import top-level (deterministic).
 
-WHY 2 markers (Wave C+.1 fix #1+#2, hardened Wave C+.2 2026-05-01):
-    - Helper cũ dùng `disclaimer.strip()[:200]` làm signature → tail-only
-      check 1500 chars. Vấn đề:
-        * Cross-contamination: signature 200 chars của FULL có thể match
-          một phần của SHORT (cùng prefix "⚠️ *Tuyên bố miễn trừ trách
-          nhiệm:") → caller chuyển từ FULL sang SHORT (hoặc ngược lại) bị
-          skip nhầm → NQ05 leak.
-        * Tail-only: research article ~15K chars, nếu LLM hallucinate
-          disclaimer ở giữa (vị trí 8K-13K) → tail 1500 sẽ miss → double
-          append.
-    - Wave C+.1 đã sửa nhưng marker quá ngắn ("Nội dung trên" 5 chars,
-      "Không phải lời khuyên đầu tư. Rủi ro cao. DYOR" 45 chars) → REGRESSION:
-      LLM viết article bình thường có thể chứa cụm này:
-        * "Nội dung trên Twitter cho thấy..." → false positive skip → NQ05 leak
-        * Quote từ source: "Không phải lời khuyên đầu tư. Rủi ro cao. DYOR..."
-          (Binance/exchanges hay dùng cụm này) → false positive skip
-    - Wave C+.2 hardening: marker dài hơn + bao gồm emoji ⚠️ + markdown
-      asterisk format `*Tuyên bố` — kết hợp 3 đặc trưng KHÔNG THỂ xuất hiện
-      ngẫu nhiên trong văn bản LLM bình thường:
-        * `DISCLAIMER_MARKER_FULL = "⚠️ *Tuyên bố miễn trừ trách nhiệm:* "
-          "Nội dung trên chỉ mang tính"` (~60 chars). Có emoji + asterisk
-          markdown + cụm Vietnamese đặc thù NQ05 → unique 100%.
-        * `DISCLAIMER_MARKER_SHORT = "⚠️ *Tuyên bố miễn trừ trách nhiệm: "
-          "Không phải lời khuyên"` (~52 chars). Tương tự, emoji + asterisk +
-          dấu hai chấm + space (KHÔNG có `*` trước `Không` — chỉ SHORT có
-          dạng này, FULL có `*` đóng sau `nhiệm:`).
-    - Cả 2 marker là EXACT substring của constant tương ứng (verified bằng
-      test `test_full_marker_present_in_full` + `test_short_marker_present_in_short`).
-    - Cross-uniqueness: FULL có `:* Nội dung` (asterisk đóng), SHORT có `:
-      Không` (no asterisk đóng) → marker FULL KHÔNG match được SHORT body
-      và ngược lại → giữ nguyên cross-contamination guard từ C+.1.
-    - Idempotent rule: nếu BẤT KỲ marker nào đã có TRONG text (any
-      position) → skip append. Caller mix FULL/SHORT cũng safe.
+WHY unified disclaimer (Wave 0.8.7.1, 2026-05-02 — anh Cường mandate):
+    - Trước: FULL + SHORT có wording KHÁC NHAU (FULL dài, SHORT có "Rủi
+      ro cao. DYOR." viết tắt). Inconsistent text → confusing cho user khi
+      thấy 2 variant trong cùng 1 ngày (daily article vs breaking news).
+    - Sau: cả FULL + SHORT dùng CÙNG 1 wording đầy đủ. FULL có thêm `---`
+      separator + double newline cho article body, SHORT chỉ thiếu separator
+      và bỏ `\\n\\n` mở đầu để tiết kiệm chars trong breaking news.
+    - Plain text (KHÔNG asterisk markdown `*Tuyên bố...*`): Telegram
+      Markdown V1 đôi khi render asterisk thành italic không nhất quán giữa
+      Telegram Desktop, Web, iOS, Android — đặc biệt khi text chứa dấu `:`
+      hoặc emoji. Plain text render ổn định 100%.
+
+WHY single marker (Wave 0.8.7.1):
+    - FULL và SHORT giờ có CÙNG wording → marker FULL == marker SHORT.
+    - Helper `append_nq05_disclaimer` check 1 marker thôi (DISCLAIMER_MARKER_FULL),
+      idempotent vẫn work vì caller mix FULL/SHORT trên cùng text → marker
+      vẫn match → skip.
+    - Cross-contamination guard không còn cần (cùng marker thì không thể
+      cross-contaminate). Giữ DISCLAIMER_MARKER_SHORT = DISCLAIMER_MARKER_FULL
+      để backward-compat với code/test đang import 2 tên riêng.
+
+WHY marker uniqueness (Wave 0.8.7.1):
+    - Marker = `"⚠️ Tuyên bố miễn trừ trách nhiệm: Nội dung trên chỉ mang
+      tính chất thông tin và phân tích"` (~95 chars). Có emoji + cụm
+      Vietnamese NQ05 đặc thù DÀI → KHÔNG xuất hiện ngẫu nhiên trong văn
+      bản LLM bình thường.
+    - "thông tin và phân tích" đặt sau "chỉ mang tính chất" tạo signature
+      4-word phrase HIẾM trong context không phải disclaimer.
+    - Verified bằng test_nq05_marker_false_positive.py (corpus phổ thông VN
+      KHÔNG match marker mới).
 """
 
 from __future__ import annotations
 
-# FR17: NQ05-compliant disclaimer (Vietnamese). Full variant for daily/tier
-# articles + research where character budget allows ~250 chars overhead.
+# FR17: NQ05-compliant disclaimer (Vietnamese). Wave 0.8.7.1: unified plain text
+# version theo anh Cường mandate. FULL variant dùng cho daily/tier articles +
+# research — có `---` separator + double newline mở đầu.
 DISCLAIMER = (
     "\n\n---\n"
-    "⚠️ *Tuyên bố miễn trừ trách nhiệm:* "
+    "⚠️ Tuyên bố miễn trừ trách nhiệm: "
     "Nội dung trên chỉ mang tính chất thông tin và phân tích, "
     "KHÔNG phải lời khuyên đầu tư. Tài sản mã hóa có rủi ro cao. "
     "Hãy tự nghiên cứu (DYOR) trước khi đưa ra quyết định đầu tư."
 )
 
-# QO.07 (VD-36): Short disclaimer for breaking news — full disclaimer takes 15-20%
-# of a 300-400 word breaking message. This 1-line version preserves NQ05 compliance
-# while reducing overhead to ~3-5% of content.
+# Wave 0.8.7.1: SHORT variant dùng CÙNG wording với FULL (anh Cường mandate
+# unified disclaimer) — chỉ KHÁC ở:
+#   * KHÔNG có `---` separator (breaking news budget hẹp)
+#   * Single newline mở đầu (thay vì `\n\n` của FULL)
 # WHY "trách nhiệm": nq05_filter.py checks for "Tuyên bố miễn trừ trách nhiệm"
-# — short disclaimer must contain this substring to pass the check.
-# WHY "Rủi ro cao": NQ05 requires explicit risk warning in all user-facing content.
+# — short disclaimer phải chứa substring này để pass check.
 DISCLAIMER_SHORT = (
-    "\n\n⚠️ *Tuyên bố miễn trừ trách nhiệm: Không phải lời khuyên đầu tư. Rủi ro cao. DYOR.*"
+    "\n"
+    "⚠️ Tuyên bố miễn trừ trách nhiệm: "
+    "Nội dung trên chỉ mang tính chất thông tin và phân tích, "
+    "KHÔNG phải lời khuyên đầu tư. Tài sản mã hóa có rủi ro cao. "
+    "Hãy tự nghiên cứu (DYOR) trước khi đưa ra quyết định đầu tư."
 )
 
-# Idempotent markers — UNIQUE per variant. Scan entire text (not tail) to catch
-# LLM hallucinated disclaimer in middle of long research articles.
+# Idempotent marker — UNIFIED giữa FULL/SHORT (Wave 0.8.7.1 anh Cường mandate).
+# Cụm "thông tin và phân tích" sau "Nội dung trên chỉ mang tính chất" là signature
+# NQ05-specific dài ~95 chars (kể cả emoji ⚠️) → KHÔNG thể tạo ngẫu nhiên trong
+# văn bản LLM bình thường. Verified false-positive guard trong
+# test_nq05_marker_false_positive.py (corpus phổ thông VN không match).
 #
-# WHY include emoji ⚠️ + markdown `*Tuyên bố`: Wave C+.2 hardening — short
-# markers ("Nội dung trên" 5 chars, "Không phải lời khuyên..." 45 chars)
-# trigger false positive skip on common Vietnamese phrases (e.g. "Nội dung
-# trên Twitter cho thấy...", quote từ Binance "Không phải lời khuyên đầu
-# tư..."). Combining emoji + markdown asterisk format + Vietnamese NQ05
-# wording = signature LLM article body KHÔNG thể tạo ngẫu nhiên.
-#
-# WHY exact substring of constant: must be lifted verbatim from DISCLAIMER /
-# DISCLAIMER_SHORT so that `MARKER in DISCLAIMER` always holds (locked by
-# test_full/short_marker_present_in_full/short).
-# only in FULL (asterisk-closed `:*` distinguishes from SHORT `:` + space)
-DISCLAIMER_MARKER_FULL = "⚠️ *Tuyên bố miễn trừ trách nhiệm:* Nội dung trên chỉ mang tính"
-# only in SHORT (no asterisk close after `:` — FULL has `:*`)
-DISCLAIMER_MARKER_SHORT = "⚠️ *Tuyên bố miễn trừ trách nhiệm: Không phải lời khuyên"
+# WHY scan toàn text (không chỉ tail): research article ~15K chars; LLM có thể
+# hallucinate disclaimer ở giữa (vị trí 8K-13K) → tail-only check sẽ miss →
+# double append. Marker đủ unique nên scan toàn text zero false-positive.
+DISCLAIMER_MARKER_FULL = (
+    "⚠️ Tuyên bố miễn trừ trách nhiệm: Nội dung trên chỉ mang tính chất thông tin và phân tích"
+)
+
+# Wave 0.8.7.1: FULL và SHORT cùng wording → marker SHORT alias FULL.
+# Giữ tên này để backward-compat với import sites đã hardcode tên cũ.
+DISCLAIMER_MARKER_SHORT = DISCLAIMER_MARKER_FULL

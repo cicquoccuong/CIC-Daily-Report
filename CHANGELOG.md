@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.0.0-alpha.36] — 2026-05-02 — Wave 0.8.7.1 Geo Guard + Unified Disclaimer
+
+### Fix #1: Geo single-event guard ở `breaking_pipeline.py`
+
+**Bug** (production 2026-05-02 14:18 VN, cron 13:00 UTC): 1 geo event Trump-Iran lọt vào digest path → message ship ra dạng "TỔNG HỢP TIN QUAN TRỌNG\n1️⃣ ..." (digest format) cho 1 mục duy nhất → trông lố cho user.
+
+**Root cause**: digest path `_build_geo_digest_message` không có guard "len == 1 → ship single". Mirror guard giống `important_now` path (line 658-660) chỉ áp dụng cho `all_individual` loop, không cover stage 4c geo.
+
+**Fix**: Thêm 62-line block ngay TRƯỚC stage 4c geo digest. Check `len(geo_events) == 1` + LLM available + capacity → call `generate_breaking_content` + `_deliver_single_breaking`, persist dedup, neutralize `geo_events = []` để skip digest path bên dưới. Status `sent` (giống individual flow) thay vì `sent_geo_digest`.
+
+### Fix #2: Disclaimer unified theo anh Cường mandate
+
+**Vấn đề**: FULL và SHORT có wording KHÁC NHAU (FULL dài, SHORT viết tắt "Rủi ro cao. DYOR.") → inconsistent UX khi user thấy 2 variant trong cùng 1 ngày. Asterisk markdown `*Tuyên bố...*` render không nhất quán giữa Telegram clients.
+
+**Fix**: Cả FULL + SHORT giờ dùng CÙNG plain-text wording (no asterisk):
+```
+⚠️ Tuyên bố miễn trừ trách nhiệm: Nội dung trên chỉ mang tính chất thông tin và phân tích, KHÔNG phải lời khuyên đầu tư. Tài sản mã hóa có rủi ro cao. Hãy tự nghiên cứu (DYOR) trước khi đưa ra quyết định đầu tư.
+```
+- FULL: có `\n\n---\n` separator + double newline mở đầu (article/research)
+- SHORT: chỉ thiếu separator + single newline mở đầu (breaking/digest, tiết kiệm chars)
+- Marker `DISCLAIMER_MARKER_FULL` = `DISCLAIMER_MARKER_SHORT` = signature 95 chars (emoji + cụm "thông tin và phân tích" unique)
+- Truncation budget ở `content_generator.py` thêm `-1` cho separator overhead (helper rstrip + `\n\n` + lstrip\n → +1 char vs `len(DISCLAIMER_SHORT)`)
+
+**Tests**: 2540 pass, 0 fail. Updated 6 test files cho new marker/wording. NQ05 lint OK. Ruff clean.
+
 ## [2.0.0-alpha.35] — 2026-05-02 — Wave C+ NQ05 Centralize + Heterogeneous Verifier
 
 ### Wave C+ (multi-patch session) — Fix root cause NQ05 leak class

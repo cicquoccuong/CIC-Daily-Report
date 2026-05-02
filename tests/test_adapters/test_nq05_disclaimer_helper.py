@@ -12,8 +12,9 @@ from __future__ import annotations
 from cic_daily_report.adapters.llm_adapter import append_nq05_disclaimer
 from cic_daily_report.generators.article_generator import DISCLAIMER, DISCLAIMER_SHORT
 
-# Sentinel substring used by helper's idempotency check (first non-empty line of disclaimer).
-_NQ05_SENTINEL = "⚠️ *Tuyên bố miễn trừ trách nhiệm:"
+# Sentinel substring used by helper's idempotency check.
+# Wave 0.8.7.1: disclaimer giờ plain text (no asterisk markdown).
+_NQ05_SENTINEL = "⚠️ Tuyên bố miễn trừ trách nhiệm:"
 
 
 class TestAppendBasic:
@@ -30,8 +31,10 @@ class TestAppendBasic:
     def test_short_true_uses_short_disclaimer(self) -> None:
         text = "Tin breaking ngắn."
         result = append_nq05_disclaimer(text, short=True)
-        # Short variant signature: "Rủi ro cao." present, full "---" separator absent.
-        assert "Rủi ro cao" in result
+        # Wave 0.8.7.1: SHORT giờ unified với FULL về wording, chỉ khác ở `---`
+        # separator (không có) và single newline mở đầu (FULL có double).
+        assert "rủi ro cao" in result
+        assert "DYOR" in result
         assert "---" not in result, "DISCLAIMER_SHORT phải KHÔNG chứa '---' separator"
 
     def test_short_false_uses_full_disclaimer(self) -> None:
@@ -87,7 +90,8 @@ class TestEdgeCases:
     def test_empty_text_short_still_appends(self) -> None:
         result = append_nq05_disclaimer("", short=True)
         assert _NQ05_SENTINEL in result
-        assert "Rủi ro cao" in result
+        # Wave 0.8.7.1: SHORT giờ unified với FULL → wording lowercase "rủi ro cao".
+        assert "rủi ro cao" in result
 
     def test_whitespace_only_text_appends_clean(self) -> None:
         # rstrip() in helper removes trailing whitespace before disclaimer separator.

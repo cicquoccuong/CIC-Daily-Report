@@ -91,17 +91,20 @@ def test_real_short_disclaimer_still_idempotent() -> None:
     assert result.count(DISCLAIMER_MARKER_SHORT) == 1
 
 
-def test_marker_mismatch_logs_warning() -> None:
-    """Wave C+.2 fix #4 — caller short=True but text already has FULL → WARNING.
+def test_marker_mismatch_no_longer_emits_warning() -> None:
+    """Wave 0.8.7.1: FULL và SHORT unified → marker cũng unified.
 
-    WHY: indicates upstream Path A appended FULL on what was supposed to be a
-    short-budget message. Output is NQ05-compliant (FULL still wins) but
-    operator should investigate budget overflow.
+    WHY old test expected warning: pre-Wave 0.8.7.1, FULL marker khác SHORT
+    marker → caller mix variant trên cùng text triggered "mismatch" WARNING
+    để alert ops về upstream budget overflow.
+
+    Post Wave 0.8.7.1: marker SHORT == marker FULL (cùng wording). Helper
+    detect cùng marker bất kể caller pass short=True/False → KHÔNG còn
+    "mismatch" condition. Idempotent guard vẫn skip đúng nhưng warning
+    dead-code. Test này lock contract mới: NO warning emitted.
 
     WHY direct handler spy (not caplog): core.logger.get_logger() sets
-    propagate=False on `cic.*` loggers (production isolation), so caplog's
-    root-attached handler never receives records. Attach a temporary
-    capture handler directly to `cic.llm_adapter`.
+    propagate=False on `cic.*` loggers, caplog's root handler không nhận.
     """
     import logging
 
@@ -120,7 +123,9 @@ def test_marker_mismatch_logs_warning() -> None:
     finally:
         target.removeHandler(handler)
 
-    assert result == text  # idempotent guard still wins
-    assert any("nq05_marker_mismatch" in rec.getMessage() for rec in captured), (
-        f"Expected nq05_marker_mismatch warning. Got: {[r.getMessage() for r in captured]}"
+    assert result == text  # idempotent guard still wins (single marker matches)
+    # Wave 0.8.7.1: marker unified → mismatch warning không còn trigger.
+    assert not any("nq05_marker_mismatch" in rec.getMessage() for rec in captured), (
+        f"Wave 0.8.7.1: marker unified — warning phải DEAD. Got: "
+        f"{[r.getMessage() for r in captured]}"
     )

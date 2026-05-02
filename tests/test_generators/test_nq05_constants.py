@@ -64,32 +64,24 @@ class TestBackwardCompat:
         assert DISCLAIMER_SHORT is DCS
 
 
-class TestMarkersUnique:
-    """The whole point of 2 markers: each variant has a marker NOT in the other.
+class TestMarkersUnified:
+    """Wave 0.8.7.1: FULL và SHORT giờ unified về wording (anh Cường mandate).
+    Marker cũng unified (SHORT marker == FULL marker), idempotent helper vẫn
+    work vì 1 marker bao phủ cả 2 variant.
 
-    If markers cross-match → idempotent helper would skip when caller switches
-    variant on same text → NQ05 leak.
+    Cross-contamination không còn là risk (cùng marker thì không thể
+    cross-contaminate). Backward-compat: 2 tên DISCLAIMER_MARKER_FULL +
+    DISCLAIMER_MARKER_SHORT vẫn export, alias cùng giá trị.
     """
 
-    def test_full_marker_not_in_short(self) -> None:
+    def test_full_and_short_markers_are_aliased(self) -> None:
         from cic_daily_report.generators.nq05_constants import (
             DISCLAIMER_MARKER_FULL,
-            DISCLAIMER_SHORT,
-        )
-
-        assert DISCLAIMER_MARKER_FULL not in DISCLAIMER_SHORT, (
-            "FULL marker must NOT appear in SHORT — would cause cross-contamination"
-        )
-
-    def test_short_marker_not_in_full(self) -> None:
-        from cic_daily_report.generators.nq05_constants import (
-            DISCLAIMER,
             DISCLAIMER_MARKER_SHORT,
         )
 
-        assert DISCLAIMER_MARKER_SHORT not in DISCLAIMER, (
-            "SHORT marker must NOT appear in FULL — would cause cross-contamination"
-        )
+        # Wave 0.8.7.1: cùng wording → cùng marker (alias).
+        assert DISCLAIMER_MARKER_SHORT == DISCLAIMER_MARKER_FULL
 
     def test_full_marker_present_in_full(self) -> None:
         from cic_daily_report.generators.nq05_constants import (
@@ -99,13 +91,14 @@ class TestMarkersUnique:
 
         assert DISCLAIMER_MARKER_FULL in DISCLAIMER
 
-    def test_short_marker_present_in_short(self) -> None:
+    def test_full_marker_present_in_short(self) -> None:
+        """Wave 0.8.7.1: SHORT có cùng wording với FULL → marker cũng nằm trong SHORT."""
         from cic_daily_report.generators.nq05_constants import (
-            DISCLAIMER_MARKER_SHORT,
+            DISCLAIMER_MARKER_FULL,
             DISCLAIMER_SHORT,
         )
 
-        assert DISCLAIMER_MARKER_SHORT in DISCLAIMER_SHORT
+        assert DISCLAIMER_MARKER_FULL in DISCLAIMER_SHORT
 
 
 class TestCrossContaminationGuard:
