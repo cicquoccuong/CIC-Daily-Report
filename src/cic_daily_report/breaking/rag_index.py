@@ -499,6 +499,7 @@ class RAGIndex:
         exclude_url: str | None = None,
         exclude_title: str | None = None,
         exclude_entities: set[str] | None = None,
+        entity_overlap_min: int = 2,
     ) -> list[dict[str, Any]]:
         """BM25 search with score + recency + severity filters.
 
@@ -526,6 +527,13 @@ class RAGIndex:
                 entities is excluded as same-story. Reuses
                 `dedup_manager._extract_entities` for consistency with
                 dedup pipeline (no duplicate logic).
+            entity_overlap_min: Wave 0.8.7 Bug 10 (alpha.33) — minimum
+                entity overlap to trigger same-story exclusion. Default 2
+                preserves backward compat. Caller `_get_historical_context`
+                lowers to 1 for breaking-vs-breaking comparison: when both
+                events share severity tier (both breaking), even a SINGLE
+                shared entity (e.g., "Canada") signals same story (Alex Lab
+                self-ref bug 01/05).
 
         Returns:
             List of dicts sorted by score desc, capped at top_k.
@@ -599,8 +607,11 @@ class RAGIndex:
 
                 ev_entities = _extract_entities(ev.title)
                 overlap = ev_entities & exclude_entities
-                if len(overlap) >= 2:
-                    logger.debug(f"RAG exclude entity-overlap: '{ev.title[:60]}' shared={overlap}")
+                if len(overlap) >= entity_overlap_min:
+                    logger.debug(
+                        f"RAG exclude entity-overlap (>= {entity_overlap_min}): "
+                        f"'{ev.title[:60]}' shared={overlap}"
+                    )
                     continue
             # WHY: tolerate any ISO format that fromisoformat parses;
             # malformed/empty timestamps are kept (treated as "old enough")

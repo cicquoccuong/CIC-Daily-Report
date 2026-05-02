@@ -11,9 +11,20 @@ import re
 import time
 from dataclasses import dataclass, field
 
-from cic_daily_report.adapters.llm_adapter import LLMAdapter, LLMResponse
+from cic_daily_report.adapters.llm_adapter import (
+    LLMAdapter,
+    LLMResponse,
+    append_nq05_disclaimer,
+)
 from cic_daily_report.core.error_handler import LLMError
 from cic_daily_report.core.logger import get_logger
+
+# Re-export from nq05_constants for backward compatibility (Wave C+.1, 2026-05-01).
+# Many tests + 3 src/ modules still import these via this path; do not remove.
+from cic_daily_report.generators.nq05_constants import (  # noqa: F401
+    DISCLAIMER,
+    DISCLAIMER_SHORT,
+)
 from cic_daily_report.generators.template_engine import (
     ArticleTemplate,
     render_key_metrics_table,
@@ -28,24 +39,13 @@ logger = get_logger("article_generator")
 _IS_PRODUCTION = os.getenv("GITHUB_ACTIONS") == "true"
 _TIER_RETRY_WAIT = 120  # seconds to wait before retrying a failed tier (429)
 
-# FR17: NQ05-compliant disclaimer (Vietnamese)
-DISCLAIMER = (
-    "\n\n---\n"
-    "⚠️ *Tuyên bố miễn trừ trách nhiệm:* "
-    "Nội dung trên chỉ mang tính chất thông tin và phân tích, "
-    "KHÔNG phải lời khuyên đầu tư. Tài sản mã hóa có rủi ro cao. "
-    "Hãy tự nghiên cứu (DYOR) trước khi đưa ra quyết định đầu tư."
-)
-
-# QO.07 (VD-36): Short disclaimer for breaking news — full disclaimer takes 15-20%
-# of a 300-400 word breaking message. This 1-line version preserves NQ05 compliance
-# while reducing overhead to ~3-5% of content.
-# WHY "trách nhiệm": nq05_filter.py checks for "Tuyên bố miễn trừ trách nhiệm"
-# — short disclaimer must contain this substring to pass the check.
-# WHY "Rủi ro cao": NQ05 requires explicit risk warning in all user-facing content.
-DISCLAIMER_SHORT = (
-    "\n\n⚠️ *Tuyên bố miễn trừ trách nhiệm: Không phải lời khuyên đầu tư. Rủi ro cao. DYOR.*"
-)
+# FR17/QO.07: DISCLAIMER + DISCLAIMER_SHORT moved to `nq05_constants.py`
+# (Wave C+.1, 2026-05-01). Re-imported above for backward compatibility with
+# downstream callers (tests + generators) that still import from this module.
+# WHY tách module: tránh circular import giữa llm_adapter (helper) và
+# article_generator. Xem `nq05_constants.py` docstring để biết chi tiết.
+# NOTE: KHÔNG dùng `__all__` ở đây — module re-exports DISCLAIMER + nhiều
+# symbol khác (TIERS, GeneratedArticle, ...) qua import bình thường.
 
 # NQ05 prompt-layer instructions (QĐ4 Layer 1) — v0.26.0: investor-focused + anti-filler
 NQ05_SYSTEM_PROMPT = (
@@ -543,7 +543,7 @@ async def _generate_single_article(
         )
         content = sanity.sanitized_content
 
-    content_with_disclaimer = content + DISCLAIMER
+    content_with_disclaimer = append_nq05_disclaimer(content)
     word_count = len(content_with_disclaimer.split())
     elapsed = time.monotonic() - start
 

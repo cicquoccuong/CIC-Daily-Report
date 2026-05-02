@@ -59,6 +59,12 @@ class Wave06Metrics:
     # can decide to swap quota tier or temporarily disable Wave 0.6.
     judge_unavailable: int = 0
 
+    # Wave 0.8.6.1 (alpha.34) Fix #2: counts events skipped because
+    # generate_breaking_content raised LLMError(source="breaking_content_word_gate*")
+    # — short-content gate blocked ship. Visibility = ops can spot recurring
+    # short-output sources without scraping logs.
+    breaking_skipped_short_content: int = 0
+
     # Free-form telemetry (extensible without dataclass churn)
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -120,5 +126,6 @@ class Wave06Metrics:
             and self.two_source_single == 0
             and self.two_source_conflict == 0
             and self.judge_unavailable == 0
+            and self.breaking_skipped_short_content == 0
             and not self.extra
         )

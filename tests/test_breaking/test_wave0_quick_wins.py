@@ -25,7 +25,13 @@ def _event(title="Major exchange hack", source="CoinDesk") -> BreakingEvent:
     )
 
 
-def _mock_llm(text: str = "Tin nóng: sự kiện tài sản mã hóa quan trọng.") -> AsyncMock:
+def _mock_llm(text: str | None = None) -> AsyncMock:
+    """Wave 0.8.6.1 (alpha.34) Bonus — bump default text to ≥80 words so universal
+    word-count gate (Wave 0.8.7 Bug 9) doesn't fire spuriously when WAVE_0_6_ENABLED
+    leaks into the env. Tests that explicitly need short text still pass `text=`.
+    """
+    if text is None:
+        text = "Tin nóng tài sản mã hóa: " + " ".join(["nội dung mở rộng"] * 30)
     mock = AsyncMock()
     mock.generate = AsyncMock(
         return_value=LLMResponse(text=text, tokens_used=100, model="test-model")

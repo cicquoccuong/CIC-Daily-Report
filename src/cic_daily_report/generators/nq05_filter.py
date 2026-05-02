@@ -147,6 +147,30 @@ SEMANTIC_NQ05_PATTERNS = [
     # echoes "nhà đầu tư chiến lược" as audience descriptor (from prompts). Require
     # action verb (nên/cần/hãy/phải) so we only block actual advisory, not noun use.
     r"nhà\s+đầu\s+tư\s+chiến\s+lược\s+(?:nên|cần|hãy|phải)\s+",
+    # Wave 0.8.6 (alpha.33) — Daily 11:59 SA 01/05 audit caught 4 advisory
+    # phrases addressing the reader directly (bạn/anh/chị) — implicit invest
+    # advice = NQ05 violation even when missing the literal "nên mua".
+    # WHY direct-address focus: LLM personalizes recommendations using
+    # 2nd-person pronouns to soften the advice → still recommendation.
+    #
+    # Wave 0.8.6.1 (alpha.34) Fix #5 — pronouns expanded to cover broader
+    # community phrasing (chúng ta / mọi người / nhà đầu tư / ai). Wave 0.8.6
+    # only caught 2nd-person — but cross-check found "tích lũy như chúng ta",
+    # "nhà đầu tư có thể mua tài sản", "lúc nhà đầu tư có thể mua" all slip
+    # through. Same advisory intent regardless of pronoun.
+    r"(?:tích\s+lũy|gom|mua)\s+(?:dài\s+hạn|dài\s+hơi)?\s*như\s+"
+    r"(?:bạn|anh|chị|chúng\s+ta|mọi\s+người|nhà\s+đầu\s+tư|ai)",
+    r"(?:bạn|anh|chị|chúng\s+ta|mọi\s+người|nhà\s+đầu\s+tư|ai)\s+"
+    r"(?:có\s+thể|nên|hãy)\s+mua\s+(?:được|tại|với|qua)?\s*"
+    r"(?:tài\s+sản|coin|token|BTC|ETH)",
+    r"lúc\s+(?:bạn|anh|chị|chúng\s+ta|mọi\s+người|nhà\s+đầu\s+tư|ai)\s+"
+    r"(?:có\s+thể|nên)\s+mua",
+    # Wave 0.8.6.1 (alpha.34) Fix #4 — drop branch "hơn" from pattern 4.
+    # WHY: "Giá BTC tốt hơn so với cuối tháng" is legit market commentary
+    # (price comparison, no advice). Only "để mua / cho việc mua" carry
+    # advisory intent. Removing "hơn" eliminates a frequent false positive
+    # without losing real violations.
+    r"giá\s+(?:tốt|rẻ|hấp\s+dẫn)\s+(?:để\s+mua|cho\s+việc\s+mua)",
 ]
 
 

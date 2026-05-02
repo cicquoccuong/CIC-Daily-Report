@@ -488,3 +488,67 @@ def test_ragevent_to_doc_text():
     assert ev.to_doc_text() == "Hello World"
     ev2 = RAGEvent(event_id="x", title="Hello")
     assert ev2.to_doc_text() == "Hello"
+
+
+# ---------------------------------------------------------------------------
+# Wave 0.8.7 (alpha.33) Bug 10 — entity_overlap_min param
+# ---------------------------------------------------------------------------
+
+
+def _build_idx_with_event(tmp_sqlite: Path, title: str, summary: str = "") -> RAGIndex:
+    """Build a tiny RAG index with a single old event."""
+    row = _make_row(title, _iso_hours_ago(72), summary=summary)
+    sc = _mock_sheets([row])
+    idx = RAGIndex(sheets_client=sc, sqlite_path=tmp_sqlite)
+    idx.build_from_sheets()
+    return idx
+
+
+def test_entity_overlap_min_default_2_keeps_single_overlap(tmp_sqlite: Path):
+    """Backward compat: default threshold=2 lets single-entity overlap through.
+
+    WHY uses Bitcoin: dedup_manager._extract_entities only recognizes a fixed
+    crypto/regulator vocabulary; "Bitcoin" is in that set, generic country
+    names like "Canada" are not. The functional intent (single shared entity
+    NOT triggering at min=2) is preserved.
+    """
+    idx = _build_idx_with_event(tmp_sqlite, "Bitcoin price recap historical")
+    results = idx.query(
+        query="Bitcoin recap",
+        top_k=5,
+        min_score=0.0,
+        exclude_recent_hours=0,
+        exclude_entities={"btc"},
+        # entity_overlap_min defaults to 2
+    )
+    assert len(results) >= 1
+    assert "Bitcoin" in results[0]["title"]
+
+
+def test_entity_overlap_min_1_rejects_single_overlap(tmp_sqlite: Path):
+    """Bug 10: lowering threshold to 1 rejects events sharing single entity."""
+    idx = _build_idx_with_event(tmp_sqlite, "Bitcoin price recap historical")
+    results = idx.query(
+        query="Bitcoin recap",
+        top_k=5,
+        min_score=0.0,
+        exclude_recent_hours=0,
+        exclude_entities={"btc"},
+        entity_overlap_min=1,
+    )
+    # Single entity overlap at min=1 → event excluded
+    assert len(results) == 0
+
+
+def test_entity_overlap_min_1_keeps_zero_overlap(tmp_sqlite: Path):
+    """Negative control: zero entity overlap → not excluded even at min=1."""
+    idx = _build_idx_with_event(tmp_sqlite, "Bitcoin price recap historical")
+    results = idx.query(
+        query="Bitcoin recap",
+        top_k=5,
+        min_score=0.0,
+        exclude_recent_hours=0,
+        exclude_entities={"eth"},  # not in title (BTC ≠ ETH)
+        entity_overlap_min=1,
+    )
+    assert len(results) >= 1

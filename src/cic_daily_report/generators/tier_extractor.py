@@ -18,10 +18,13 @@ import re
 import time
 from dataclasses import dataclass
 
-from cic_daily_report.adapters.llm_adapter import LLMAdapter, LLMResponse
+from cic_daily_report.adapters.llm_adapter import (
+    LLMAdapter,
+    LLMResponse,
+    append_nq05_disclaimer,
+)
 from cic_daily_report.core.logger import get_logger
 from cic_daily_report.generators.article_generator import (
-    DISCLAIMER,
     NQ05_SYSTEM_PROMPT,
     GeneratedArticle,
 )
@@ -624,7 +627,7 @@ async def extract_tier(
     # Summary does NOT get DISCLAIMER appended — it uses NQ05 post-filter in pipeline
     # Tier articles DO get DISCLAIMER for NQ05 compliance
     if config.tier != "Summary":
-        content = content + DISCLAIMER
+        content = append_nq05_disclaimer(content)
 
     word_count = len(content.split())
     elapsed = time.monotonic() - start
