@@ -1,6 +1,42 @@
 # Changelog
 
+## [2.0.0-alpha.35] — 2026-05-02 — Wave C+ NQ05 Centralize + Heterogeneous Verifier
+
+### Wave C+ (multi-patch session) — Fix root cause NQ05 leak class
+
+**Problem**: NQ05 disclaimer append phân tán ở 8 callers — caller mới quên = NQ05 leak chỉ catch bởi post-filter (đã thấy fail Wave 0.8.6). Cross-check 3 lớp Claude (Quinn/Winston/Devil) là echo chamber — miss class bug.
+
+**Fixes**:
+- **C+**: Centralize `append_nq05_disclaimer()` helper trong `llm_adapter.py` — idempotent, single source of truth. Migrate 7 callers (article/summary/research/tier_extractor/breaking×2 + RAW_DATA_TEMPLATE giữ nguyên).
+- **C+.1**: Tách DISCLAIMER constants ra `nq05_constants.py` (resolve circular import partial); add 2 markers FULL/SHORT distinct.
+- **C+.2**: Harden markers 60+52 chars (emoji ⚠️ + asterisks) — fix regression false-positive skip trên cụm Vietnamese phổ thông ("Nội dung trên Twitter...").
+- **C+.3**: NFC normalize + strip U+FE0F trong `_norm()` — fix bare ⚠ (no VS-16) miss.
+- **C+.4**: Extend `_norm()` regex strip toàn class Unicode invisible (ZWJ U+200D, ZWSP U+200B, ZWNJ U+200C, WJ U+2060, BOM U+FEFF, SHY U+00AD, FE0F) — comprehensive Unicode robustness.
+
+**New infrastructure**:
+- `scripts/heterogeneous_verify.py`: gate verifier qua OpenRouter (GPT-4o-mini default) phá Claude monoculture echo chamber. Cost guard 50 calls/session, auto-inject CLAUDE.md context.
+- `scripts/lint_nq05_pattern.py`: lint ban raw `+ DISCLAIMER` outside helper.
+- `docs/HETEROGENEOUS_VERIFIER.md`: migration plan Phase 1→3.
+- `docs/PROMPT_AS_CODE_SPEC.md`: Winston spec (queue Wave 1.0).
+- `SYSTEM_STATE.md`: hệ thống state snapshot.
+
+**Tests**: 2502 → 2541 pass (+39 new). Coverage 78.31%. Ruff clean.
+
+**Deferred (Wave C+.5/Wave 1.0)**:
+- Hidden HTML comment marker với UUID (clean architecture, không phải regex Vietnamese)
+- Fullwidth colon `：` known-gap (Gemini CJK rare case)
+- Output text NFC normalize (visual consistency)
+- Prompt-as-Code migration (Winston spec)
+
 ## [Unreleased] - 2026-05-01
+
+### Wave 0.8.6.1 — Cross-check patch 5 issues (alpha.34)
+
+Cross-check Wave 0.8.6+0.8.7 phát hiện 5 vấn đề cần patch surgical (4 trên Daily, 1 trên Breaking). Fix #1 [CRIT] thêm `cross_tier_consistency_check()` vào `numeric_sanity.py` — extract Total Market Cap / BTC Dominance / Total Volume từ mỗi tier text, normalize T/B/M về tỷ USD, flag khi max/min > 10% tolerance (Bug 1: Total MCap mâu thuẫn $1.5T L1 vs $2.65T L3 trong Daily 11:59 SA 01/05). Daily pipeline call sau Stage 3 NQ05+sanity per-tier, log error + append to errors list, KHÔNG block ship. Fix #2 [CRIT] wrap `LLMError(source="breaking_content_word_gate*")` trong cả 2 call site `breaking_pipeline.py` (primary + deferred) — dùng dedup status `skipped_short_content` (distinct với generation_failed) để tránh deferred-retry loop, increment `Wave06Metrics.breaking_skipped_short_content` cho ops visibility. Fix #3 [HIGH] đổi `check_sector_total_pct_le_100()` từ flag-only sang REPLACE — sentence chứa sector breakdown khi sum > tolerance được thay bằng VN placeholder `[Số liệu sector đang được xác minh - vui lòng tham khảo CoinGecko trực tiếp]`, return count of sentences replaced thay vì entry count. Fix #4 [HIGH] NQ05 pattern 4 bỏ branch `hơn` (false positive với "Giá BTC tốt hơn so với cuối tháng" — legit market commentary). Fix #5 [HIGH] NQ05 patterns 1-3 mở rộng pronoun từ `(?:bạn|anh|chị)` thành `(?:bạn|anh|chị|chúng ta|mọi người|nhà đầu tư|ai)` — catch "tích lũy như chúng ta", "nhà đầu tư có thể mua tài sản", "lúc nhà đầu tư có thể mua". Bonus: bump `_mock_llm` default text trong `test_content_generator.py` + `test_wave0_quick_wins.py` lên ≥80 từ (đồng bộ với pattern fixture trong test_wave084_quality_fix.py — tránh universal word-gate firing spuriously). Tests: 2464 → 2484 (+20). Ruff clean.
+
+### Wave 0.8.6 + 0.8.7 — Daily sanity guards + Breaking quality fixes (alpha.33)
+
+Combined two surgical waves on top of Wave 0.8.5. Wave 0.8.6 hardens the Daily pipeline against post-generation numeric regressions seen in Daily 11:59 SA 01/05: new `check_negative_value()` helper strips lines with impossible negative values (e.g., `Total_Fees: -40.62B USD`), new `check_sector_total_pct_le_100()` flag-only helper warns when sector share % values exceed a 105% rounding tolerance, and 4 new direct-address NQ05 patterns (`tích lũy như bạn`, `bạn có thể mua`, `lúc bạn có thể mua`, `giá tốt hơn`) catch implicit advice using 2nd-person pronouns. Wave 0.8.7 closes 3 breaking-pipeline holes from the 01/05 batch: Bug 9 universal F1 word-count gate fires on every path (not only judge-retry) when Wave 0.6 is enabled — preventing 1-paragraph leaks like the Coinbase tin (72 words, judge approved 1st pass); Bug 10 `RAGIndex.query()` accepts `entity_overlap_min` parameter (default 2 for backward compat) and `_get_historical_context()` lowers it to 1 for breaking-vs-breaking comparison so a single shared entity (Alex Lab self-ref bug) triggers exclusion; Bug 11 verified `WAVE_0_6_DATE_BLOCK` env flag wiring is intact at `content_generator.py:333` — operator must set `WAVE_0_6_DATE_BLOCK=true` in GH Secrets to activate future-date stripping. Tests: 2453 → 2464 PASS (+11 new). Coverage 78.42%. Ruff clean.
 
 ### Wave 0.8.5 — Devil cross-check patches (alpha.32)
 

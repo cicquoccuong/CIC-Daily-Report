@@ -15,13 +15,17 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from cic_daily_report.adapters.llm_adapter import LLMAdapter, LLMResponse
+from cic_daily_report.adapters.llm_adapter import (
+    LLMAdapter,
+    LLMResponse,
+    append_nq05_disclaimer,
+)
 from cic_daily_report.core.logger import get_logger
 from cic_daily_report.generators.article_generator import (
-    DISCLAIMER,
     NQ05_SYSTEM_PROMPT,
     GeneratedArticle,
 )
+from cic_daily_report.generators.nq05_constants import DISCLAIMER
 from cic_daily_report.generators.nq05_filter import check_and_fix
 
 logger = get_logger("summary_generator")
@@ -93,7 +97,7 @@ async def generate_bic_summary(
             f"BIC Chat summary too short ({raw_word_count} words), "
             f"LLM may have returned empty response"
         )
-    content = filtered.content + DISCLAIMER
+    content = append_nq05_disclaimer(filtered.content)
     word_count = len(content.split())
     elapsed = time.monotonic() - start
 

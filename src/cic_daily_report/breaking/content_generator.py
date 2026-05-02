@@ -17,13 +17,12 @@ try:
 except ImportError:
     trafilatura = None  # type: ignore[assignment]
 
+from cic_daily_report.adapters.llm_adapter import append_nq05_disclaimer
 from cic_daily_report.breaking.event_detector import BreakingEvent
 from cic_daily_report.core.config import _wave_0_6_date_block_enabled, _wave_0_6_enabled
 from cic_daily_report.core.logger import get_logger
-from cic_daily_report.generators.article_generator import (
-    DISCLAIMER_SHORT,
-    NQ05_SYSTEM_PROMPT,
-)
+from cic_daily_report.generators.article_generator import NQ05_SYSTEM_PROMPT
+from cic_daily_report.generators.nq05_constants import DISCLAIMER_SHORT
 from cic_daily_report.generators.nq05_filter import check_and_fix
 from cic_daily_report.generators.numeric_sanity import apply_all_numeric_guards
 from cic_daily_report.generators.text_utils import truncate_to_limit
@@ -467,6 +466,12 @@ def _get_historical_context(
             # with different URLs but near-identical content.
             exclude_title=(event.title or None),
             exclude_entities=(title_entities or None),
+            # Wave 0.8.7 Bug 10 (alpha.33): lower entity overlap threshold to
+            # 1 here. Both current event and indexed events are "breaking"
+            # severity; a single shared entity (Alex Lab "Canada" self-ref
+            # 01/05) is enough signal that we're looking at the same story
+            # being recycled. Backward compat preserved at the caller default.
+            entity_overlap_min=1,
         )
     except Exception as e:
         # WHY catch broad: RAG failure (sheets down, sqlite corrupt, BM25
@@ -901,6 +906,27 @@ async def generate_breaking_content(
             retry=False,
         )
 
+    # Wave 0.8.7 (alpha.33) Bug 9 — UNIVERSAL gate: tin Coinbase 1-đoạn
+    # (01/05) lọt qua because judge approved 1st-pass + word_count=72. F1
+    # only fired on retry path. Now: when Wave 0.6 is enabled (judge available
+    # / fail-open / skip), enforce >=80 words for any final output.
+    # WHY only when Wave 0.6 ON: legacy non-Wave-0.6 paths intentionally allow
+    # short content (raw fallback, tests pre-Wave-0.6). Once Wave 0.6 is
+    # enabled, the system promises a minimum 2-paragraph quality bar.
+    if not judge_retried and _wave_0_6_enabled() and word_count < 80:
+        from cic_daily_report.core.error_handler import LLMError
+
+        logger.error(
+            f"Wave 0.8.7 Bug 9 UNIVERSAL GATE: word_count={word_count} <80 "
+            f"(judge_retried=False, judge_skipped={judge_skipped}, "
+            f"judge_unavailable_seen={judge_unavailable_seen}) — refusing to ship"
+        )
+        raise LLMError(
+            f"content too short on universal gate ({word_count} words)",
+            source="breaking_content_word_gate_universal",
+            retry=False,
+        )
+
     logger.info(f"Breaking content generated: {word_count} words via {model_used}")
 
     # Wave 0.6 Story 0.6.3/0.6.4 (alpha.21/22): full numeric guard suite.
@@ -956,8 +982,15 @@ async def generate_breaking_content(
     # QO.07 (VD-36): Breaking news uses short disclaimer — full version takes
     # 15-20% of a 300-400 word message. Daily articles keep full DISCLAIMER.
     source_html = _format_source_link(event.source, event.url)
-    suffix = f"\n\n🔗 {source_html}" + DISCLAIMER_SHORT
-    body_limit = BREAKING_MAX_CHARS - len(suffix)
+    # WHY suffix calc keeps DISCLAIMER_SHORT len: append_nq05_disclaimer adds the
+    # disclaimer at end via centralized helper (Wave C+ NQ05 single source);
+    # truncation budget unchanged so existing limit tests + NQ05-never-cut
+    # invariant remain valid (see tests/test_breaking/test_content_generator_limits.py).
+    source_block = f"\n\n🔗 {source_html}"
+    # WHY len(source_block) + len(DISCLAIMER_SHORT): truncation budget must reserve
+    # room for both source link AND disclaimer (appended via helper). Avoids raw
+    # `+ DISCLAIMER_SHORT` concat which the NQ05 linter forbids.
+    body_limit = BREAKING_MAX_CHARS - len(source_block) - len(DISCLAIMER_SHORT)
     # BUG-15: Floor at 500 chars — if suffix is extremely long, body_limit
     # could go negative, causing text[:negative] → empty string → content lost.
     if body_limit < 500:
@@ -967,7 +1000,7 @@ async def generate_breaking_content(
         logger.warning(
             f"Breaking content body truncated to fit suffix: body_limit={body_limit} chars"
         )
-    content_with_disclaimer = clean_content + suffix
+    content_with_disclaimer = append_nq05_disclaimer(clean_content + source_block, short=True)
 
     return BreakingContent(
         event=event,
@@ -1279,22 +1312,24 @@ async def generate_digest_content(
     # mandatory DISCLAIMER is never cut off by the character limit.
     # QO.07 (VD-36): Digest is breaking news → use short disclaimer.
     links = "\n".join(f"🔗 {_format_source_link(e.source, e.url)}" for e in events if e.url)
-    suffix = f"\n\n{links}" + DISCLAIMER_SHORT
-    body_limit = BREAKING_MAX_CHARS - len(suffix)
+    links_block = f"\n\n{links}"
+    # Budget = total - links_block - disclaimer (helper appends disclaimer at end).
+    body_limit = BREAKING_MAX_CHARS - len(links_block) - len(DISCLAIMER_SHORT)
     # BUG-15: Floor at 500 chars — too many event links can make suffix huge,
     # pushing body_limit negative → text[:negative] → empty body → content lost.
     # When this happens, truncate the links list to fit.
     if body_limit < 500:
         max_link_chars = BREAKING_MAX_CHARS - 500 - len(DISCLAIMER_SHORT)
         links = links[:max_link_chars].rsplit("\n", 1)[0]  # Cut at last complete link
-        suffix = f"\n\n{links}" + DISCLAIMER_SHORT
-        body_limit = BREAKING_MAX_CHARS - len(suffix)
+        links_block = f"\n\n{links}"
+        body_limit = BREAKING_MAX_CHARS - len(links_block) - len(DISCLAIMER_SHORT)
     clean_content, was_truncated = truncate_to_limit(clean_content, body_limit)
     if was_truncated:
         logger.warning(
             f"Digest content body truncated to fit suffix: body_limit={body_limit} chars"
         )
-    content_with_links = clean_content + suffix
+    # Wave C+ NQ05 centralization: disclaimer via helper (single source of truth).
+    content_with_links = append_nq05_disclaimer(clean_content + links_block, short=True)
 
     logger.info(f"Digest generated: {len(events)} events via {model_used}")
 

@@ -16,13 +16,15 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from cic_daily_report.adapters.llm_adapter import LLMAdapter, LLMResponse
+from cic_daily_report.adapters.llm_adapter import (
+    LLMAdapter,
+    LLMResponse,
+    append_nq05_disclaimer,
+)
 from cic_daily_report.collectors.research_data import ResearchData
 from cic_daily_report.core.logger import get_logger
-from cic_daily_report.generators.article_generator import (
-    DISCLAIMER,
-    GenerationContext,
-)
+from cic_daily_report.generators.article_generator import GenerationContext
+from cic_daily_report.generators.nq05_constants import DISCLAIMER
 from cic_daily_report.generators.text_utils import truncate_to_limit
 
 logger = get_logger("research_generator")
@@ -155,7 +157,7 @@ async def generate_research_article(
             f"Research article body truncated to fit DISCLAIMER: "
             f"{len(response.text.strip())} -> {len(body)} chars"
         )
-    content = body + DISCLAIMER
+    content = append_nq05_disclaimer(body)
 
     # WHY recalculate after truncation: word_count must reflect final delivered content
     word_count = len(content.split())

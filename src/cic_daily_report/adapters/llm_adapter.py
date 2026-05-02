@@ -12,6 +12,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 
 import httpx
@@ -20,7 +21,30 @@ from cic_daily_report.core.error_handler import LLMError
 from cic_daily_report.core.logger import get_logger
 from cic_daily_report.core.quota_manager import QuotaManager
 
+# WHY no top-level import of `generators.nq05_constants`: pulling it in would
+# trigger `generators/__init__.py` which eagerly imports article_generator,
+# and article_generator imports back from adapters.llm_adapter → cycle. Helper
+# `append_nq05_disclaimer` uses lazy import inside the function instead.
+
 logger = get_logger("llm_adapter")
+
+# Wave C+.4 (2026-05-01): toàn class invisible/format chars có thể bị LLM
+# inject vào text → bypass marker substring check trong append_nq05_disclaimer.
+# Strip ở normalization step để idempotent guard hoạt động regardless of
+# zero-width injection. Codepoints chọn theo tần suất LLM emit + nguy cơ
+# bypass marker (xem _norm() doc-block để rationale chi tiết).
+_INVISIBLE_CHARS_RE = re.compile(
+    "["
+    "​"  # ZERO WIDTH SPACE
+    "‌"  # ZERO WIDTH NON-JOINER
+    "‍"  # ZERO WIDTH JOINER
+    "⁠"  # WORD JOINER
+    "﻿"  # ZERO WIDTH NO-BREAK SPACE (BOM)
+    "­"  # SOFT HYPHEN
+    "️"  # VARIATION SELECTOR-16
+    "]"
+)
+
 
 # PR#1 Emergency Fix: Hard wall-clock timeout per provider call.
 # WHY 90s: Master Analysis took 84s in the last successful Gemini Flash-Lite run (#58).
@@ -802,3 +826,115 @@ async def _call_gemini(
     return LLMResponse(
         text=text, tokens_used=tokens, model=provider.model, finish_reason=finish_reason
     )
+
+
+def append_nq05_disclaimer(text: str, *, short: bool = False) -> str:
+    """Append NQ05 disclaimer idempotently. Single source of truth.
+
+    WHY: NQ05 disclaimer phải có trong MỌI user-facing content. Trước đây append
+    manual ở 8 nơi → caller mới quên = NQ05 leak chỉ catch bởi post-filter.
+    Wave C+ centralize: all callers gọi helper này.
+
+    Idempotent (Wave C+.1, 2026-05-01): scan TOÀN text cho 2 marker UNIQUE per
+    variant. Nếu BẤT KỲ marker nào (FULL hoặc SHORT) đã tồn tại → skip append.
+
+    WHY UNIQUE markers (fix #1 — cross-contamination):
+        Cũ dùng signature 200 chars common prefix → FULL signature có thể match
+        một phần SHORT (cùng "⚠️ *Tuyên bố miễn trừ trách nhiệm:") → caller mix
+        FULL+SHORT bị skip nhầm → NQ05 leak. Mới: marker FULL = "Nội dung trên"
+        (chỉ trong FULL), marker SHORT = "Không phải lời khuyên đầu tư. Rủi ro
+        cao. DYOR" (chỉ trong SHORT, case-sensitive khác FULL "KHÔNG").
+
+    WHY scan toàn text (fix #2 — tail-only miss):
+        Cũ chỉ check tail(1500). Research article ~15K chars: nếu LLM
+        hallucinate disclaimer ở giữa (vị trí 8K-13K) → tail miss → double
+        append. Mới scan entire text — marker đủ unique nên zero false-positive.
+
+    WHY NFC normalize trước check (Wave C+.3, Devil concern #2):
+        LLM thỉnh thoảng emit ⚠️ thiếu Variation Selector-16 (U+FE0F) →
+        chỉ còn U+26A0 ⚠ → marker substring (có FE0F) sẽ KHÔNG match →
+        double-append silently. Tương tự cho fullwidth colon (U+FF1A) hoặc
+        NBSP (U+00A0). NFC unifies các sequence này. Chỉ normalize cho
+        substring check — output giữ nguyên text caller (surgical change).
+
+    WHY check CẢ HAI markers (FULL + SHORT) bất kể `short` param:
+        Caller chuyển từ short=False sang short=True (hoặc ngược) trên cùng text
+        → vẫn KHÔNG được append biến thể thứ hai. NQ05 chỉ cần 1 disclaimer.
+
+    WHY rstrip + "\\n\\n" + lstrip(disclaimer): các constant DISCLAIMER tự bắt đầu
+    bằng "\\n\\n" → nối thẳng sẽ tạo "\\n\\n\\n\\n". rstrip text + thêm đúng
+    "\\n\\n" + lstrip leading "\\n" của disclaimer = chính xác 1 blank-line gap,
+    deterministic + ngắn gọn cho test assertion.
+
+    Args:
+        text: content đã qua post-processing (NQ05 filter, numeric guards, truncation).
+        short: True dùng DISCLAIMER_SHORT (breaking news), False dùng DISCLAIMER full.
+
+    Returns:
+        Text with disclaimer appended, separated by exactly one blank line.
+    """
+    # WHY lazy import (Wave C+.1): nq05_constants tự nó là module thuần (không
+    # depend cic_daily_report.* khác), nhưng path `cic_daily_report.generators.
+    # nq05_constants` phải đi qua `generators/__init__.py` — file này eager-
+    # import article_generator → article_generator import từ adapters.llm_adapter
+    # → cycle khi llm_adapter còn đang init. Lazy import (deferred tới lúc gọi
+    # helper) phá cycle vì lúc đó llm_adapter đã init xong.
+    from cic_daily_report.generators.nq05_constants import (
+        DISCLAIMER,
+        DISCLAIMER_MARKER_FULL,
+        DISCLAIMER_MARKER_SHORT,
+        DISCLAIMER_SHORT,
+    )
+
+    disclaimer = DISCLAIMER_SHORT if short else DISCLAIMER
+
+    # Wave C+.3 → C+.4: normalize Unicode variants trước khi check marker để
+    # chặn bypass. Áp dụng 2 lớp:
+    #   (1) NFC normalize — unify decomposed combining sequences (e.g.
+    #       Vietnamese diacritics có 2 form: precomposed vs decomposed).
+    #   (2) Strip TOÀN CLASS invisible/format chars — không chỉ FE0F:
+    #         U+200B ZERO WIDTH SPACE
+    #         U+200C ZERO WIDTH NON-JOINER
+    #         U+200D ZERO WIDTH JOINER
+    #         U+2060 WORD JOINER (defensive — invisible)
+    #         U+FEFF ZERO WIDTH NO-BREAK SPACE (BOM)
+    #         U+00AD SOFT HYPHEN
+    #         U+FE0F VARIATION SELECTOR-16 (emoji presentation)
+    #       LLM hallucinate ZWJ/ZWSP/BOM injection vẫn bypass marker check
+    #       nếu chỉ strip FE0F → double append. Đóng cửa toàn class invisible
+    #       chars để tránh Wave C+.5 reactive patch tiếp.
+    # WHY chỉ normalize cho check (không normalize output): ta KHÔNG muốn
+    # chỉnh sửa text gốc của caller (nguyên tắc Surgical Changes — chỉ
+    # check, không transform output). Output giữ nguyên text gốc.
+    def _norm(s: str) -> str:
+        # Strip toàn class invisible/format chars LLM có thể inject.
+        # Substring match phải succeed bất kể text bị inject char vô hình nào.
+        return _INVISIBLE_CHARS_RE.sub("", unicodedata.normalize("NFC", s))
+
+    text_norm = _norm(text)
+    full_norm = _norm(DISCLAIMER_MARKER_FULL)
+    short_norm = _norm(DISCLAIMER_MARKER_SHORT)
+    text_has_full = full_norm in text_norm
+    text_has_short = short_norm in text_norm
+
+    if text_has_full or text_has_short:
+        # Wave C+.2 fix #4 — observability for caller variant mismatch.
+        # WHY: Pipeline Path A appends FULL early, Path B truncates and re-calls
+        # with short=True intending SHORT. Idempotent guard correctly skips
+        # (single disclaimer wins) but operator should know FULL stayed in a
+        # short-budget message — symptom of upstream budget overflow that the
+        # truncation step failed to undo. Log WARNING (not ERROR — output is
+        # still NQ05-compliant, just longer than ideal for the channel).
+        if short and text_has_full and not text_has_short:
+            logger.warning(
+                "nq05_marker_mismatch caller=short text_has=FULL "
+                "— possible budget overflow upstream"
+            )
+        elif not short and text_has_short and not text_has_full:
+            logger.warning(
+                "nq05_marker_mismatch caller=full text_has=SHORT "
+                "— possible upstream variant misroute"
+            )
+        return text
+
+    return text.rstrip() + "\n\n" + disclaimer.lstrip("\n")
