@@ -302,6 +302,301 @@ def check_year_sanity(
     return content, issues
 
 
+# ---------------------------------------------------------------------------
+# Wave 0.8.6 — Daily sanity guards (alpha.33)
+#
+# WHY: Daily 11:59 SA 01/05 audit caught:
+#   * "Total_Fees: -40.62B USD" — fee CANNOT be negative; LLM math error
+#   * "Layer 1: 140%, DeFi: 30%" — sector % >100 means LLM misread cumulative
+#     vs share. >105% (small tolerance for rounding) is fabrication.
+# Both are post-generation regressions; we LOG + remove for negative values
+# (clearly wrong), only LOG (no strip) for sector totals (sentence may have
+# legit context worth preserving for ops to inspect).
+# ---------------------------------------------------------------------------
+
+# Match "<field>: -<digits>" where field is a known monetary/volume label.
+# Group 1 = sign (must be "-" for violation), group 2 = numeric prefix.
+# WHY non-greedy + colon required: avoid false-positive on prose like
+# "Total Fees giảm 40%" (no colon → not a "field: value" claim).
+_NEGATIVE_VALUE_RE_TEMPLATE = r"{field}\s*:\s*(-)\s*(\d[\d.,]*)"
+
+# Sector share regex: "<sector>: <num>%". Allows decimals + VN/EN locale.
+# WHY \b around sector name: prevent matching inside other words.
+_SECTOR_PCT_RE = re.compile(
+    r"\b(Layer\s*1|Layer\s*2|DeFi|GameFi|NFT|Stablecoin[s]?|Memecoin[s]?|"
+    r"AI|RWA|Infrastructure|Privacy|Oracle[s]?|DEX|CEX|"
+    r"Lending|Yield|Bridge[s]?|Gaming|Meme)\s*:\s*(\d+(?:[.,]\d+)?)\s*%",
+    re.IGNORECASE,
+)
+
+# WHY 105 not 100: rounding/display variance can push a legitimate sum to
+# 100.5-103%. Above 105% means real LLM error (almost certainly fabricated
+# share numbers).
+_SECTOR_PCT_TOTAL_TOLERANCE = 105.0
+
+
+def check_negative_value(content: str, field_names: list[str]) -> tuple[str, int]:
+    """Detect fields with negative values + remove the containing sentence.
+
+    Args:
+        content: Generated article text.
+        field_names: Field labels to scan (e.g., ["Total_Fees", "Total Fees"]).
+
+    Returns:
+        (cleaned_content, num_removed). cleaned_content has sentences
+        containing the violation removed (line-level — LLM bullet/table rows).
+        num_removed = count of distinct violations found.
+
+    WHY remove (not just flag): a fee value of "-40.62B" is so visibly wrong
+    that shipping it embarrasses the brand. Better to drop the sentence than
+    publish nonsense.
+    """
+    if not content or not field_names:
+        return content, 0
+
+    num_removed = 0
+    cleaned = content
+    for field_name in field_names:
+        # WHY re.escape: field names may contain regex meta (underscores OK,
+        # but we keep escape for safety in case future fields add dots/parens).
+        field_pattern = _NEGATIVE_VALUE_RE_TEMPLATE.format(field=re.escape(field_name))
+        pattern = re.compile(field_pattern, re.IGNORECASE)
+        matches = pattern.findall(cleaned)
+        if not matches:
+            continue
+        num_removed += len(matches)
+        logger.warning(
+            f"daily_sanity_negative: removed {len(matches)} sentence(s) with "
+            f"negative '{field_name}' (e.g., {matches[0]})"
+        )
+        # Remove entire LINE (paragraph row) containing the match — same
+        # philosophy as nq05_filter._remove_sentences_with_pattern.
+        new_lines: list[str] = []
+        for line in cleaned.split("\n"):
+            if pattern.search(line):
+                continue  # drop offending line
+            new_lines.append(line)
+        cleaned = "\n".join(new_lines)
+    return cleaned, num_removed
+
+
+# Wave 0.8.6.1 (alpha.34) Fix #3 — placeholder text replacing fabricated sector data.
+# WHY user-facing VN: sector breakdown shipped to Telegram is in Vietnamese; placeholder
+# must read naturally to a no-code operator + signal the operator to verify externally.
+_SECTOR_PLACEHOLDER = "[Số liệu sector đang được xác minh - vui lòng tham khảo CoinGecko trực tiếp]"
+
+
+def check_sector_total_pct_le_100(
+    content: str, tolerance: float = _SECTOR_PCT_TOTAL_TOLERANCE
+) -> tuple[str, int]:
+    """Flag + REPLACE sentences with sector share % values when sum > tolerance.
+
+    Args:
+        content: Generated article text.
+        tolerance: Max allowed sum (default 105.0 — small rounding buffer).
+
+    Returns:
+        (cleaned_content, num_sentences_replaced). num_sentences_replaced =
+        count of distinct sentences (split by `[.!?\n]`) where at least one
+        sector token was found and the totals exceeded tolerance.
+
+    WHY replace (Wave 0.8.6.1 Fix #3): Wave 0.8.6 only logged + kept fabricated
+    "Layer 1: 140%, DeFi: 30%" output → bug shipped to BIC Chat. Now we replace
+    every sentence containing a sector breakdown with a clear VN placeholder so
+    user knows numbers are unverified instead of trusting hallucination.
+    Sum-based gating (only replace when total > tolerance) preserves legitimate
+    standalone references (single "DeFi: 30%" mid-prose stays intact).
+    """
+    if not content:
+        return content, 0
+
+    matches = _SECTOR_PCT_RE.findall(content)
+    if not matches:
+        return content, 0
+
+    total = 0.0
+    for _name, pct_str in matches:
+        try:
+            total += float(pct_str.replace(",", "."))
+        except ValueError:
+            continue
+
+    if total <= tolerance:
+        return content, 0
+
+    logger.warning(
+        f"daily_sanity_sector_total: sector %% sum = {total:.1f} > "
+        f"tolerance {tolerance:.0f}; entries={len(matches)} "
+        f"(samples: {matches[:3]}) — REPLACING with placeholder"
+    )
+
+    # Split into sentences via newline OR sentence-ending punctuation; we iterate
+    # tokens preserving separators so re-joining maintains whitespace exactly.
+    # WHY this approach (vs nq05 _remove_sentences_with_pattern): we need to
+    # REPLACE not REMOVE so callers + downstream readers still see something
+    # in the position where sector breakdown used to be.
+    pieces = re.split(r"([.!?\n])", content)
+    replaced = 0
+    out_parts: list[str] = []
+    placeholder_already = False
+    for piece in pieces:
+        if _SECTOR_PCT_RE.search(piece):
+            replaced += 1
+            # WHY collapse consecutive replacements: avoid printing the placeholder
+            # 3-4 times in a row when LLM lists sectors comma-separated across one
+            # sentence chunk that we replace once anyway.
+            if not placeholder_already:
+                out_parts.append(_SECTOR_PLACEHOLDER)
+                placeholder_already = True
+        else:
+            out_parts.append(piece)
+            # Reset placeholder flag once we leave the contiguous violating zone
+            # (any non-empty non-separator piece signals new sentence territory).
+            if piece.strip() and piece not in {".", "!", "?", "\n"}:
+                placeholder_already = False
+    cleaned = "".join(out_parts)
+    return cleaned, replaced
+
+
+# ---------------------------------------------------------------------------
+# Wave 0.8.6.1 (alpha.34) Fix #1 — Cross-tier macro consistency check
+#
+# WHY: Daily 11:59 SA 01/05 audit caught Total Market Cap mismatch — Tier L1
+# said $1.5T, Tier L3 said $2.65T (same run, same data source). Symptom of
+# LLM fabricating a number in one tier while another tier copied real value.
+# Cross-tier check catches divergence > tolerance before ship.
+# ---------------------------------------------------------------------------
+
+# Regex extract macros. Group 1 = numeric value, group 2 = optional T/B/M ratio.
+# WHY case-insensitive + VN/EN: tier articles are VN but may have inline EN labels.
+_TOTAL_MARKET_CAP_RE = re.compile(
+    r"(?:Total\s+Market\s+Cap|Tổng\s+vốn\s+hóa)[:\s]+\$?\s*"
+    r"(\d+(?:[.,]\d+)?)\s*([TBMtbm])\b",
+    re.IGNORECASE,
+)
+
+_BTC_DOMINANCE_RE = re.compile(
+    r"(?:BTC\.?D(?:ominance)?|Dominance.{0,20}?BTC)[:\s]+"
+    r"(\d+(?:[.,]\d+)?)\s*%",
+    re.IGNORECASE,
+)
+
+_TOTAL_VOLUME_RE = re.compile(
+    r"(?:Total\s+Volume|Tổng\s+(?:khối\s+lượng|volume))[:\s]+\$?\s*"
+    r"(\d+(?:[.,]\d+)?)\s*([TBMtbm])\b",
+    re.IGNORECASE,
+)
+
+
+def _to_billions(value_str: str, suffix: str) -> float | None:
+    """Convert "(1.5, 'T')" → 1500.0 (billion USD). Returns None on parse fail."""
+    try:
+        val = float(value_str.replace(",", "."))
+    except ValueError:
+        return None
+    suffix_lc = suffix.lower()
+    if suffix_lc == "t":
+        return val * 1000.0  # Trillion → billion
+    if suffix_lc == "b":
+        return val
+    if suffix_lc == "m":
+        return val / 1000.0  # Million → billion
+    return None
+
+
+def _extract_first_macro_billions(text: str, regex: re.Pattern[str]) -> float | None:
+    """Find first match of macro regex with T/B/M suffix, return value in billions.
+
+    WHY first-only (not all): tier articles typically state macro once at top.
+    If LLM repeats with different value, that's a self-contradiction we'll
+    catch separately — for cross-tier we only need anchor value.
+    """
+    m = regex.search(text)
+    if not m:
+        return None
+    # Macro regexes have value at group 1 and ratio at group 2.
+    return _to_billions(m.group(1), m.group(2))
+
+
+def _extract_first_pct(text: str, regex: re.Pattern[str]) -> float | None:
+    """Find first percentage match (e.g., BTC.D 60.5%). Returns None if not found."""
+    m = regex.search(text)
+    if not m:
+        return None
+    try:
+        return float(m.group(1).replace(",", "."))
+    except ValueError:
+        return None
+
+
+def cross_tier_consistency_check(
+    articles: dict[str, str],
+    tolerance_pct: float = 10.0,
+) -> tuple[dict[str, str], list[str]]:
+    """Check macro numbers (Market Cap, BTC.D, Total Volume) consistency across tiers.
+
+    Args:
+        articles: Mapping {tier_name: tier_text}. At least 2 entries needed for cross-check.
+        tolerance_pct: Allowed deviation between max and min (default 10%). If
+            ratio max/min > 1 + tolerance_pct/100 → violation logged.
+
+    Returns:
+        (articles_unchanged, violations). articles passes through unchanged
+        because cross-tier inconsistency cannot be safely auto-fixed without
+        knowing which tier holds the truth — only ops can decide. violations
+        is a list of human-readable strings, one per detected metric mismatch.
+
+    WHY no auto-fix: blindly picking one tier's value risks promoting the wrong
+    number. Caller (daily_pipeline) logs to NHAT_KY_PIPELINE so ops can audit.
+    Bug 1 (Daily 11:59 SA 01/05): Total MCap shown as $1.5T vs $2.65T across
+    tiers. Both could be wrong; only ops can verify against CoinGecko.
+    """
+    violations: list[str] = []
+    if len(articles) < 2:
+        return articles, violations
+
+    metric_specs = [
+        ("Total Market Cap", _TOTAL_MARKET_CAP_RE, _extract_first_macro_billions, "B USD"),
+        ("BTC Dominance", _BTC_DOMINANCE_RE, _extract_first_pct, "%"),
+        ("Total Volume", _TOTAL_VOLUME_RE, _extract_first_macro_billions, "B USD"),
+    ]
+
+    for label, regex, extractor, unit in metric_specs:
+        per_tier: dict[str, float] = {}
+        for tier, text in articles.items():
+            val = extractor(text, regex)
+            if val is not None and val > 0:
+                per_tier[tier] = val
+        if len(per_tier) < 2:
+            continue
+        vmax = max(per_tier.values())
+        vmin = min(per_tier.values())
+        if vmin <= 0:
+            continue
+        ratio = vmax / vmin
+        threshold = 1.0 + tolerance_pct / 100.0
+        if ratio > threshold:
+            # Identify the outlier tier(s): those whose value deviates most
+            # from the median. WHY median: more robust than mean if 1 tier is
+            # wildly wrong (e.g., $1.5T vs $2.6T x4 tiers).
+            sorted_vals = sorted(per_tier.values())
+            median = sorted_vals[len(sorted_vals) // 2]
+            outliers = [
+                f"{t}=${v:.1f}{unit}"
+                for t, v in per_tier.items()
+                if abs(v - median) / median > tolerance_pct / 100.0
+            ]
+            msg = (
+                f"cross_tier_inconsistency metric={label} "
+                f"min={vmin:.2f}{unit} max={vmax:.2f}{unit} ratio={ratio:.2f}x "
+                f"tolerance={tolerance_pct}% outliers={outliers}"
+            )
+            violations.append(msg)
+            logger.error(msg)
+
+    return articles, violations
+
+
 def apply_all_numeric_guards(
     content: str,
     btc_snapshot: float | None = None,

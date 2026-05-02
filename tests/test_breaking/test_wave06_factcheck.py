@@ -44,8 +44,16 @@ def _event(title: str = "Major exchange hack", summary: str = "") -> BreakingEve
     )
 
 
-def _mock_llm(text: str = "Tin nóng: tài sản mã hóa bị hack 100 triệu USD."):
-    """Mock LLMAdapter — generate() + judge_factual_claims()."""
+def _mock_llm(text: str | None = None):
+    """Mock LLMAdapter — generate() + judge_factual_claims().
+
+    Wave 0.8.7 Bug 9 (alpha.33): default text bumped to ≥80 words so the
+    universal word-count gate (active when Wave 0.6 is enabled) does not
+    block these tests, which want to exercise other behavior (RAG inject,
+    judge, etc.). Tests needing short content pass `text=` explicitly.
+    """
+    if text is None:
+        text = "Tin nóng tài sản mã hóa: " + " ".join(["nội dung mở rộng"] * 30)
     mock = AsyncMock()
     mock.generate = AsyncMock(
         return_value=LLMResponse(text=text, tokens_used=100, model="test-model")

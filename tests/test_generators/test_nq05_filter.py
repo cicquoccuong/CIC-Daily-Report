@@ -522,3 +522,111 @@ class TestBatchFilter:
 
     def test_empty_list(self):
         assert batch_filter([]) == []
+
+
+class TestWave086SemanticPatterns:
+    """Wave 0.8.6 (alpha.33) — 4 new direct-address NQ05 patterns from
+    Daily 11:59 SA 01/05 audit. LLM softens advice with 2nd-person pronouns
+    (bạn/anh/chị) — still recommendation, still NQ05 violation.
+    """
+
+    def test_pattern_tich_luy_nhu_ban(self):
+        # "tích lũy dài hạn như bạn"
+        content = "Đây là cơ hội tích lũy dài hạn như bạn nhà đầu tư." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "tích lũy dài hạn như bạn" not in result.content.lower()
+
+    def test_pattern_ban_co_the_mua(self):
+        # "bạn có thể mua được tài sản"
+        content = "Bạn có thể mua được tài sản BTC tại đây." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "bạn có thể mua được tài sản" not in result.content.lower()
+
+    def test_pattern_luc_ban_co_the_mua(self):
+        # "lúc bạn có thể mua được"
+        content = "Đây chính là lúc bạn có thể mua được giá tốt." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "lúc bạn có thể mua" not in result.content.lower()
+
+    def test_pattern_gia_tot_de_mua(self):
+        # Wave 0.8.6.1 (alpha.34) Fix #4: pattern 4 narrowed — "hơn" branch
+        # removed (false positive on legit market commentary). Only "để mua"
+        # / "cho việc mua" still trigger.
+        content = "Đây là giá tốt để mua vào." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "giá tốt để mua" not in result.content.lower()
+
+    def test_pattern_gia_hap_dan_cho_viec_mua(self):
+        # Wave 0.8.6.1 Fix #4 — "cho việc mua" branch still fires
+        content = "Giá hấp dẫn cho việc mua vào BTC." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "giá hấp dẫn cho việc mua" not in result.content.lower()
+
+    def test_clean_text_not_falsely_flagged(self):
+        # Negative control — none of the 4 new patterns should fire here
+        content = "Bitcoin tăng giá mạnh trong phiên hôm nay theo CoinDesk." + DISCLAIMER
+        result = check_and_fix(content)
+        # may have 0 or some unrelated violations, but specifically no removal
+        # of this clean sentence
+        assert "Bitcoin tăng giá mạnh" in result.content
+
+
+class TestWave0861PatchPatterns:
+    """Wave 0.8.6.1 (alpha.34) — patches from cross-check Wave 0.8.6+0.8.7.
+    Fix #4: pattern 4 drops "hơn" branch (false positive).
+    Fix #5: patterns 1-3 expand pronouns to chúng ta / mọi người / nhà đầu tư / ai.
+    """
+
+    def test_fix4_gia_tot_hon_legit_market_commentary_passes(self):
+        # Fix #4 — legit price comparison must NOT block
+        content = "Giá BTC tốt hơn so với cuối tháng trước." + DISCLAIMER
+        result = check_and_fix(content)
+        # Sentence preserved (the new pattern 4 only catches "để mua" / "cho việc mua")
+        assert "tốt hơn so với cuối tháng" in result.content.lower()
+
+    def test_fix5_pattern1_chung_ta(self):
+        # Pattern 1 expanded: "tích lũy như chúng ta"
+        content = "Đây là cơ hội tích lũy dài hạn như chúng ta thường nói." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "tích lũy dài hạn như chúng ta" not in result.content.lower()
+
+    def test_fix5_pattern1_moi_nguoi(self):
+        # Pattern 1 expanded: "gom như mọi người"
+        content = "Hãy gom như mọi người đang làm." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "gom" not in result.content.lower() or "như mọi người" not in result.content.lower()
+
+    def test_fix5_pattern2_nha_dau_tu_co_the_mua(self):
+        # Pattern 2 expanded: "nhà đầu tư có thể mua tài sản"
+        content = "Nhà đầu tư có thể mua được tài sản này tại sàn." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "nhà đầu tư có thể mua được tài sản" not in result.content.lower()
+
+    def test_fix5_pattern2_chung_ta_nen_mua(self):
+        # Pattern 2 expanded: "chúng ta nên mua coin"
+        content = "Chúng ta nên mua coin này ngay hôm nay." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "chúng ta nên mua coin" not in result.content.lower()
+
+    def test_fix5_pattern3_luc_nha_dau_tu_co_the_mua(self):
+        # Pattern 3 expanded: "lúc nhà đầu tư có thể mua"
+        content = "Đây chính là lúc nhà đầu tư có thể mua giá tốt." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "lúc nhà đầu tư có thể mua" not in result.content.lower()
+
+    def test_fix5_pattern3_luc_moi_nguoi_nen_mua(self):
+        # Pattern 3 expanded: "lúc mọi người nên mua"
+        content = "Đây là lúc mọi người nên mua vào." + DISCLAIMER
+        result = check_and_fix(content)
+        assert result.violations_found >= 1
+        assert "lúc mọi người nên mua" not in result.content.lower()

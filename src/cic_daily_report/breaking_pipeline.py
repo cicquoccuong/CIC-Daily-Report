@@ -33,6 +33,7 @@ from cic_daily_report.breaking.severity_classifier import (
 )
 from cic_daily_report.breaking.wave06_metrics import Wave06Metrics
 from cic_daily_report.core.config import _wave_0_6_kill_switch_active
+from cic_daily_report.core.error_handler import LLMError
 from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("breaking_pipeline")
@@ -740,6 +741,32 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
                 logger.info(f"B2: Waiting {inter_event_delay}s before next event")
                 await asyncio.sleep(inter_event_delay)
 
+        except LLMError as e:
+            # Wave 0.8.6.1 (alpha.34) Fix #2 — short-content gate is EXPECTED
+            # behavior (Wave 0.8.7 Bug 9 universal F1). Skip event silently +
+            # bump telemetry instead of raising to broad-except (which would
+            # mark generation_failed → trigger deferred-retry that re-incurs
+            # the same gate). WHY: short-content tin is unrecoverable without
+            # source-side change; retry won't extend LLM output magically.
+            if "breaking_content_word_gate" in (e.source or ""):
+                logger.warning(
+                    "breaking_skip_short_content event_title=%r source=%s reason=%s",
+                    classified_event.event.title[:80],
+                    e.source,
+                    str(e),
+                )
+                wave06_metrics.increment("breaking_skipped_short_content")
+                h = compute_hash(classified_event.event.title, classified_event.event.source)
+                dedup_mgr.update_entry_status(
+                    h, "skipped_short_content", severity=classified_event.severity
+                )
+                continue
+            # Other LLMErrors fall through to general handling
+            logger.error(f"Event failed (LLMError) for '{classified_event.event.title}': {e}")
+            h = compute_hash(classified_event.event.title, classified_event.event.source)
+            status = "delivery_failed" if content is not None else "generation_failed"
+            dedup_mgr.update_entry_status(h, status, severity=classified_event.severity)
+            run_log.errors.append(f"{'Deliver' if content else 'Generate'}: {e}")
         except Exception as e:
             logger.error(f"Event failed for '{classified_event.event.title}': {e}")
             # v0.29.1 (BUG 5): Distinguish generation vs delivery failure
@@ -1249,6 +1276,23 @@ async def _reprocess_deferred_events(
             if i < len(all_events) - 1:
                 await asyncio.sleep(INTER_EVENT_DELAY)
 
+        except LLMError as e:
+            # Wave 0.8.6.1 (alpha.34) Fix #2 — short-content gate also fires
+            # on deferred reprocess path. Same rationale as primary path: gate
+            # is unrecoverable, mark a distinct status to avoid re-retrying.
+            if "breaking_content_word_gate" in (e.source or ""):
+                logger.warning(
+                    "breaking_skip_short_content_deferred event_title=%r reason=%s",
+                    entry.title[:80],
+                    str(e),
+                )
+                dedup_mgr.update_entry_status(entry.hash, "skipped_short_content")
+                continue
+            logger.warning(f"Deferred reprocess failed (LLMError) for '{entry.title[:50]}': {e}")
+            if entry.status in ("generation_failed", "delivery_failed"):
+                dedup_mgr.update_entry_status(entry.hash, "permanently_failed")
+            else:
+                dedup_mgr.update_entry_status(entry.hash, "generation_failed")
         except Exception as e:
             logger.warning(f"Deferred reprocess failed for '{entry.title[:50]}': {e}")
             if entry.status in ("generation_failed", "delivery_failed"):

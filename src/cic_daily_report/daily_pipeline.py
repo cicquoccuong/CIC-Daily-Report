@@ -16,6 +16,18 @@ from cic_daily_report.core.logger import get_logger
 
 logger = get_logger("daily_pipeline")
 
+# Wave 0.8.6 (alpha.33) — fields where a negative value is impossible by
+# definition (fees / revenue cannot be < 0). Daily 11:59 SA 01/05 audit
+# caught "Total_Fees: -40.62B USD" — LLM misapplied delta as absolute value.
+NEGATIVE_FIELD_GUARDS: list[str] = [
+    "Total_Fees",
+    "Total Fees",
+    "Miner_Revenue",
+    "Miner Revenue",
+    "Tổng phí",
+    "Doanh thu thợ đào",
+]
+
 PIPELINE_TIMEOUT_SEC = 65 * 60  # 65 minutes (raised: TG scraper + Master Analysis need headroom)
 # R5-10: Per-operation timeout for Google Sheets calls to prevent indefinite hangs.
 # WHY: gspread uses synchronous HTTP under the hood; if Google API is slow or
@@ -236,6 +248,12 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         interpret_metrics,
     )
     from cic_daily_report.generators.nq05_filter import check_and_fix, merge_blacklist
+    from cic_daily_report.generators.numeric_sanity import (
+        apply_all_numeric_guards,
+        check_negative_value,
+        check_sector_total_pct_le_100,
+        cross_tier_consistency_check,
+    )
     from cic_daily_report.generators.research_generator import generate_research_article
     from cic_daily_report.generators.summary_generator import generate_bic_summary
     from cic_daily_report.generators.template_engine import load_templates
@@ -1290,10 +1308,28 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
 
     source_urls = [{"title": name, "url": url} for name, url in source_url_map.items()]
 
+    # Wave 0.8.6 (alpha.33) — daily_sanity wrapper. WHY local helper: same
+    # 3-stage check (numeric guards + negative value strip + sector total
+    # flag) runs after each NQ05 filter pass. Pulled into closure to keep
+    # the 3 call sites surgically tiny.
+    def _apply_daily_sanity(text: str, tier_label: str) -> str:
+        text, _guard_issues = apply_all_numeric_guards(text)
+        text, neg_removed = check_negative_value(text, NEGATIVE_FIELD_GUARDS)
+        text, sector_violations = check_sector_total_pct_le_100(text)
+        if neg_removed or sector_violations:
+            logger.warning(
+                "daily_sanity_flag tier=%s neg=%d sector_violations=%d",
+                tier_label,
+                neg_removed,
+                sector_violations,
+            )
+        return text
+
     articles_out: list[dict[str, str]] = []
     for article in generated:
         filtered = check_and_fix(article.content, extra_banned_keywords=sentinel_extra_banned)
-        content = _append_source_references(filtered.content, source_url_map)
+        sanitized = _apply_daily_sanity(filtered.content, article.tier)
+        content = _append_source_references(sanitized, source_url_map)
         articles_out.append(
             {
                 "tier": article.tier,
@@ -1305,7 +1341,8 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
 
     if summary:
         filtered = check_and_fix(summary.content, extra_banned_keywords=sentinel_extra_banned)
-        content = _append_source_references(filtered.content, source_url_map)
+        sanitized = _apply_daily_sanity(filtered.content, "Summary")
+        content = _append_source_references(sanitized, source_url_map)
         articles_out.append(
             {
                 "tier": "Summary",
@@ -1320,7 +1357,8 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         filtered = check_and_fix(
             research_article.content, extra_banned_keywords=sentinel_extra_banned
         )
-        content = _append_source_references(filtered.content, source_url_map)
+        sanitized = _apply_daily_sanity(filtered.content, "Research")
+        content = _append_source_references(sanitized, source_url_map)
         articles_out.append(
             {
                 "tier": "Research",
@@ -1329,6 +1367,27 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
                 "image_urls": image_urls,
             }
         )
+
+    # Wave 0.8.6.1 (alpha.34) Fix #1 — Cross-tier macro consistency check.
+    # WHY here: after per-tier sanity (so any per-tier auto-fix is reflected)
+    # but before sheets write (so violations land in pipeline log alongside
+    # other Stage 3 events). Non-blocking: log only — KO halt pipeline.
+    # Bug 1 (Daily 11:59 SA 01/05): Total MCap mismatch $1.5T (L1) vs $2.65T (L3).
+    try:
+        articles_for_check = {a["tier"]: a["content"] for a in articles_out if a.get("content")}
+        _, cross_tier_violations = cross_tier_consistency_check(articles_for_check)
+        if cross_tier_violations:
+            logger.error("daily_cross_tier_violations: %s", cross_tier_violations)
+            errors.append(
+                RuntimeError(
+                    f"cross_tier_macro_mismatch n={len(cross_tier_violations)}: "
+                    f"{cross_tier_violations[0]}"
+                )
+            )
+    except Exception as _cte:
+        # WHY swallow: cross-tier check is non-critical telemetry; failure here
+        # must NOT block ship.
+        logger.warning(f"cross_tier_consistency_check failed (non-fatal): {_cte}")
 
     # --- Write generated content to Sheets (A4) ---
     try:

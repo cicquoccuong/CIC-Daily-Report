@@ -2,6 +2,8 @@
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from cic_daily_report.adapters.llm_adapter import LLMResponse
 from cic_daily_report.breaking.content_generator import (
     _DISCLAIMER_RE,
@@ -23,7 +25,13 @@ def _event(image_url: str | None = None) -> BreakingEvent:
     )
 
 
-def _mock_llm(text: str = "Tin nóng: sự kiện tài sản mã hóa quan trọng.") -> AsyncMock:
+def _mock_llm(text: str | None = None) -> AsyncMock:
+    """Wave 0.8.6.1 (alpha.34) Bonus — bump default text to ≥80 words so universal
+    word-count gate (Wave 0.8.7 Bug 9) doesn't fire spuriously when WAVE_0_6_ENABLED
+    leaks into the env. Tests that explicitly need short text still pass `text=`.
+    """
+    if text is None:
+        text = "Tin nóng tài sản mã hóa: " + " ".join(["nội dung mở rộng"] * 30)
     mock = AsyncMock()
     mock.generate = AsyncMock(
         return_value=LLMResponse(text=text, tokens_used=100, model="test-model")
@@ -365,3 +373,51 @@ class TestDisclaimerDedup:
         result = await generate_breaking_content(_event(), llm)
         count = result.content.count("⚠️")
         assert count == 1, f"Expected 1 disclaimer, found {count}"
+
+
+# ---------------------------------------------------------------------------
+# Wave 0.8.7 (alpha.33) Bug 9 — universal word-count gate when Wave 0.6 ON
+# ---------------------------------------------------------------------------
+
+
+class TestBug9UniversalGate:
+    """Tin Coinbase 1-đoạn (01/05) lọt qua because judge approved 1st-pass +
+    word_count=72. Now: when Wave 0.6 ON (judge available / fail-open / skip),
+    enforce >=80 words for any final output regardless of retry path.
+    """
+
+    async def test_short_judge_skipped_raises_when_wave06_on(self, monkeypatch):
+        from cic_daily_report.adapters.llm_adapter import JudgeResult, LLMResponse
+        from cic_daily_report.core.error_handler import LLMError
+
+        monkeypatch.setenv("WAVE_0_6_ENABLED", "1")
+        # 50 word-ish text - under 80 threshold. severity=notable → judge_skipped=True
+        # since judge runs only for critical/important.
+        short = "Tin nóng tài sản mã hóa: " + " ".join(["từ"] * 50)
+        llm = AsyncMock()
+        llm.generate = AsyncMock(return_value=LLMResponse(text=short, tokens_used=100, model="m"))
+        # Judge would not be called for severity=notable, but stub for safety.
+        llm.judge_factual_claims = AsyncMock(
+            return_value=JudgeResult(verdict="approved", confidence=0.9)
+        )
+        llm.last_provider = "groq"
+        with patch("cic_daily_report.breaking.rag_index.get_or_build_index") as mock_get:
+            mock_get.return_value.query.return_value = []
+            with pytest.raises(LLMError) as exc_info:
+                await generate_breaking_content(_event(), llm, severity="notable")
+        assert exc_info.value.source == "breaking_content_word_gate_universal"
+
+    async def test_long_judge_skipped_passes(self, monkeypatch):
+        from cic_daily_report.adapters.llm_adapter import LLMResponse
+
+        monkeypatch.setenv("WAVE_0_6_ENABLED", "1")
+        long_text = "Tin nóng tài sản mã hóa: " + " ".join(["từ"] * 120)
+        llm = AsyncMock()
+        llm.generate = AsyncMock(
+            return_value=LLMResponse(text=long_text, tokens_used=200, model="m")
+        )
+        llm.last_provider = "groq"
+        with patch("cic_daily_report.breaking.rag_index.get_or_build_index") as mock_get:
+            mock_get.return_value.query.return_value = []
+            result = await generate_breaking_content(_event(), llm, severity="notable")
+        assert result.word_count >= 80

@@ -57,7 +57,11 @@ def _event(
     )
 
 
-def _mock_llm(text: str = "Tin nóng test."):
+def _mock_llm(text: str | None = None):
+    """Wave 0.8.7 Bug 9 (alpha.33): default text bumped to ≥80 words. Tests
+    that explicitly want short content (TestF1) pass `text=` directly."""
+    if text is None:
+        text = "Tin nóng tài sản mã hóa: " + " ".join(["nội dung mở rộng"] * 30)
     mock = AsyncMock()
     mock.generate = AsyncMock(
         return_value=LLMResponse(text=text, tokens_used=100, model="test-model")
@@ -104,16 +108,19 @@ class TestF1WordCountGate:
         assert exc_info.value.source == "breaking_content_word_gate"
 
     @pytest.mark.asyncio
-    async def test_short_no_retry_does_not_block(self, wave06_on):
-        """Judge approved 1st try → no retry → no F1 gate (legacy behavior preserved)."""
-        # Short content but no judge retry → must NOT raise
+    async def test_short_no_retry_does_not_block_when_wave06_off(self, monkeypatch):
+        """Wave 0.8.7 Bug 9: universal gate ONLY applies when Wave 0.6 ON.
+
+        Legacy non-Wave-0.6 path still ships short content (raw fallback,
+        pre-Wave-0.6 tests). Once Wave 0.6 is ON, universal gate fires —
+        see TestBug9UniversalGate.
+        """
+        monkeypatch.delenv("WAVE_0_6_ENABLED", raising=False)
         short_text = "Tin nóng: hack 100 triệu USD."
         with patch("cic_daily_report.breaking.rag_index.get_or_build_index") as mock_get:
             mock_get.return_value.query.return_value = []
             llm = _mock_llm(text=short_text)
-            # judge approved — NO retry path
             result = await generate_breaking_content(_event(), llm, severity="critical")
-        # Ships short content (legacy behavior — no judge retry triggered)
         assert isinstance(result, BreakingContent)
 
     @pytest.mark.asyncio
