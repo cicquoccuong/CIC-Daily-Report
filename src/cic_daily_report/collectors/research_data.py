@@ -328,10 +328,10 @@ async def _collect_etf_flows() -> ETFFlowData | None:
             html = resp.text
 
         # Extract __NEXT_DATA__ JSON
+        # Wave 0.8.7.3: bound to 500KB max — HTML untrusted, defensive vs ReDoS
         match = re.search(
-            r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+            r'<script id="__NEXT_DATA__" type="application/json">([^<]{0,500000})</script>',
             html,
-            re.DOTALL,
         )
         if not match:
             logger.warning("ETF flows: __NEXT_DATA__ not found in page")

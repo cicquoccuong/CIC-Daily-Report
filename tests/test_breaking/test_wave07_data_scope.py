@@ -509,14 +509,23 @@ class TestL2RetryInstructionWithScope:
 
 
 class TestVersionBump:
-    """Wave 0.8.7.2 (alpha.37) — ReDoS hotfix on quality_gate regex."""
+    """Wave 0.8.7.3+4+5 — ReDoS audit + hallucination fix + dynamic version assertion.
+
+    Wave 0.8.7.5: Dynamic assertion — không hardcode alpha.X nữa, kiểm format
+    để bump version không bao giờ break test."""
 
     def test_core_config_version(self):
         from cic_daily_report.core.config import VERSION
 
-        assert VERSION == "2.0.0-alpha.37"
+        assert VERSION.startswith("2.0.0-alpha.")
+        parts = VERSION.split("-alpha.")
+        assert len(parts) == 2
+        assert parts[1].isdigit() and int(parts[1]) > 0
 
     def test_module_version(self):
         from cic_daily_report import __version__
 
-        assert __version__ == "2.0.0-alpha.37"
+        assert __version__.startswith("2.0.0-alpha.")
+        parts = __version__.split("-alpha.")
+        assert len(parts) == 2
+        assert parts[1].isdigit() and int(parts[1]) > 0

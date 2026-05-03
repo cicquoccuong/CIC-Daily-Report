@@ -1,5 +1,47 @@
 # Changelog
 
+## [2.0.0-alpha.38] — 2026-05-02 — Wave 0.8.7.3+4+5: ReDoS audit + hallucination fix + dynamic version
+
+### Wave 0.8.7.3 — Defensive ReDoS bound trên 2 HIGH-risk regex (Mary scan)
+
+**Context**: Sau Wave 0.8.7.2 fix ReDoS quality_gate, Mary scan toàn bộ codebase tìm pattern tương tự. Phát hiện 2 HIGH-risk regex còn dùng greedy `.*?` trên untrusted input dài.
+
+#### Fix #1 — `src/cic_daily_report/breaking/llm_scorer.py:196`
+- Cũ: `re.search(r"\[.*?\]", llm_output, re.DOTALL)` — `.*?` trên LLM output có thể vài chục KB
+- Mới: `re.search(r"\[[^\]]{0,50000}\]", llm_output, re.DOTALL)` — bound 50KB max
+- Semantic preserved: vẫn tìm JSON array đầu tiên trong output
+
+#### Fix #2 — `src/cic_daily_report/collectors/research_data.py:331`
+- Cũ: `re.search(r'<script id="__NEXT_DATA__"...>(.*?)</script>', html, re.DOTALL)` trên HTML untrusted
+- Mới: `re.search(r'<script id="__NEXT_DATA__"...>([^<]{0,500000})</script>', html)` — bound 500KB, đổi `.*?` thành character class `[^<]` (faster, no backtracking)
+- Bỏ `re.DOTALL` vì `[^<]` đã match newline
+
+### Wave 0.8.7.4 — Anti-hallucination prompt rules (3 fix)
+
+**Context**: 3 lỗi factual production 02-03/05/2026:
+1. Tin 02/05 14:18: "Thiếu tướng Samuel Paparo" SAI — thực tế Đô đốc 4-sao Sam Paparo (INDOPACOM Commander)
+2. Tin 03/05 08:29: FOMC vote "8-4" SAI — thực tế "11-1" (Al Jazeera + Federal Reserve official)
+3. Tin 03/05 01:39: "Vào thời gian gần đây, kẻ tấn công rút $292M" — thực tế Kelp DAO hack 18/04/2026 (đã 2 tuần)
+
+**Fix**: Thêm 3 block rule vào `BREAKING_PROMPT_TEMPLATE` (`src/cic_daily_report/breaking/content_generator.py:88-103`):
+- **Rank quan chức**: Verify rank chính xác, fallback "ông/bà" nếu không rõ. Phân biệt Admiral 4-sao vs Major General 2-sao.
+- **Vote/poll/thống kê**: KHÔNG đoán số. Fallback "đa số thông qua". FOMC = 12 ủy viên.
+- **Thời gian**: Distinguish event date vs article date. Cấm "vào thời gian gần đây" cho event >7 ngày. Format event date EXPLICIT.
+
+### Wave 0.8.7.5 — Dynamic version assertion (vĩnh viễn)
+
+**Context**: Mỗi lần bump version → test `assert VERSION == "2.0.0-alpha.X"` fail → phải sửa thủ công 3 nơi. Lặp đi lặp lại từ alpha.30.
+
+**Fix**: Thay hardcode bằng pattern check
+- `tests/test_core/test_config.py:30-38` — `assert VERSION.startswith("2.0.0-alpha.")` + parse digit
+- `tests/test_breaking/test_wave07_data_scope.py:511-528` — same pattern cho cả `core.config.VERSION` và `__version__`
+
+→ Bump version từ alpha.X → alpha.X+1 không bao giờ break test nữa.
+
+### Version bump
+- `core/config.py`: alpha.37 → alpha.38
+- `pyproject.toml`: alpha.36 → alpha.38
+
 ## [2.0.0-alpha.37] — 2026-05-03 — Wave 0.8.7.2: ReDoS hotfix CRITICAL
 
 ### Bug — Daily Pipeline hang 2 ngày liên tiếp (02-03/05/2026)

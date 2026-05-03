@@ -28,6 +28,11 @@ class TestConfig:
             os.environ.pop("GITHUB_ACTIONS", None)
 
     def test_version_exists(self):
+        """Version follows 2.0.0-alpha.X format. Wave 0.8.7.5: dynamic assertion
+        — hết hardcode alpha.X để khỏi tái diễn lỗi expected vs got version mismatch."""
         from cic_daily_report.core.config import VERSION
 
-        assert VERSION == "2.0.0-alpha.37"
+        assert VERSION.startswith("2.0.0-alpha.")
+        parts = VERSION.split("-alpha.")
+        assert len(parts) == 2
+        assert parts[1].isdigit() and int(parts[1]) > 0

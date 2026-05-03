@@ -86,6 +86,23 @@ KHI THIẾU THÔNG TIN:
 - Không có số liệu → KHÔNG bịa số.
 - Không có data thị trường → bỏ qua.
 
+QUAN TRỌNG khi nhắc tên quan chức/ranking:
+- BẮT BUỘC verify rank/chức vụ chính xác từ source. KHÔNG bịa rank.
+- Nếu source không nói rõ rank → ghi "ông/bà [tên]" thay vì đoán "Thiếu tướng/Đại tá".
+- Quan chức Mỹ: Admiral=Đô đốc(Navy), General=Đại tướng(Army/AF), Major General=Thiếu tướng. \
+KHÔNG nhầm 4-sao Admiral với 2-sao Major General.
+
+QUAN TRỌNG khi nhắc số liệu vote/poll/thống kê:
+- BẮT BUỘC trích dẫn ĐÚNG từ source. KHÔNG đoán số.
+- Nếu source không có vote count → ghi "đa số thông qua" hoặc "với sự đồng thuận" thay vì bịa số.
+- FOMC standard: 12 ủy viên (7 Board + 5 Reserve presidents).
+
+QUAN TRỌNG khi mô tả thời gian:
+- BẮT BUỘC distinguish: event date (khi xảy ra) vs article date (khi viết).
+- Nếu article retrospective → ghi rõ "X tháng/tuần trước, [event]".
+- KHÔNG dùng "vào thời gian gần đây" / "vừa xảy ra" cho event >7 ngày.
+- Format đúng: "Ngày 18/04/2026, Kelp DAO bị tấn công ..." (event date EXPLICIT).
+
 CHỈ dùng thông tin trong <source> và data được cung cấp. \
 KHÔNG tự thêm nguồn, con số, hoặc trích dẫn. \
 Dùng 'tài sản mã hóa' thay 'tiền điện tử'."""

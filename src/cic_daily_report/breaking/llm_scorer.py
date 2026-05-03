@@ -193,7 +193,8 @@ def _parse_scores(llm_output: str, expected_count: int) -> list[int]:
     Handles: raw JSON, markdown code blocks, extra text around JSON.
     Returns list of 0s if parsing fails.
     """
-    json_match = re.search(r"\[.*?\]", llm_output, re.DOTALL)
+    # Wave 0.8.7.3: bound to 50KB max — defensive vs ReDoS trên LLM output dài
+    json_match = re.search(r"\[[^\]]{0,50000}\]", llm_output, re.DOTALL)
     if not json_match:
         logger.warning("Could not find JSON array in LLM scoring output")
         return [0] * expected_count
