@@ -52,6 +52,10 @@ jobs:
 
       - name: Run heterogeneous verifier
         if: steps.check_key.outputs.skip == 'false' && steps.changed.outputs.files != ''
+        # WHY (Wave 0.9.1): defense-in-depth — heterogeneous verifier là advisory
+        # only. Nếu script crash bất ngờ, workflow vẫn pass để PR không bị block.
+        # Cụ thể là 402 Payment Required (free credit cạn) đã từng block PR #26.
+        continue-on-error: true
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |

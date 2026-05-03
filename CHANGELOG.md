@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.0.0-alpha.40] — 2026-05-03 — Wave 0.9.1 HOTFIX: graceful degradation heterogeneous verifier
+
+**Context**: Wave 0.9 (alpha.38, PR #25) deploy heterogeneous verifier (GPT-4o-mini cross-check)
+với INTENT "advisory only, không block merge". Implementation FAIL hard: khi OpenRouter trả
+402 Payment Required (free credit cạn) → script `sys.exit(1)` → workflow exit 1 → required check
+fail → **PR #26 alpha.39 BỊ BLOCK không merge được**.
+
+### Fix #1 — `scripts/heterogeneous_verify.py:call_openrouter`
+- Cũ: `httpx.HTTPError` raise → `sys.exit(1)` cho mọi lỗi (bao gồm 402/429)
+- Mới: catch `httpx.HTTPStatusError` cho 402/429 → return advisory message; network errors
+  cũng degrade gracefully. 5xx/4xx khác vẫn raise (không phải quota issue, dev cần biết).
+
+### Fix #2 — `scripts/heterogeneous_verify.py:main` (defense-in-depth)
+- CI mode (`--ci`): wrap `call_openrouter` trong try/except → mọi exception convert thành
+  advisory + return 0. Dev mode (no `--ci`): vẫn raise để surface error.
+
+### Fix #3 — `.github/workflows/heterogeneous-verify.yml`
+- Step "Run heterogeneous verifier" thêm `continue-on-error: true` — defense-in-depth thứ ba,
+  đảm bảo workflow check luôn pass dù script crash.
+
+### Tests
+- `tests/test_scripts/test_heterogeneous_verify.py` (NEW, 6 tests):
+  402/429 → advisory; 500 → raise; network error → advisory; main `--ci` wrap exception → 0;
+  main dev mode → propagate.
+
+### Impact
+- PR #26 (Wave 0.8.7.6 NQ05 patch) UNBLOCK — sau khi merge alpha.40, rebase PR #26.
+- Heterogeneous verifier tiếp tục chạy advisory; operator vẫn nhận PR comment khi quota OK.
+
+---
+
 ## [2.0.0-alpha.38] — 2026-05-02 — Wave 0.8.7.3+4+5: ReDoS audit + hallucination fix + dynamic version
 
 ### Wave 0.8.7.3 — Defensive ReDoS bound trên 2 HIGH-risk regex (Mary scan)
