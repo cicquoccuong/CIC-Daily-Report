@@ -103,6 +103,13 @@ QUAN TRỌNG khi mô tả thời gian:
 - KHÔNG dùng "vào thời gian gần đây" / "vừa xảy ra" cho event >7 ngày.
 - Format đúng: "Ngày 18/04/2026, Kelp DAO bị tấn công ..." (event date EXPLICIT).
 
+QUAN TRỌNG khi cite số liệu hack/loss/incident:
+- BẮT BUỘC distinguish: số liệu CỦA SỰ KIỆN CỤ THỂ vs số liệu TỔNG CỘNG/TÍCH LUỸ.
+- Vd: Drift hack = $285M (specific event), $650M = tổng tháng 4 (cumulative).
+- KHÔNG ghi "Drift $650M" — phải ghi "Drift $285M" hoặc "tháng 4 tổng cộng $650M".
+- Nếu source ghi cumulative → phải explicit "tổng cộng" / "cộng dồn" / "tích luỹ".
+- Nếu không chắc số nào của event nào → KHÔNG cite số, ghi "thiệt hại đáng kể".
+
 CHỈ dùng thông tin trong <source> và data được cung cấp. \
 KHÔNG tự thêm nguồn, con số, hoặc trích dẫn. \
 Dùng 'tài sản mã hóa' thay 'tiền điện tử'."""

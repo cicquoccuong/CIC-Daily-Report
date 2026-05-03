@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.0.0-alpha.41] — 2026-05-03 — Wave 0.8.7.6: NQ05 pattern + attribution rule
+
+**Context**: Daily Pipeline LIVE 03/05 14:28 PASS (5.6 phút, 6 bài, 0 lỗi) nhưng phát hiện 2 quality gap content:
+
+1. **NQ05 LEAK Summary**: "các nhà đầu tư có thể cân nhắc phân bổ vốn vào các narrative mới nổi như AI" — khuyến nghị phân bổ vốn lọt qua mọi pattern Wave 0.8.6.x.
+2. **Hallucination tin Ripple 14:44**: cite "Drift $650M" — thực tế Drift là $285M, $650M là tổng tháng 4 (Kelp + Drift + others). Source nói cumulative nhưng LLM gán cho 1 sự kiện cụ thể.
+
+### Fix #7 — `generators/nq05_filter.py` SEMANTIC_NQ05_PATTERNS +3
+
+3 patterns mới chặn advisory phân bổ/tỷ trọng:
+- Pattern A: `(bạn|nhà đầu tư|...) (có thể|nên|...) (cân nhắc|...) (phân bổ|tăng tỷ trọng|...)` — full subject+verb+action chain
+- Pattern B: `(cân nhắc|xem xét) (phân bổ|tỷ trọng|đầu tư|rót vốn) ...` — bare advisory không pronoun
+- Pattern C: `(duy trì|giữ) tỷ trọng ở (các|những|lĩnh vực|sector|coin)` — hold-recommendation
+
+Wave 0.8.6.1 negative tests preserved: "tích lũy dài hạn như bạn" vẫn block, "Giá BTC tốt hơn so với cuối tháng" vẫn pass.
+
+### Fix #8 — `breaking/content_generator.py` BREAKING_PROMPT_TEMPLATE block #4
+
+Add anti-hallucination block #4 sau time block: yêu cầu LLM distinguish event-specific vs cumulative numbers, ví dụ Drift hack = $285M (specific) vs $650M (tổng tháng 4). Khi không chắc → KHÔNG cite số.
+
+### Tests
+
+- `test_nq05_filter.py`: +6 (3 positive cho 3 patterns mới + 3 negative variants)
+- `test_content_generator.py`: +1 (verify prompt template chứa attribution rule)
+
+### Note
+
+- Version bumped alpha.39 → alpha.41 sau khi rebase trên master alpha.40 (Wave 0.9.1) để giữ monotonic.
+
+---
+
 ## [2.0.0-alpha.40] — 2026-05-03 — Wave 0.9.1 HOTFIX: graceful degradation heterogeneous verifier
 
 **Context**: Wave 0.9 (alpha.38, PR #25) deploy heterogeneous verifier (GPT-4o-mini cross-check)

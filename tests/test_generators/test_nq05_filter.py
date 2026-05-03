@@ -630,3 +630,55 @@ class TestWave0861PatchPatterns:
         result = check_and_fix(content)
         assert result.violations_found >= 1
         assert "lúc mọi người nên mua" not in result.content.lower()
+
+
+class TestWave0876AllocationPatterns:
+    """Wave 0.8.7.6 (alpha.39) — 3 patterns mới từ Daily 03/05 14:28 audit.
+    LEAK: Summary "các nhà đầu tư có thể cân nhắc phân bổ vốn vào các
+    narrative mới nổi như AI" lọt qua Wave 0.8.6.x. 3 patterns chặn
+    advisory phân bổ/tỷ trọng/hold-recommendation.
+    """
+
+    # --- Pattern A: full subject+verb+action chain ---
+    def test_pattern_a_can_nhac_phan_bo_von_blocks_recommendation(self):
+        # NQ05 leak Wave 0.8.7.6: "có thể cân nhắc phân bổ vốn"
+        text = "Các nhà đầu tư có thể cân nhắc phân bổ vốn vào AI." + DISCLAIMER
+        result = check_and_fix(text)
+        assert result.violations_found >= 1
+        assert "cân nhắc phân bổ vốn" not in result.content.lower()
+
+    def test_pattern_a_investor_can_xem_xet_tang_ty_trong(self):
+        # Pattern A variant: "investor cần xem xét tăng tỷ trọng"
+        text = "Investor cần xem xét tăng tỷ trọng vào các altcoin lớn." + DISCLAIMER
+        result = check_and_fix(text)
+        assert result.violations_found >= 1
+        assert "xem xét tăng tỷ trọng" not in result.content.lower()
+
+    # --- Pattern B: bare advisory không pronoun ---
+    def test_pattern_b_can_nhac_phan_bo_bare(self):
+        # Bare "cân nhắc phân bổ" cũng là khuyến nghị
+        text = "Cân nhắc phân bổ vào những lĩnh vực phòng thủ." + DISCLAIMER
+        result = check_and_fix(text)
+        assert result.violations_found >= 1
+        assert "cân nhắc phân bổ" not in result.content.lower()
+
+    # --- Pattern C: duy trì/giữ tỷ trọng (hold-recommendation) ---
+    def test_pattern_c_duy_tri_ty_trong_blocks(self):
+        # "duy trì tỷ trọng ở các lĩnh vực nền tảng" = khuyến nghị hold
+        text = "Đồng thời duy trì tỷ trọng ở các lĩnh vực nền tảng." + DISCLAIMER
+        result = check_and_fix(text)
+        assert result.violations_found >= 1
+        assert "duy trì tỷ trọng" not in result.content.lower()
+
+    # --- Negative controls: legit market commentary phải KHÔNG bị block ---
+    def test_negative_legit_sector_analysis_passes(self):
+        # KHÔNG block phân tích legit không khuyến nghị
+        text = "Sector AI tăng 2.3%, dòng tiền có dấu hiệu rotate." + DISCLAIMER
+        result = check_and_fix(text)
+        assert "Sector AI tăng 2.3%" in result.content
+
+    def test_negative_market_observation_passes(self):
+        # Quan sát thị trường — KHÔNG khuyến nghị action
+        text = "Tỷ trọng BTC trên tổng vốn hóa giảm còn 58%." + DISCLAIMER
+        result = check_and_fix(text)
+        assert "Tỷ trọng BTC" in result.content

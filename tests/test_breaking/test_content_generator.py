@@ -421,3 +421,22 @@ class TestBug9UniversalGate:
             mock_get.return_value.query.return_value = []
             result = await generate_breaking_content(_event(), llm, severity="notable")
         assert result.word_count >= 80
+
+
+class TestWave0876AttributionRule:
+    """Wave 0.8.7.6 (alpha.39) — verify prompt template chứa rule attribution.
+    Hallucination tin Ripple 14:44 (03/05) cite "Drift $650M" — thực tế Drift
+    là $285M ($650M = tổng tháng 4). Block #4 mới yêu cầu LLM distinguish
+    event-specific vs cumulative numbers.
+    """
+
+    def test_breaking_prompt_has_attribution_rule(self):
+        from cic_daily_report.breaking.content_generator import BREAKING_PROMPT_TEMPLATE
+
+        # Phải có cụm "tổng cộng" hoặc "cumulative" để chỉ rõ tích luỹ
+        lower = BREAKING_PROMPT_TEMPLATE.lower()
+        assert "tổng cộng" in lower or "cumulative" in lower
+        # Phải có ví dụ cụ thể (Drift) để LLM bám vào
+        assert "Drift" in BREAKING_PROMPT_TEMPLATE
+        # Phải có guidance không cite khi không chắc
+        assert "thiệt hại đáng kể" in BREAKING_PROMPT_TEMPLATE
