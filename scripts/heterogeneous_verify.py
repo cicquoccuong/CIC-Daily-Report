@@ -58,6 +58,7 @@ TIMEOUT_SEC: int = 60
 DEFAULT_MAX_COST: int = 50  # bumped from 30 — deep cross-check rounds use 30+ calls
 COST_FILE: Path = Path(".claude/heterogeneous_verify_count.txt")
 MAX_CONTENT_CHARS: int = 30000
+CI_OUTPUT_CAP: int = 8000  # WHY (Wave 0.9): cap output for PR comment readability
 
 SYSTEM_PROMPT: str = (
     "You are an independent code reviewer for the CIC-Daily-Report Python project. "
@@ -243,6 +244,14 @@ def build_argparser() -> argparse.ArgumentParser:
         default=None,
         help=f"Override model (default {DEFAULT_MODEL} or $HETEROGENEOUS_VERIFIER_MODEL).",
     )
+    p.add_argument(
+        "--ci",
+        action="store_true",
+        help=(
+            "CI mode (Wave 0.9): suppress stderr status header, cap output to "
+            f"{CI_OUTPUT_CAP} chars, always exit 0 (advisory — never auto-block)."
+        ),
+    )
     return p
 
 
@@ -255,7 +264,8 @@ def main() -> int:
     content = read_input(ns.files)
     if not content.strip():
         print("ERROR: empty input (no files + no stdin)", file=sys.stderr)
-        return 1
+        # WHY (Wave 0.9): CI mode never blocks — empty diff is not an error from CI POV
+        return 0 if ns.ci else 1
 
     if len(content) > MAX_CONTENT_CHARS:
         print(
@@ -265,12 +275,18 @@ def main() -> int:
         content = content[:MAX_CONTENT_CHARS] + "\n\n[TRUNCATED]"
 
     call_n = check_cost_guard(ns.max_cost)
-    print(
-        f"=== Heterogeneous Verifier ({model}) — call {call_n}/{ns.max_cost} ===\n",
-        file=sys.stderr,
-    )
+    # WHY (Wave 0.9): suppress status header in CI mode — keeps PR comment clean
+    if not ns.ci:
+        print(
+            f"=== Heterogeneous Verifier ({model}) — call {call_n}/{ns.max_cost} ===\n",
+            file=sys.stderr,
+        )
     review = call_openrouter(content, model)
+    # WHY (Wave 0.9): cap output for PR comment readability (GitHub UI degrades >10k)
+    if ns.ci and len(review) > CI_OUTPUT_CAP:
+        review = review[:CI_OUTPUT_CAP] + "\n\n[TRUNCATED — see full review by running locally]"
     print(review)
+    # WHY (Wave 0.9): CI mode is advisory only — never block merge on heterogeneous review
     return 0
 
 
