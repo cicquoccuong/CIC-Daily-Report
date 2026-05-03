@@ -90,8 +90,28 @@ OpenRouter pricing (2026-05):
 | Phase 2 (1-2 weeks) | Wave 1.0 | Tích hợp vào pre-commit hook (optional, không block) |
 | Phase 3 (1 month) | Stable | GitHub Action job — comment finding lên PR |
 
+## Phase 2 — CI Integration (Wave 0.9, 2026-05-03)
+
+GitHub Actions workflow `heterogeneous-verify.yml` chạy tự động trên mỗi PR change `src/**/*.py` hoặc `scripts/**/*.py`. Output post làm PR comment.
+
+### Setup (1 lần)
+1. Lấy OpenRouter API key https://openrouter.ai/keys
+2. Repo Settings → Secrets → Actions → New `OPENROUTER_API_KEY`
+3. Workflow tự chạy lần PR tiếp theo
+
+### Operator workflow
+1. Open PR → workflow chạy auto (~30-60s)
+2. Comment xuất hiện trên PR với findings
+3. Read findings → decide accept hoặc fix
+4. KHÔNG auto-block merge — only advisory
+
+### Cost
+- ~$0.0001/PR (negligible)
+- Cap 50 calls/session (script default)
+
 ## Related
 
 - Source: `scripts/heterogeneous_verify.py`
+- CI workflow: `.github/workflows/heterogeneous-verify.yml`
 - Root cause analysis: `Wiki/decisions/cdr-root-cause-2026-05-01.md` (TODO)
 - Wave C+ summary: `Wiki/decisions/cdr-wave-c-plus.md` (TODO)
