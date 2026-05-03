@@ -1,5 +1,68 @@
 # Changelog
 
+## [2.0.0-alpha.42] — 2026-05-03 — Wave 0.8.7.7: Universal sub-threshold routing audit
+
+### Bug — Sub-threshold events lọt digest path (lặp 03/05/2026)
+
+**Production symptom 03/05/2026**: Tin Buffett (severity=important, NOT geo) hiển thị dạng:
+```
+🟠 TỔNG HỢP TIN QUAN TRỌNG
+📌 Tổng hợp tin tức thị trường: Thận trọng giữa những tín hiệu tích cực
+1️⃣ Cảnh báo từ Warren Buffett về "tâm lý cờ bạc"
+🔗 Nguồn: U.Today
+🔗 Nguồn: NewsBTC (XRP)
+```
+2 events (Buffett + XRP) lọt digest path → render thành "TỔNG HỢP" với 1️⃣ duy nhất → trông broken.
+
+**Root cause** (audit toàn bộ category routing):
+- `DIGEST_THRESHOLD = 3` định nghĩa "switch sang digest WHEN >= 3 events" (`src/cic_daily_report/breaking_pipeline.py:56`)
+- Nhưng digest dispatch (`if important_now ...` line 781 cũ) KHÔNG enforce threshold → 2 events vẫn fired digest path
+- Wave 0.8.7.1 đã fix `geo_events` cho `len == 1` (line 821-876 cũ) + Wave 0.5.2 fix `important_now` cho `len == 1` (line 658-661 cũ)
+- CẢ 2 fix đều miss `len == 2` case
+
+**Categories audit** (full scan `breaking_pipeline.py`):
+| Category | Trước Wave 0.8.7.7 | Sau Wave 0.8.7.7 |
+|---|---|---|
+| `critical_now` (severity=critical) | Always individual | Không đổi (đã đúng) |
+| `important_now` (severity != critical) | Guard `len == 1` | Guard `len < DIGEST_THRESHOLD` |
+| `geo_events` | Inline single-geo block (Wave 0.8.7.1, 61 dòng) | Helper unified — block xóa |
+| `crypto_events` | Merged vào `send_now` → split critical/important | Không đổi (transit only) |
+
+### Fix — Helper `_route_below_threshold_to_individual()`
+
+File: `src/cic_daily_report/breaking_pipeline.py:92-115`. Pure function, no side effects. Áp dụng tại 2 call sites (sau `important_now` + `critical_now` definitions):
+```python
+important_now, _routed_imp = _route_below_threshold_to_individual(
+    important_now, _digest_threshold
+)
+all_individual.extend(_routed_imp)
+geo_events, _routed_geo = _route_below_threshold_to_individual(
+    geo_events, _digest_threshold
+)
+all_individual.extend(_routed_geo)
+```
+
+### Refactor — Xóa inline single-geo block
+
+Xóa `breaking_pipeline.py:855-915` cũ (61 dòng từ Wave 0.8.7.1) — replaced by helper. Geo events `len < DIGEST_THRESHOLD` giờ route lên `all_individual` SỚM (trước individual loop) → đi qua individual flow chuẩn (status="sent", inter-event delay, hard cap check, judge_unavailable telemetry — tất cả tự động kế thừa, không cần duplicate code).
+
+### Test — `tests/test_breaking/test_routing_single_event.py` (mới)
+
+12 test cases:
+- Sanity: `DIGEST_THRESHOLD == 3`
+- Edge: empty list, threshold=0, threshold=5
+- Bug regression: `test_bug_03_05_buffett_2_important_events`, `test_bug_02_05_trump_iran_1_geo_event`
+- Forward regression: `test_3_geo_events_form_digest`, `test_threshold_events_kept_for_digest`
+- Defensive copy check (`test_returned_routed_is_independent_copy`)
+
+Full suite: **2561 passed** (10s).
+
+### Version bump
+- `core/config.py`: alpha.41 → alpha.42 (rebase trên master alpha.41 Wave 0.8.7.6 — giữ monotonic)
+- `pyproject.toml`: alpha.41 → alpha.42
+
+---
+
 ## [2.0.0-alpha.41] — 2026-05-03 — Wave 0.8.7.6: NQ05 pattern + attribution rule
 
 **Context**: Daily Pipeline LIVE 03/05 14:28 PASS (5.6 phút, 6 bài, 0 lỗi) nhưng phát hiện 2 quality gap content:
@@ -30,7 +93,6 @@ Add anti-hallucination block #4 sau time block: yêu cầu LLM distinguish event
 - Version bumped alpha.39 → alpha.41 sau khi rebase trên master alpha.40 (Wave 0.9.1) để giữ monotonic.
 
 ---
-
 ## [2.0.0-alpha.40] — 2026-05-03 — Wave 0.9.1 HOTFIX: graceful degradation heterogeneous verifier
 
 **Context**: Wave 0.9 (alpha.38, PR #25) deploy heterogeneous verifier (GPT-4o-mini cross-check)

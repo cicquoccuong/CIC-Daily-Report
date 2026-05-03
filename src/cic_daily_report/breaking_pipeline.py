@@ -89,6 +89,31 @@ def _get_pipeline_limits(config_loader: object | None = None) -> dict[str, int]:
         return defaults
 
 
+def _route_below_threshold_to_individual(
+    category_events: list,
+    digest_threshold: int,
+) -> tuple[list, list]:
+    """Wave 0.8.7.7: Route sub-threshold category events to individual path.
+
+    WHY: DIGEST_THRESHOLD defines minimum events for digest mode. Categories
+    with fewer events should ship as individual breaking news, not as a digest
+    with 1️⃣/2️⃣ headings (looks broken at N<3). Applied to important_now and
+    geo_events.
+
+    Args:
+        category_events: events filtered by category (important / geo)
+        digest_threshold: min events to use digest format
+
+    Returns:
+        (remaining_in_category, routed_to_individual)
+        - remaining = [] if len < threshold (all moved); else original list
+        - routed = events to extend into all_individual; [] if not routed
+    """
+    if 0 < len(category_events) < digest_threshold:
+        return [], list(category_events)
+    return category_events, []
+
+
 # QO.14: Geo event daily cap — max 3 geo digest messages per day.
 # WHY separate cap: geopolitical events (war, sanctions, Fed, inflation) are
 # relevant but noisy. Grouping into digest + capping at 3/day reduces spam
@@ -655,10 +680,22 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
 
     # Stage 4a: Critical events — generate + deliver individually
     all_individual = critical_now[:]
-    # Important events with only 1 item — also send individually (digest needs ≥2)
-    if len(important_now) == 1:
-        all_individual.extend(important_now)
-        important_now = []
+
+    # Wave 0.8.7.7: Universal sub-threshold routing.
+    # WHY: DIGEST_THRESHOLD=3 means "switch to digest WHEN >= 3 events". Any
+    # category with len < threshold should ship as individual breaking, not as
+    # a "TỔNG HỢP" digest with 1️⃣/2️⃣ numbered headings (looks broken when N<3).
+    # Replaces Wave 0.8.7.1 single-geo guard (lines 821-876 deleted) and the
+    # legacy len==1 important guard. Bug 03/05/2026: Buffett tin (important,
+    # non-geo) lọt digest path → "1️⃣ Buffett ... 🔗 NewsBTC (XRP)" với 2
+    # nguồn nhưng 1 numbered heading. Root cause: len(important_now)==2 vẫn
+    # fired digest path (chỉ guard len==1), DIGEST_THRESHOLD=3 không enforce.
+    important_now, _routed_imp = _route_below_threshold_to_individual(
+        important_now, _digest_threshold
+    )
+    all_individual.extend(_routed_imp)
+    geo_events, _routed_geo = _route_below_threshold_to_individual(geo_events, _digest_threshold)
+    all_individual.extend(_routed_geo)
 
     for i, classified_event in enumerate(all_individual):
         # Wave 0.5.2 Fix 6: hard stop if TOTAL run cap reached mid-loop.
@@ -813,67 +850,10 @@ async def _execute_pipeline(run_log: BreakingRunLog) -> BreakingPipelineResult:
             )
             run_log.errors.append(f"LLM unavailable for digest: {classified_event.event.title}")
 
-    # Wave 0.8.7.1: 1 geo event → ship dạng individual breaking thay vì digest.
-    # WHY: digest format ("TỔNG HỢP TIN QUAN TRỌNG" + "1️⃣ ...") trông lố khi
-    # chỉ có 1 mục — bug 02/05/2026 14:18 VN: 1 tin Trump-Iran lọt vào digest path.
-    # Mirror guard giống important_now (line 658-660) nhưng đặt ở đây vì geo path
-    # nằm SAU all_individual loop — không thể merge ngược lên.
-    if (
-        len(geo_events) == 1
-        and llm is not None
-        and not llm.circuit_open
-        and run_log.events_sent < max_per_run
-    ):
-        single_geo = geo_events[0]
-        content = None
-        try:
-            recent_events_text = _format_recent_events(
-                dedup_mgr.entries,
-                current_event_time=single_geo.event.detected_at,
-                min_age_hours=1.0,
-            )
-            content = await asyncio.wait_for(
-                generate_breaking_content(
-                    single_geo.event,
-                    llm,
-                    severity=single_geo.severity,
-                    market_context=market_snapshot,
-                    recent_events=recent_events_text,
-                    consensus_snapshot=consensus_text,
-                    price_snapshot=price_snapshot,
-                    sheets_client=sheets,
-                ),
-                timeout=60,
-            )
-            if getattr(content, "judge_unavailable", False):
-                wave06_metrics.increment("judge_unavailable")
-                logger.warning(
-                    "Wave 0.8.4 F5: judge unavailable for "
-                    f"'{single_geo.event.title[:60]}' (Cerebras "
-                    f"fail-open). Total this run: "
-                    f"{wave06_metrics.judge_unavailable}"
-                )
-            await _deliver_single_breaking(content, single_geo, dedup_mgr=dedup_mgr)
-            result.contents.append(content)
-            result.sent_events.append(single_geo)
-            run_log.events_sent += 1
-            h = compute_hash(single_geo.event.title, single_geo.event.source)
-            # Status "sent" (giống individual flow) thay vì "sent_geo_digest" —
-            # đây không còn là digest message nữa. Daily cap vẫn count qua _count_today_sent_events.
-            dedup_mgr.update_entry_status(
-                h,
-                "sent",
-                delivered_at=datetime.now(timezone.utc).isoformat(),
-                severity=single_geo.severity,
-            )
-            await _persist_dedup_to_sheets(dedup_mgr, new_entries=dedup_result.entries_written)
-        except Exception as e:
-            logger.error(f"Single-geo event failed for '{single_geo.event.title}': {e}")
-            h = compute_hash(single_geo.event.title, single_geo.event.source)
-            status = "delivery_failed" if content is not None else "generation_failed"
-            dedup_mgr.update_entry_status(h, status, severity=single_geo.severity)
-            run_log.errors.append(f"{'Deliver' if content else 'Generate'} single-geo: {e}")
-        geo_events = []  # đã xử lý — vô hiệu hóa digest path bên dưới
+    # Wave 0.8.7.7: Sub-threshold geo events (len<DIGEST_THRESHOLD) đã được
+    # _route_below_threshold_to_individual route lên all_individual ở line ~657
+    # và xử lý xong qua individual loop. geo_events ở đây chỉ còn khi len>=threshold
+    # (đủ để form digest đúng format). Replaces inline single-geo block từ Wave 0.8.7.1.
 
     # QO.14: Stage 4c — Geo events → digest (grouped message)
     # WHY separate stage: geo events are noisy individually but valuable as a digest.
