@@ -171,6 +171,24 @@ SEMANTIC_NQ05_PATTERNS = [
     # advisory intent. Removing "hơn" eliminates a frequent false positive
     # without losing real violations.
     r"giá\s+(?:tốt|rẻ|hấp\s+dẫn)\s+(?:để\s+mua|cho\s+việc\s+mua)",
+    # Wave 0.8.7.6 (alpha.39) — 3 patterns mới từ Daily 03/05 14:28 audit.
+    # LEAK source (Summary): "các nhà đầu tư có thể cân nhắc phân bổ vốn vào
+    # các narrative mới nổi như AI" → khuyến nghị tăng tỷ trọng vào sector
+    # cụ thể = NQ05 violation, lọt qua mọi pattern Wave 0.8.6.x.
+    # WHY 3 patterns thay vì 1: (a) full subject+verb+action chain bắt
+    # advisory rõ ràng; (b) bare "cân nhắc phân bổ ..." không có pronoun
+    # vẫn là khuyến nghị; (c) "duy trì/giữ tỷ trọng" = hold-recommendation
+    # cùng họ — cùng cấu trúc khuyên hành động đầu tư, khác động từ.
+    r"(?:bạn|anh|chị|chúng\s+ta|mọi\s+người|nhà\s+đầu\s+tư|ai|họ|investor|trader|mình)"
+    r"\s+(?:có\s+thể|nên|hãy|cần)\s+"
+    r"(?:cân\s+nhắc|xem\s+xét|tính\s+đến|tham\s+gia|thử)\s*"
+    r"(?:phân\s+bổ|tăng\s+tỷ\s+trọng|gia\s+tăng|nâng\s+tỷ\s+trọng|"
+    r"đầu\s+tư\s+vào|rót\s+vốn\s+vào|chuyển\s+vốn|đặt\s+cược)",
+    r"(?:cân\s+nhắc|xem\s+xét)\s+"
+    r"(?:phân\s+bổ|tăng\s+tỷ\s+trọng|tỷ\s+trọng|đầu\s+tư|rót\s+vốn)\s+"
+    r"(?:vào|cho|sang|đến)?\s*(?:các|những)?",
+    r"(?:duy\s+trì|giữ)\s+tỷ\s+trọng\s+"
+    r"(?:ở|tại|trong)?\s*(?:các|những|lĩnh\s+vực|sector|coin)",
 ]
 
 
