@@ -203,9 +203,35 @@ def call_openrouter(content: str, model: str) -> str:
         resp.raise_for_status()
         data = resp.json()
         return data["choices"][0]["message"]["content"]
+    except httpx.HTTPStatusError as e:
+        # WHY (Wave 0.9.1): graceful degradation cho quota/payment errors.
+        # Wave 0.9 INTENT: advisory only, KHÔNG block merge. Nếu OpenRouter
+        # trả 402 (free credit cạn) hoặc 429 (rate limit), trả advisory message
+        # thay vì raise — workflow vẫn exit 0 để PR không bị block.
+        if e.response.status_code in (402, 429):
+            print(
+                f"WARNING: OpenRouter quota/payment issue ({e.response.status_code}). "
+                f"Heterogeneous review SKIPPED — operator review required manually.",
+                file=sys.stderr,
+            )
+            return (
+                f"## ⚠️ Heterogeneous verifier unavailable\n\n"
+                f"OpenRouter trả HTTP {e.response.status_code}. Nguyên nhân khả dĩ: "
+                f"free credit cạn, API key invalid, hoặc model `{model}` không available.\n\n"
+                f"**Khuyến nghị**: Operator review manual hoặc top-up OpenRouter credit "
+                f"(https://openrouter.ai/credits).\n\n"
+                f"PR vẫn có thể merge — heterogeneous verifier là advisory."
+            )
+        # Other HTTP errors (5xx, 4xx khác) vẫn raise để dev local biết bất thường
+        raise
     except httpx.HTTPError as e:
-        print(f"ERROR: OpenRouter call failed: {e}", file=sys.stderr)
-        sys.exit(1)
+        # WHY (Wave 0.9.1): network errors (timeout, DNS) cũng degrade gracefully.
+        # Không thể phân biệt transient vs permanent — luôn advisory để PR merge được.
+        print(f"WARNING: OpenRouter network error: {e}. Skipping review.", file=sys.stderr)
+        return (
+            f"## ⚠️ Heterogeneous verifier network error\n\n"
+            f"`{e}`\n\nPR vẫn có thể merge — heterogeneous verifier là advisory."
+        )
     except (KeyError, IndexError) as e:
         print(f"ERROR: malformed OpenRouter response: {e}", file=sys.stderr)
         sys.exit(1)
@@ -281,7 +307,20 @@ def main() -> int:
             f"=== Heterogeneous Verifier ({model}) — call {call_n}/{ns.max_cost} ===\n",
             file=sys.stderr,
         )
-    review = call_openrouter(content, model)
+    try:
+        review = call_openrouter(content, model)
+    except Exception as e:
+        # WHY (Wave 0.9.1): defense-in-depth. call_openrouter handles 402/429 +
+        # network errors gracefully, nhưng 5xx + bugs chưa biết vẫn raise.
+        # CI mode TUYỆT ĐỐI không được block merge — convert mọi exception thành
+        # advisory message + exit 0. Dev local (no --ci) vẫn surface error.
+        if ns.ci:
+            print(
+                f"## ⚠️ Heterogeneous verifier error\n\n`{type(e).__name__}: {e}`\n\n"
+                f"PR vẫn có thể merge — heterogeneous verifier là advisory."
+            )
+            return 0
+        raise
     # WHY (Wave 0.9): cap output for PR comment readability (GitHub UI degrades >10k)
     if ns.ci and len(review) > CI_OUTPUT_CAP:
         review = review[:CI_OUTPUT_CAP] + "\n\n[TRUNCATED — see full review by running locally]"
