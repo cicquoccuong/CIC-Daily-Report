@@ -1,5 +1,32 @@
 # Changelog
 
+## [2.0.0-alpha.37] — 2026-05-03 — Wave 0.8.7.2: ReDoS hotfix CRITICAL
+
+### Bug — Daily Pipeline hang 2 ngày liên tiếp (02-03/05/2026)
+
+**Root cause**: `quality_gate.py:102-103` regex `(?:\w+\s*)*` là classic ReDoS pattern. Khi Master Analysis text chứa "RSI/MVRV/NUPL/SOPR" mà KHÔNG có số trailing → exponential backtracking → asyncio event loop block → GH Actions kill sau 2h.
+
+**Pre-existing**: bug có từ alpha.1, ngủ 30+ wave. Trigger 02-03/05 vì LLM output shape thay đổi (gián tiếp do Wave C+ prompt context).
+
+### Fix #1 — Rewrite regex (kill nested quantifier)
+- File: `src/cic_daily_report/generators/quality_gate.py:102-108`
+- Cũ: `(?:RSI|MVRV|NUPL|SOPR|Puell|F&G|Fear\s*&?\s*Greed)\s*(?:\w+\s*)*[:\=]?\s*\d`
+- Mới: `(?:RSI|MVRV|NUPL|SOPR|Puell|F&G|Fear\s*&?\s*Greed)\b[^.\n]{0,40}?\d`
+- Bounded non-greedy `[^.\n]{0,40}?` constrains backtrack space + stops at sentence end
+- Vẫn detect chỉ số có digit (semantic preserved)
+
+### Fix #2 — Defensive timeout
+- File: `src/cic_daily_report/daily_pipeline.py:1075` (Stage 3 Master QG call)
+- Wrap `run_quality_gate_with_retry` trong `asyncio.wait_for(timeout=30)`
+- Phòng ngừa blocking sync trong async context tương lai
+- Timeout → log error + skip QG, tiếp tục Stage 4 (graceful degradation)
+
+### Test
+- New regression test: `tests/test_generators/test_quality_gate_redos.py` (3 tests)
+- Pathological text 6.2K chars: was 60s+ hang → 0.11ms after fix (>500,000x faster)
+- Semantic preserved: keyword + digit vẫn match; keyword không digit không match
+- Tests: 2540 + 3 new = 2543 pass.
+
 ## [2.0.0-alpha.36] — 2026-05-02 — Wave 0.8.7.1 Geo Guard + Unified Disclaimer
 
 ### Fix #1: Geo single-event guard ở `breaking_pipeline.py`

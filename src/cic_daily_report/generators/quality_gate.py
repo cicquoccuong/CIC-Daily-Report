@@ -99,8 +99,12 @@ _DATA_PATTERNS = [
         r"(?:BTC|ETH|Bitcoin|Ethereum)\s*[\$\d]",  # crypto + number
         r"\d+[.,]\d+\s*(?:tỷ|triệu|nghìn)",  # Vietnamese number words
         # metrics with values (e.g. "RSI = 52", "F&G Index = 45", "Fear & Greed = 72")
-        r"(?:RSI|MVRV|NUPL|SOPR|Puell|F&G|Fear\s*&?\s*Greed)"
-        r"\s*(?:\w+\s*)*[:\=]?\s*\d",
+        # Wave 0.8.7.2: rewrite to kill ReDoS — old `(?:\w+\s*)*` was a classic
+        # nested quantifier causing catastrophic backtracking when text contains
+        # "RSI/MVRV/NUPL/SOPR" without trailing digit. Bounded non-greedy
+        # `[^.\n]{0,40}?` constrains backtrack space + stops at sentence end.
+        # Semantic preserved: still requires keyword + ≤40 chars + trailing digit.
+        r"(?:RSI|MVRV|NUPL|SOPR|Puell|F&G|Fear\s*&?\s*Greed)\b[^.\n]{0,40}?\d",
         r"\d+[.,]?\d*[KMB]\b",  # abbreviated numbers like 1.5B, 200K
     ]
 ]
