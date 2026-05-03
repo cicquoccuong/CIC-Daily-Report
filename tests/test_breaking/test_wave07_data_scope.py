@@ -509,14 +509,14 @@ class TestL2RetryInstructionWithScope:
 
 
 class TestVersionBump:
-    """Wave 0.8.7.1 (alpha.36) — geo single-event guard + unified disclaimer."""
+    """Wave 0.8.7.2 (alpha.37) — ReDoS hotfix on quality_gate regex."""
 
     def test_core_config_version(self):
         from cic_daily_report.core.config import VERSION
 
-        assert VERSION == "2.0.0-alpha.36"
+        assert VERSION == "2.0.0-alpha.37"
 
     def test_module_version(self):
         from cic_daily_report import __version__
 
-        assert __version__ == "2.0.0-alpha.36"
+        assert __version__ == "2.0.0-alpha.37"

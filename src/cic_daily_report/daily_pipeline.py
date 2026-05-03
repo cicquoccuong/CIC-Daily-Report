@@ -1072,11 +1072,25 @@ async def _execute_stages() -> tuple[list[dict[str, str]], list[Exception], str,
         # WHY LOG mode for Master: re-generating a 16K token Master Analysis
         # just for density improvement is wasteful. Quality gate on individual
         # tier articles (below) uses the full BLOCK mode with retry.
-        master.content, qg_result = await run_quality_gate_with_retry(
-            master.content, "Master", qg_input_data, regenerate_fn=None, mode="LOG"
-        )
-        if not qg_result.passed:
-            logger.warning(f"Quality gate on Master: density={qg_result.insight_density:.0%}")
+        # Wave 0.8.7.2: defensive timeout chống ReDoS hoặc bất kỳ blocking sync
+        # nào. WHY 30s: quality_gate sync regex bình thường <100ms; 30s = 300x
+        # safety margin. Pipeline 02-03/05/2026 hang 2 ngày do regex ReDoS —
+        # timeout là last-resort safety net.
+        try:
+            master.content, qg_result = await asyncio.wait_for(
+                run_quality_gate_with_retry(
+                    master.content, "Master", qg_input_data, regenerate_fn=None, mode="LOG"
+                ),
+                timeout=30,
+            )
+            if not qg_result.passed:
+                logger.warning(f"Quality gate on Master: density={qg_result.insight_density:.0%}")
+        except asyncio.TimeoutError:
+            logger.error(
+                "quality_gate_timeout master_words=%d — skip QG (defensive Wave 0.8.7.2)",
+                len(master.content.split()),
+            )
+            qg_result = None  # skip, tiếp tục Stage 4
 
     # --- Stage 4: Tier Extraction ---
     if master and not fallback_to_per_tier:
